@@ -1,46 +1,18 @@
-from flask import Flask, redirect, render_template_string, request, session, url_for
 from collections import Counter
-from datetime import datetime
-from flask_sqlalchemy import SQLAlchemy
+
+from flask import Flask, redirect, render_template_string, request, session, url_for
 from sqlalchemy import func
 
+from config import get_config
+from extensions import db, migrate
+from models import DrinkSale, Order, OrderItem, teamliste
+
 app = Flask(__name__)
-app.secret_key = b'gskjd%hsgd82jsd'
+app.config.from_object(get_config())
+app.secret_key = app.config["SECRET_KEY"]
 
-# ---------------------------------------------------------------------------
-# Datenbank-Konfiguration
-# ---------------------------------------------------------------------------
-app.config["SQLALCHEMY_DATABASE_URI"] = "sqlite:///orders.db"
-app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
-db = SQLAlchemy(app)
-
-# ---------------------------------------------------------------------------
-# Datenbank-Modelle
-# ---------------------------------------------------------------------------
-class Order(db.Model):
-    id        = db.Column(db.Integer, primary_key=True)
-    timestamp = db.Column(db.DateTime, default=datetime.utcnow)
-    total     = db.Column(db.Integer, nullable=False)
-
-class OrderItem(db.Model):
-    id       = db.Column(db.Integer, primary_key=True)
-    order_id = db.Column(db.Integer, db.ForeignKey("order.id"), nullable=False)
-    name     = db.Column(db.String(100), nullable=False)
-    price    = db.Column(db.Integer, nullable=False)
-
-    order = db.relationship("Order", backref=db.backref("items", lazy=True))
-
-class DrinkSale(db.Model):
-    """Aggregierte Stückzahlen pro Getränk und Bestellung"""
-    id       = db.Column(db.Integer, primary_key=True)
-    order_id = db.Column(db.Integer, db.ForeignKey("order.id"), nullable=False)
-    name     = db.Column(db.String(100), nullable=False)
-    quantity = db.Column(db.Integer, default=0, nullable=False)
-
-    order = db.relationship("Order", backref=db.backref("drink_sales", lazy=True))
-
-with app.app_context():
-    db.create_all()
+db.init_app(app)
+migrate.init_app(app, db)
 
 # ---------------------------------------------------------------------------
 # Artikel-Preise

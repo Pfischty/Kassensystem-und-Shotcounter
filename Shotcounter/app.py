@@ -1,21 +1,19 @@
 from flask import Flask, redirect, render_template, request, session, url_for, abort, render_template_string
 from collections import Counter
-from flask_sqlalchemy import SQLAlchemy
 from flask_socketio import SocketIO, emit
 from flask_session import Session
 
-app = Flask(__name__)
-app.secret_key = b'gskjd%hsgd82jsd'
-app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///teamliste.db'
-db = SQLAlchemy(app)
-socketio = SocketIO(app, manage_session=True)
-app.config['SESSION_TYPE'] = 'filesystem'  # Session-Daten auf dem Server speichern
-Session(app)
+from config import get_config
+from extensions import db
+from models import teamliste
 
-class teamliste(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    score = db.Column(db.Integer, unique=False, nullable=False)
-    team = db.Column(db.String(150), unique=True, nullable=False)
+app = Flask(__name__)
+app.config.from_object(get_config())
+app.secret_key = app.config["SECRET_KEY"]
+socketio = SocketIO(app, manage_session=True)
+app.config['SESSION_TYPE'] = app.config.get('SESSION_TYPE', 'filesystem')  # Session-Daten auf dem Server speichern
+Session(app)
+db.init_app(app)
 
 @app.route('/registration', methods=('GET', 'POST'))
 def registration():
