@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block title %}Shotcounter{% endblock %}
+{% block content %}
+<h1>Shotcounter – {{ event.name }}</h1>
+
+<div class="card">
+  <h2>Team hinzufügen</h2>
+  <form method="post" action="{{ url_for('add_team') }}">
+    <input name="team_name" placeholder="Teamname" required>
+    <button type="submit">Anlegen</button>
+  </form>
+</div>
+
+<div class="card">
+  <h2>Shots verbuchen</h2>
+  {% if not teams %}
+    <p>Noch keine Teams vorhanden.</p>
+  {% else %}
+    <table>
+      <tr><th>Team</th><th>Shots</th><th>Aktion</th></tr>
+      {% for team in teams %}
+        <tr>
+          <td>{{ team.name }}</td>
+          <td>{{ team.shots }}</td>
+          <td>
+            <form class="inline" method="post" action="{{ url_for('add_shots') }}">
+              <input type="hidden" name="team_id" value="{{ team.id }}">
+              <input type="number" name="amount" min="1" value="1" style="width:70px;">
+              <button type="submit">+ Shots</button>
+            </form>
+          </td>
+        </tr>
+      {% endfor %}
+    </table>
+  {% endif %}
+</div>
+
+{% endblock %}

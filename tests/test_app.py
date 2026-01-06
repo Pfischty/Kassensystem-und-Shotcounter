@@ -1,11 +1,12 @@
 import pytest
 
-from app import app, db, teamliste
+from app import Event, Order, Team, app, db
 
 
 @pytest.fixture(autouse=True)
 def setup_database():
     """Configure an in-memory database for each test."""
+
     app.config.update(
         TESTING=True,
         SECRET_KEY="test-key",
@@ -28,28 +29,55 @@ def client():
         yield client
 
 
-def test_index_route_renders(client):
-    response = client.get("/")
-    assert response.status_code == 200
-    assert b"Kassensystem Demo" in response.data
-
-
-def test_registration_creates_team_and_shows_message(client):
-    response = client.post(
-        "/registration", data={"Teamname": "Team Alpha"}, follow_redirects=True
+def _create_and_activate_event(client):
+    client.post(
+        "/admin/events",
+        data={
+            "name": "Test Event",
+            "kassensystem_enabled": "on",
+            "shotcounter_enabled": "on",
+        },
     )
-    assert response.status_code == 200
-    assert b"erfolgreich hinzugef" in response.data
+    with app.app_context():
+        event = Event.query.filter_by(name="Test Event").first()
+    client.post(f"/admin/events/{event.id}/activate")
+    return event
+
+
+def test_event_creation_and_activation(client):
+    event = _create_and_activate_event(client)
+    with app.app_context():
+        active = Event.query.filter_by(is_active=True).first()
+        assert active is not None
+        assert active.id == event.id
+
+
+def test_cashier_checkout_records_order(client):
+    event = _create_and_activate_event(client)
+    client.get("/cashier/add?name=Süssgetränke")
+    client.get("/cashier/add?name=Bier")
+    client.get("/cashier/checkout")
 
     with app.app_context():
-        assert teamliste.query.filter_by(team="Team Alpha").count() == 1
+        orders = Order.query.filter_by(event_id=event.id).all()
+        assert len(orders) == 1
+        assert orders[0].total == 13  # 6 + 7 CHF
+        assert len(orders[0].items) == 2
+        assert len(orders[0].drink_sales) >= 1
 
 
-def test_leaderboard_displays_saved_team(client):
+def test_shotcounter_tracks_shots(client):
+    event = _create_and_activate_event(client)
+    client.post("/shotcounter/teams", data={"team_name": "Alpha"})
+
     with app.app_context():
-        db.session.add(teamliste(team="Leaderboard Team", score=5))
-        db.session.commit()
+        team = Team.query.filter_by(event_id=event.id, name="Alpha").first()
+        assert team is not None
+        team_id = team.id
 
-    response = client.get("/leaderboard")
-    assert response.status_code == 200
-    assert b"Leaderboard Team" in response.data
+    client.post("/shotcounter/shots", data={"team_id": team_id, "amount": 3})
+
+    with app.app_context():
+        team = Team.query.get(team_id)
+        assert team.shots == 3
+

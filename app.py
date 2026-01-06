@@ -1,393 +1,439 @@
-from flask import Flask, redirect, render_template, request, session, url_for, abort, render_template_string
-from collections import Counter
-from flask_sqlalchemy import SQLAlchemy
-from flask_socketio import SocketIO, emit
-from flask_session import Session
+"""Zentrale Steuerung für Kassensystem und Shotcounter.
 
-app = Flask(__name__)
-app.secret_key = b'gskjd%hsgd82jsd'
-app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///teamliste.db'
-db = SQLAlchemy(app)
-socketio = SocketIO(app, manage_session=True)
-app.config['SESSION_TYPE'] = 'filesystem'  # Session-Daten auf dem Server speichern
-Session(app)
-
-class teamliste(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    score = db.Column(db.Integer, unique=False, nullable=False)
-    team = db.Column(db.String(150), unique=True, nullable=False)
-
-@app.route('/registration', methods=('GET', 'POST'))
-def registration():
-    message = ""
-    if request.method == 'POST':
-        name = request.form["Teamname"]
-        if not name:
-            message = "Bitte gebe einen gültigen Namen ein"
-        if not message:
-            team_item = teamliste(team=name, score=0)
-            db.session.add(team_item)
-            db.session.commit()
-            message = "Team wurde erfolgreich hinzugefügt."
-            socketio.emit('update_leaderboard', namespace='/', to=None)
-    return render_template('registration.html', message=message)
-
-@app.route('/punkte', methods=('GET', 'POST'))
-def punkte():
-    if request.method == 'POST':
-        team_name = request.form["Team"]
-        punkte = request.form["number"]
-        if not team_name:
-            session['message'] = "Bitte ein Team angeben"
-        elif not punkte.isnumeric():
-            session['message'] = "Bitte eine Zahl angeben"
-        else:
-            team_item = teamliste.query.filter_by(team=team_name).first()
-            if team_item:
-                team_item.score += int(punkte)
-                db.session.commit()
-                session['message'] = f"{punkte} Punkte wurden zu {team_name} hinzugefügt."
-                
-                # WebSocket-Ereignis senden
-                socketio.emit('update_leaderboard', namespace='/', to=None)
-            else:
-                session['message'] = "Team nicht gefunden."
-        return redirect(url_for('punkte'))
-
-    message = session.pop('message', '')
-    teams = teamliste.query.all()
-    return render_template('punkte.html', message=message, teams=teams)
-
-@app.route('/leaderboard')
-def leaderboard():
-    teams = teamliste.query.order_by(teamliste.score.desc()).all()
-    return render_template('leaderboard.html', teams=teams)
-
-@app.route('/admin', methods=('GET', 'POST'))
-def admin():
-    teams = db.session.execute(
-        db.select(teamliste).order_by(teamliste.score)).scalars()
-    return render_template('admin.html', teams=teams) 
-
-@app.route('/team/delete/<id>')
-def loescher(id):
-    grocery = teamliste.query.filter_by(id=id).first()
-    if grocery == None:
-        abort(404)
-    else:
-        db.session.delete(grocery)
-        db.session.commit()
-        return redirect(url_for("admin"))
-
-@app.route('/team/update/<id>', methods=('GET', 'POST'))
-def update(id):
-    message = ''
-    teams = teamliste.query.filter_by(id=id).first()
-    if teams == None:
-        abort(404)
-    if request.method == 'POST':
-        message = ''
-        score = request.form["score"]
-        teamname = request.form["teamname"]
-
-        if not score.isnumeric():
-            message = "Bitte geben Sie bei Anzahl eine Zahl ein."
-            return render_template('update.html', id=id, message=message)
-        if not teamname: 
-            message = "Bitte geben Sie bei der Beschreibung einen Text ein."
-        if not message:
-            teams.score = score
-            teams.team = teamname
-            db.session.commit()
-            return redirect(url_for("admin"))        
-
-    return render_template('update.html', id=id, teams=teams, message=message)
-
-@app.route('/preisliste')
-def preisliste():
-    return render_template('Preisliste.html')
-
-@app.route('/Liste')
-def liste():
-    return render_template('index.html')
-@app.route('/manage', methods=('GET', 'POST'))
-def manage():
-    teams = teamliste.query.all()
-    if request.method == 'POST':
-        action = request.form.get('action')
-        message = ""
-        if action == 'register':
-            # Registrierung eines neuen Teams
-            name = request.form.get("Teamname")
-            if not name:
-                message = "Bitte geben Sie einen gültigen Namen ein."
-            else:
-                existing_team = teamliste.query.filter_by(team=name).first()
-                if existing_team:
-                    message = "Team existiert bereits."
-                else:
-                    team_item = teamliste(team=name, score=0)
-                    db.session.add(team_item)
-                    db.session.commit()
-                    message = "Team wurde erfolgreich hinzugefügt."
-                    # WebSocket-Ereignis senden
-                    socketio.emit('update_leaderboard')
-        elif action == 'add_points':
-            # Punkte zu einem Team hinzufügen
-            team_name = request.form.get("Team")
-            punkte = request.form.get("number")
-            if not team_name:
-                message = "Bitte ein Team angeben."
-            elif not punkte or not punkte.isnumeric():
-                message = "Bitte eine gültige Zahl angeben."
-            else:
-                team_item = teamliste.query.filter_by(team=team_name).first()
-                if team_item:
-                    team_item.score += int(punkte)
-                    db.session.commit()
-                    message = f"{punkte} Punkte wurden zu {team_name} hinzugefügt."
-                    # WebSocket-Ereignis senden
-                    socketio.emit('update_leaderboard')
-                else:
-                    message = "Team nicht gefunden."
-        elif action == 'admin_update':
-            # Teamdaten aktualisieren
-            team_id = request.form.get("team_id")
-            teamname = request.form.get("teamname")
-            score = request.form.get("score")
-            if not team_id or not teamname or not score:
-                message = "Alle Felder müssen ausgefüllt werden."
-            elif not score.isnumeric():
-                message = "Punkte müssen eine Zahl sein."
-            else:
-                team = teamliste.query.get(team_id)
-                if team:
-                    team.team = teamname
-                    team.score = int(score)
-                    db.session.commit()
-                    message = "Team wurde aktualisiert."
-                    socketio.emit('update_leaderboard')
-                else:
-                    message = "Team nicht gefunden."
-        elif action == 'admin_delete':
-            # Team löschen
-            team_id = request.form.get("team_id")
-            team = teamliste.query.get(team_id)
-            if team:
-                db.session.delete(team)
-                db.session.commit()
-                message = "Team wurde gelöscht."
-                socketio.emit('update_leaderboard')
-            else:
-                message = "Team nicht gefunden."
-        # Nachricht in der Session speichern und Weiterleitung zur Verhinderung von doppelten Aktionen
-        session['message'] = message
-        return redirect(url_for('manage'))
-    # GET-Anfrage
-    message = session.pop('message', '')
-    teams = teamliste.query.all()
-    return render_template('manage.html', message=message, teams=teams)
-
-html_template = """
-<!DOCTYPE html>
-<html lang="de">
-<head>
-  <meta charset="UTF-8" />
-  <title>Kassensystem</title>
-  <style>
-    html, body {
-      margin: 0;
-      padding: 0;
-      width: 100%;
-      height: 100%;
-      font-family: Arial, sans-serif;
-      font-size: 18px;
-      overflow: hidden;
-    }
-
-    .wrapper {
-      display: flex;
-      flex-direction: column; 
-      height: 100vh;
-    }
-
-    .bestellung-container h3 {
-      margin: 5px 0;
-    }
-    .top-section {
-      flex: 0 0 33%;
-      border-bottom: 1px solid #999;
-      box-sizing: border-box;
-      padding: 10px 20px;
-      overflow-y: auto;
-    }
-    .top-section h1 {
-      margin-top: 0;
-    }
-
-    #total {
-      font-weight: bold;
-      margin-top: 10px;
-      font-size: 1.5em;
-      background-color: #ffe680;
-      border: 2px solid #ccc;
-      border-radius: 5px;
-      padding: 10px;
-      text-align: center;
-      width: fit-content;
-    }
-
-    .bottom-section {
-      flex: 1;
-      padding: 10px;
-      box-sizing: border-box;
-    }
-
-
-  .buttons-container {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(400px, 2fr)); /* Breite reduziert */
-    gap: 5px; /* Geringerer Abstand zwischen Buttons */
-    height: 200%;
-    box-sizing: border-box;
-    align-content: start;
-  }
-
-  .item-button {
-    display: flex;
-    justify-content: center;
-    align-items: center;
-    text-decoration: none;
-    color: white;
-    border: 1px solid #999;
-    border-radius: 4px;
-    font-size: 60px; /* Kleinere Schriftgröße */
-    padding: 10px; /* Geringeres Padding */
-    text-align: center;
-  }
-
-  .item-button:hover {
-    background-color: #bbb;
-  }
-
-
-  /* Anpassung für spezifische Farben bleibt gleich */
-  .item-button.suess {
-    background-color: #0099ff;
-  }
-  .item-button.bier {
-    background-color: #ffd900;
-  }
-  .item-button.wein {
-    background-color: #350097;
-  }
-  .item-button.shots {
-    background-color: #ffe4b5;
-  }
-  .item-button.gross {
-    background-color: #ff00c8;
-  }
-  .item-button.depot {
-    background-color: #000000;
-  }  
-  .item-button.clear {
-    background-color: #fc0303;
-  }
-  .item-button.Kunde {
-    background-color: #696969;
-  }
-</style>
-</head>
-<body>
-  <div class="wrapper">
-    <div class="top-section">
-      <h1>Kassensystem Demo</h1>
-      <div id="total">
-        Total: {{ total }} CHF
-      </div>
-      <div class="bestellung-container">
-        <h3>Bestellliste</h3>
-        {% if items %}
-            <ul>
-            {% for (item, count) in items %}
-                <li>{{ count }}x {{ item }}</li>
-            {% endfor %}
-            </ul>
-        {% else %}
-            <p>(Noch keine Artikel)</p>
-        {% endif %}
-      </div>
-    </div>
-
-    <div class="bottom-section">
-      <div class="buttons-container">
-        <a class="item-button suess" href="{{ url_for('add_item', name='Süssgetränke') }}">Süssgetränke</a>
-        <a class="item-button bier" href="{{ url_for('add_item', name='Bier') }}">Bier, Mate, Redbull, Smirnoff</a>
-        <a class="item-button wein" href="{{ url_for('add_item', name='Wein') }}">Weinflasche \n  </a>  
-        <a class="item-button gross" href="{{ url_for('add_item', name='Drink') }}">Drink 10</a>
-        <a class="item-button depot" href="{{ url_for('add_item', name='Depot rein') }}">Depot rein</a>
-        <a class="item-button depot" href="{{ url_for('add_item', name='Weinglassdepot') }}">Weinglassdepot</a>
-        <a class="item-button clear" href="{{ url_for('remove_last') }}">1 zurück</a>
-        <a class="item-button Kunde" href="{{ url_for('clear_order') }}">Neuer Kunde</a>
-      </div>
-    </div>
-  </div>
-</body>
-</html>
+Die Anwendung bündelt zwei eigenständige Subsysteme (Kasse & Shotcounter)
+unter einer gemeinsamen Event-Verwaltung. Im Adminbereich können Events
+angelegt, aktiviert, archiviert und mit eigenen Einstellungen versehen
+werden. Pro Event lässt sich separat steuern, ob Kassensystem oder
+Shotcounter aktiv sein sollen.
 """
 
-PRICES = {
-    'Süssgetränke': 6,
-    'Bier': 7,
-    'Wein': 7,
-    'Drink 10': 12,
-    'Depot rein': -2,
-    'Weinflasche 0.7': 22,
-    'Weinglassdepot': 2,
+from __future__ import annotations
 
-}
+import json
+import logging
+from collections import Counter
+from dataclasses import dataclass
+from datetime import datetime
+from logging.handlers import RotatingFileHandler
+from pathlib import Path
+from typing import Dict, Iterable, List
+
+from flask import (
+    Flask,
+    abort,
+    flash,
+    redirect,
+    render_template,
+    request,
+    session,
+    url_for,
+)
+from flask_sqlalchemy import SQLAlchemy
+from sqlalchemy import func
 
 
+# ---------------------------------------------------------------------------
+# App- und DB-Konfiguration
+# ---------------------------------------------------------------------------
+app = Flask(__name__, instance_relative_config=True)
+app.config.setdefault("SECRET_KEY", "dev-secret-key")
+app.config.setdefault("SQLALCHEMY_DATABASE_URI", f"sqlite:///{Path(app.instance_path) / 'app.db'}")
+app.config.setdefault("SQLALCHEMY_TRACK_MODIFICATIONS", False)
+app.config.setdefault("SESSION_TYPE", "filesystem")
 
+Path(app.instance_path).mkdir(parents=True, exist_ok=True)
+db = SQLAlchemy(app)
+
+
+def configure_logging(flask_app: Flask) -> None:
+    """Richtet sauberes, rotierendes Logging ein."""
+
+    log_dir = Path(flask_app.instance_path) / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    handler = RotatingFileHandler(log_dir / "app.log", maxBytes=512_000, backupCount=3)
+    formatter = logging.Formatter("%(asctime)s [%(levelname)s] %(name)s - %(message)s")
+    handler.setFormatter(formatter)
+    handler.setLevel(logging.INFO)
+
+    flask_app.logger.handlers.clear()
+    flask_app.logger.addHandler(handler)
+    flask_app.logger.setLevel(logging.INFO)
+    flask_app.logger.propagate = False
+    flask_app.logger.info("Logging initialisiert")
+
+
+configure_logging(app)
+
+
+# ---------------------------------------------------------------------------
+# Datenbank-Modelle
+# ---------------------------------------------------------------------------
+class Event(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(150), nullable=False)
+    is_active = db.Column(db.Boolean, default=False)
+    is_archived = db.Column(db.Boolean, default=False)
+    kassensystem_enabled = db.Column(db.Boolean, default=True)
+    shotcounter_enabled = db.Column(db.Boolean, default=True)
+    shared_settings = db.Column(db.JSON, default=dict)
+    kassensystem_settings = db.Column(db.JSON, default=dict)
+    shotcounter_settings = db.Column(db.JSON, default=dict)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class Team(db.Model):
+    __table_args__ = (db.UniqueConstraint("event_id", "name", name="uq_team_event_name"),)
+
+    id = db.Column(db.Integer, primary_key=True)
+    event_id = db.Column(db.Integer, db.ForeignKey("event.id", ondelete="CASCADE"), nullable=False)
+    name = db.Column(db.String(150), nullable=False)
+    shots = db.Column(db.Integer, default=0, nullable=False)
+
+    event = db.relationship("Event", backref=db.backref("teams", cascade="all, delete-orphan"))
+
+
+class Order(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    event_id = db.Column(db.Integer, db.ForeignKey("event.id", ondelete="CASCADE"), nullable=False)
+    timestamp = db.Column(db.DateTime, default=datetime.utcnow)
+    total = db.Column(db.Integer, nullable=False)
+
+    event = db.relationship("Event", backref=db.backref("orders", cascade="all, delete-orphan"))
+
+
+class OrderItem(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    order_id = db.Column(db.Integer, db.ForeignKey("order.id", ondelete="CASCADE"), nullable=False)
+    name = db.Column(db.String(100), nullable=False)
+    price = db.Column(db.Integer, nullable=False)
+
+    order = db.relationship("Order", backref=db.backref("items", cascade="all, delete-orphan"))
+
+
+class DrinkSale(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    order_id = db.Column(db.Integer, db.ForeignKey("order.id", ondelete="CASCADE"), nullable=False)
+    name = db.Column(db.String(100), nullable=False)
+    quantity = db.Column(db.Integer, default=0, nullable=False)
+
+    order = db.relationship("Order", backref=db.backref("drink_sales", cascade="all, delete-orphan"))
+
+
+with app.app_context():
+    db.create_all()
+
+
+# ---------------------------------------------------------------------------
+# Kassensystem-Konfiguration
+# ---------------------------------------------------------------------------
+@dataclass
+class ButtonConfig:
+    name: str
+    label: str
+    price: int
+    css_class: str
+
+
+DEFAULT_BUTTONS: List[ButtonConfig] = [
+    ButtonConfig(name="Süssgetränke", label="Süssgetränke", price=6, css_class="suess"),
+    ButtonConfig(name="Bier", label="Bier / Mate / Red Bull / Smirnoff", price=7, css_class="bier"),
+    ButtonConfig(name="Wein", label="Wein", price=7, css_class="wein"),
+    ButtonConfig(name="Weinflasche 0.7", label="Weinflasche", price=22, css_class="flasche"),
+    ButtonConfig(name="Drink 10", label="Drink 10", price=12, css_class="gross"),
+    ButtonConfig(name="Depot rein", label="Depot rein", price=-2, css_class="depot"),
+    ButtonConfig(name="Weinglassdepot", label="Weinglas Depot", price=2, css_class="Weinglassdepot"),
+    ButtonConfig(name="Kaffee", label="Kaffee", price=3, css_class="kaffee"),
+    ButtonConfig(name="Shot", label="Shot", price=5, css_class="shot"),
+]
+
+
+def parse_json_field(raw_value: str | None) -> Dict:
+    if not raw_value:
+        return {}
+    try:
+        return json.loads(raw_value)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"JSON ungültig: {exc}")
+
+
+def get_active_event() -> Event | None:
+    return Event.query.filter_by(is_active=True, is_archived=False).first()
+
+
+def require_active_event(*, kassensystem: bool = False, shotcounter: bool = False) -> Event:
+    event = get_active_event()
+    if not event:
+        abort(404, description="Kein aktives Event vorhanden.")
+    if kassensystem and not event.kassensystem_enabled:
+        abort(404, description="Kassensystem ist für das aktuelle Event deaktiviert.")
+    if shotcounter and not event.shotcounter_enabled:
+        abort(404, description="Shotcounter ist für das aktuelle Event deaktiviert.")
+    return event
+
+
+def resolve_button_config(event: Event | None) -> List[ButtonConfig]:
+    raw_items: Iterable[dict] | None = None
+    if event and isinstance(event.kassensystem_settings, dict):
+        raw_items = event.kassensystem_settings.get("items")
+    normalized: List[ButtonConfig] = []
+    items_source = raw_items if raw_items else [btn.__dict__ for btn in DEFAULT_BUTTONS]
+    for item in items_source:
+        try:
+            normalized.append(
+                ButtonConfig(
+                    name=item["name"],
+                    label=item.get("label") or item["name"],
+                    price=int(item["price"]),
+                    css_class=item.get("css_class", "suess"),
+                )
+            )
+        except (KeyError, TypeError, ValueError):
+            continue
+    return normalized or DEFAULT_BUTTONS
+
+
+def cart_key(event: Event) -> str:
+    return f"cart_{event.id}"
+
+
+# ---------------------------------------------------------------------------
+# Routen: Dashboard & Admin
+# ---------------------------------------------------------------------------
 @app.route("/")
-def index():
-    """Startseite mit der Bestell-Liste (zusammengefasst) und Gesamtbetrag."""
-    items = session.get('items', [])
-    total_price = sum(PRICES.get(item, 0) for item in items)
-    # Artikel zusammenfassen, z.B. 2x Bier
-    counts = Counter(items)
-    grouped_items = list(counts.items())  # [(artikel, anzahl), ...]
+def dashboard():
+    active_event = get_active_event()
+    events = Event.query.order_by(Event.created_at.desc()).all()
+    return render_template("dashboard.html", active_event=active_event, events=events)
 
-    return render_template_string(
-        html_template,
-        items=grouped_items,
-        total=total_price
+
+@app.route("/admin")
+def admin():
+    events = Event.query.order_by(Event.created_at.desc()).all()
+    active_event = get_active_event()
+    default_button_presets = [button.__dict__ for button in DEFAULT_BUTTONS]
+    return render_template(
+        "admin.html",
+        events=events,
+        active_event=active_event,
+        default_buttons=default_button_presets,
     )
 
-@app.route("/add")
+
+@app.route("/admin/events", methods=["POST"])
+def create_event():
+    name = (request.form.get("name") or "").strip()
+    kassensystem_enabled = bool(request.form.get("kassensystem_enabled"))
+    shotcounter_enabled = bool(request.form.get("shotcounter_enabled"))
+
+    if not name:
+        flash("Bitte einen Eventnamen angeben.", "error")
+        return redirect(url_for("admin"))
+
+    try:
+        shared_settings = parse_json_field(request.form.get("shared_settings"))
+        kass_settings = parse_json_field(request.form.get("kassensystem_settings"))
+        shot_settings = parse_json_field(request.form.get("shotcounter_settings"))
+    except ValueError as exc:
+        flash(str(exc), "error")
+        return redirect(url_for("admin"))
+
+    event = Event(
+        name=name,
+        kassensystem_enabled=kassensystem_enabled,
+        shotcounter_enabled=shotcounter_enabled,
+        shared_settings=shared_settings,
+        kassensystem_settings=kass_settings,
+        shotcounter_settings=shot_settings,
+    )
+    db.session.add(event)
+    db.session.commit()
+    app.logger.info("Event erstellt: %s", name)
+    flash("Event wurde angelegt.", "success")
+    return redirect(url_for("admin"))
+
+
+@app.route("/admin/events/<int:event_id>/update", methods=["POST"])
+def update_event(event_id: int):
+    event = Event.query.get_or_404(event_id)
+    event.kassensystem_enabled = bool(request.form.get("kassensystem_enabled"))
+    event.shotcounter_enabled = bool(request.form.get("shotcounter_enabled"))
+
+    try:
+        event.shared_settings = parse_json_field(request.form.get("shared_settings"))
+        event.kassensystem_settings = parse_json_field(request.form.get("kassensystem_settings"))
+        event.shotcounter_settings = parse_json_field(request.form.get("shotcounter_settings"))
+    except ValueError as exc:
+        flash(str(exc), "error")
+        return redirect(url_for("admin"))
+
+    db.session.commit()
+    app.logger.info("Event aktualisiert: %s", event.name)
+    flash("Event wurde aktualisiert.", "success")
+    return redirect(url_for("admin"))
+
+
+@app.route("/admin/events/<int:event_id>/activate", methods=["POST"])
+def activate_event(event_id: int):
+    event = Event.query.get_or_404(event_id)
+    Event.query.update({"is_active": False})
+    event.is_active = True
+    event.is_archived = False
+    db.session.commit()
+    app.logger.info("Event aktiviert: %s", event.name)
+    flash(f"Event '{event.name}' ist jetzt aktiv.", "success")
+    return redirect(url_for("admin"))
+
+
+@app.route("/admin/events/<int:event_id>/archive", methods=["POST"])
+def archive_event(event_id: int):
+    event = Event.query.get_or_404(event_id)
+    event.is_archived = True
+    event.is_active = False
+    db.session.commit()
+    app.logger.info("Event archiviert: %s", event.name)
+    flash(f"Event '{event.name}' wurde archiviert.", "success")
+    return redirect(url_for("admin"))
+
+
+# ---------------------------------------------------------------------------
+# Kassensystem
+# ---------------------------------------------------------------------------
+@app.route("/cashier")
+def cashier():
+    event = require_active_event(kassensystem=True)
+    buttons = resolve_button_config(event)
+    items = session.get(cart_key(event), [])
+    prices = {button.name: button.price for button in buttons}
+    total = sum(prices.get(item, 0) for item in items)
+    grouped = Counter(items).items()
+    return render_template("cashier.html", buttons=buttons, items=grouped, total=total, event=event)
+
+
+@app.route("/cashier/add")
 def add_item():
-    """Fügt einen Artikel zur Bestellung hinzu."""
-    name = request.args.get('name')
-    if name:
-        items = session.get('items', [])
+    event = require_active_event(kassensystem=True)
+    buttons = resolve_button_config(event)
+    prices = {button.name: button.price for button in buttons}
+    name = request.args.get("name")
+    if name and name in prices:
+        items = session.get(cart_key(event), [])
         items.append(name)
-        session['items'] = items
-    return redirect(url_for('index'))
+        session[cart_key(event)] = items
+        app.logger.info("Artikel hinzugefügt: %s (Event %s)", name, event.name)
+    return redirect(url_for("cashier"))
 
-@app.route("/remove_last")
+
+@app.route("/cashier/remove_last")
 def remove_last():
-    """Entfernt den zuletzt hinzugefügten Artikel."""
-    items = session.get('items', [])
+    event = require_active_event(kassensystem=True)
+    items = session.get(cart_key(event), [])
     if items:
-        items.pop()
-        session['items'] = items
-    return redirect(url_for('index'))
+        removed = items.pop()
+        session[cart_key(event)] = items
+        app.logger.info("Artikel entfernt: %s (Event %s)", removed, event.name)
+    return redirect(url_for("cashier"))
 
-@app.route("/clear_order")
-def clear_order():
-    """Löscht die gesamte Bestellung."""
-    session['items'] = []
-    return redirect(url_for('index'))
-if __name__ == '__main__':
-    socketio.run(app, host='0.0.0.0', port=5000, debug=True)
 
+@app.route("/cashier/checkout")
+def checkout():
+    event = require_active_event(kassensystem=True)
+    items = session.get(cart_key(event), [])
+    prices = {btn.name: btn.price for btn in resolve_button_config(event)}
+    if items:
+        total = sum(prices.get(item, 0) for item in items)
+        order = Order(event_id=event.id, total=total)
+        db.session.add(order)
+        db.session.commit()
+
+        for item_name in items:
+            db.session.add(OrderItem(order_id=order.id, name=item_name, price=prices.get(item_name, 0)))
+
+        for name, qty in Counter(items).items():
+            db.session.add(DrinkSale(order_id=order.id, name=name, quantity=qty))
+
+        db.session.commit()
+        app.logger.info("Bestellung abgeschlossen (Event %s, Summe %s)", event.name, total)
+
+    session[cart_key(event)] = []
+    return redirect(url_for("cashier"))
+
+
+@app.route("/cashier/stats")
+def cashier_stats():
+    event = require_active_event(kassensystem=True)
+    revenue = (
+        db.session.query(func.coalesce(func.sum(Order.total), 0))
+        .filter(Order.event_id == event.id)
+        .scalar()
+        or 0
+    )
+    count = db.session.query(func.count(Order.id)).filter(Order.event_id == event.id).scalar() or 0
+    sales = (
+        db.session.query(DrinkSale.name, func.sum(DrinkSale.quantity))
+        .join(Order, Order.id == DrinkSale.order_id)
+        .filter(Order.event_id == event.id)
+        .group_by(DrinkSale.name)
+        .all()
+    )
+    return render_template("cashier_stats.html", revenue=revenue, count=count, sales=sales, event=event)
+
+
+# ---------------------------------------------------------------------------
+# Shotcounter
+# ---------------------------------------------------------------------------
+@app.route("/shotcounter")
+def shotcounter():
+    event = require_active_event(shotcounter=True)
+    teams = Team.query.filter_by(event_id=event.id).order_by(Team.shots.desc(), Team.name.asc()).all()
+    return render_template("shotcounter.html", teams=teams, event=event)
+
+
+@app.route("/shotcounter/teams", methods=["POST"])
+def add_team():
+    event = require_active_event(shotcounter=True)
+    name = (request.form.get("team_name") or "").strip()
+    if not name:
+        flash("Bitte einen Teamnamen angeben.", "error")
+        return redirect(url_for("shotcounter"))
+
+    if Team.query.filter_by(event_id=event.id, name=name).first():
+        flash("Team existiert bereits.", "error")
+        return redirect(url_for("shotcounter"))
+
+    db.session.add(Team(event_id=event.id, name=name, shots=0))
+    db.session.commit()
+    app.logger.info("Team hinzugefügt: %s (Event %s)", name, event.name)
+    flash("Team hinzugefügt.", "success")
+    return redirect(url_for("shotcounter"))
+
+
+@app.route("/shotcounter/shots", methods=["POST"])
+def add_shots():
+    event = require_active_event(shotcounter=True)
+    team_id = request.form.get("team_id", type=int)
+    amount = request.form.get("amount", type=int, default=1)
+
+    if not team_id:
+        flash("Kein Team gewählt.", "error")
+        return redirect(url_for("shotcounter"))
+
+    team = Team.query.filter_by(id=team_id, event_id=event.id).first()
+    if not team:
+        flash("Team nicht gefunden.", "error")
+        return redirect(url_for("shotcounter"))
+
+    if amount is None or amount <= 0:
+        flash("Bitte eine gültige Anzahl Shots angeben.", "error")
+        return redirect(url_for("shotcounter"))
+
+    team.shots += amount
+    db.session.commit()
+    app.logger.info("%s Shots zu Team %s hinzugefügt (Event %s)", amount, team.name, event.name)
+    flash("Shots verbucht.", "success")
+    return redirect(url_for("shotcounter"))
+
+
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=5000, debug=True)

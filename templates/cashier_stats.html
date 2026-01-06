@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}Kassen-Statistik{% endblock %}
+{% block content %}
+<h1>Statistik – {{ event.name }}</h1>
+
+<div class="card">
+  <p><strong>Gesamtumsatz:</strong> {{ revenue }} CHF<br>
+     <strong>Anzahl Bestellungen:</strong> {{ count }}</p>
+</div>
+
+<div class="card">
+  <h2>Verkaufte Getränke</h2>
+  <table>
+    <tr><th>Getränk</th><th>Menge</th></tr>
+    {% for name, qty in sales %}
+      <tr><td>{{ name }}</td><td>{{ qty }}</td></tr>
+    {% endfor %}
+  </table>
+</div>
+
+<a href="{{ url_for('cashier') }}"><button class="secondary">Zurück zur Kasse</button></a>
+{% endblock %}

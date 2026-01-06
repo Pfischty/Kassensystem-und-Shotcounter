@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+{% block title %}Admin{% endblock %}
+{% block content %}
+<h1>Adminbereich</h1>
+
+<div class="card">
+  <h2>Neues Event</h2>
+  <form method="post" action="{{ url_for('create_event') }}">
+    <label for="name">Name</label><br>
+    <input id="name" name="name" placeholder="z.B. Sommerfest" required>
+    <div style="margin: 0.6rem 0;">
+      <label><input type="checkbox" name="kassensystem_enabled" checked> Kassensystem aktiv</label>
+      <label style="margin-left:1rem;"><input type="checkbox" name="shotcounter_enabled" checked> Shotcounter aktiv</label>
+    </div>
+    <label for="shared_settings">Gemeinsame Einstellungen (JSON)</label>
+    <textarea id="shared_settings" name="shared_settings" placeholder='{"waehrung": "CHF"}'></textarea>
+    <label for="kassensystem_settings">Kassensystem Einstellungen (JSON)</label>
+    <textarea id="kassensystem_settings" name="kassensystem_settings" placeholder='{"items": [...]}'>{{ {"items": default_buttons} | tojson(indent=2) }}</textarea>
+    <label for="shotcounter_settings">Shotcounter Einstellungen (JSON)</label>
+    <textarea id="shotcounter_settings" name="shotcounter_settings" placeholder='{"max_shots": 10}'></textarea>
+    <button type="submit">Event anlegen</button>
+  </form>
+</div>
+
+<div class="card">
+  <h2>Events</h2>
+  {% if not events %}
+    <p>Es wurden noch keine Events angelegt.</p>
+  {% endif %}
+  {% for event in events %}
+    <div class="card" style="background: #0b1222;">
+      <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap: wrap; gap: .4rem;">
+        <div>
+          <strong>{{ event.name }}</strong>
+          {% if event.is_active %}<span class="badge badge-green">aktiv</span>{% endif %}
+          {% if event.is_archived %}<span class="badge badge-red">archiviert</span>{% endif %}
+        </div>
+        <div>
+          <form class="inline" method="post" action="{{ url_for('activate_event', event_id=event.id) }}">
+            <button type="submit" class="secondary">Aktivieren</button>
+          </form>
+          <form class="inline" method="post" action="{{ url_for('archive_event', event_id=event.id) }}">
+            <button type="submit" class="danger">Archivieren</button>
+          </form>
+        </div>
+      </div>
+
+      <form method="post" action="{{ url_for('update_event', event_id=event.id) }}" style="margin-top:.8rem;">
+        <div style="margin-bottom:0.6rem;">
+          <label><input type="checkbox" name="kassensystem_enabled" {% if event.kassensystem_enabled %}checked{% endif %}> Kassensystem aktiv</label>
+          <label style="margin-left:1rem;"><input type="checkbox" name="shotcounter_enabled" {% if event.shotcounter_enabled %}checked{% endif %}> Shotcounter aktiv</label>
+        </div>
+        <label>Gemeinsame Einstellungen</label>
+        <textarea name="shared_settings">{{ (event.shared_settings or {}) | tojson(indent=2) }}</textarea>
+        <label>Kassensystem Einstellungen</label>
+        <textarea name="kassensystem_settings">{{ (event.kassensystem_settings or {}) | tojson(indent=2) }}</textarea>
+        <label>Shotcounter Einstellungen</label>
+        <textarea name="shotcounter_settings">{{ (event.shotcounter_settings or {}) | tojson(indent=2) }}</textarea>
+        <button type="submit">Speichern</button>
+      </form>
+    </div>
+  {% endfor %}
+</div>
+
+{% endblock %}
