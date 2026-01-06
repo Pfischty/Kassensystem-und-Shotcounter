@@ -1,0 +1,176 @@
+{% extends "base.html" %}
+{% block title %}Shotcounter Vollbild{% endblock %}
+{% block content %}
+<style>
+  /* Vollbilddarstellung mit eigenem Look */
+  header { display: none; }
+  body, html { height: 100%; }
+  .container { padding: 0; }
+  .leaderboard-hero {
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    background: radial-gradient(circle at 20% 20%, rgba(56,189,248,0.12), transparent 25%),
+                radial-gradient(circle at 80% 0%, rgba(52,211,153,0.16), transparent 25%),
+                linear-gradient(135deg, #0b1222 0%, #0f172a 60%, #0b1222 100%);
+    padding: 2.5rem 3rem 3rem;
+    box-sizing: border-box;
+  }
+  .leaderboard-head {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 1rem;
+    margin-bottom: 2rem;
+  }
+  .leaderboard-title {
+    letter-spacing: 1px;
+    font-weight: 800;
+    text-transform: uppercase;
+    color: rgba(226,232,240,0.6);
+    font-size: 0.9rem;
+  }
+  .leaderboard-event {
+    font-size: 2.8rem;
+    margin: 0.2rem 0;
+  }
+  .leaderboard-sub {
+    color: rgba(226,232,240,0.7);
+    font-weight: 600;
+  }
+  .leaderboard-meta {
+    text-align: right;
+    color: rgba(226,232,240,0.7);
+  }
+  .pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.45rem 0.8rem;
+    border-radius: 999px;
+    background: rgba(56,189,248,0.12);
+    border: 1px solid rgba(56,189,248,0.4);
+    color: #e2e8f0;
+    font-weight: 700;
+  }
+  .leaderboard-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: 1rem;
+    flex: 1;
+  }
+  .lb-card {
+    background: rgba(30,41,59,0.75);
+    border: 1px solid rgba(51,65,85,0.7);
+    border-radius: 16px;
+    padding: 1.2rem 1rem;
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.35);
+  }
+  .lb-rank {
+    width: 52px;
+    height: 52px;
+    border-radius: 14px;
+    display: grid;
+    place-items: center;
+    font-weight: 900;
+    font-size: 1.3rem;
+    color: #0b1222;
+    background: linear-gradient(135deg, #38bdf8, #34d399);
+  }
+  .lb-info {
+    flex: 1;
+  }
+  .lb-name {
+    margin: 0;
+    font-size: 1.2rem;
+    font-weight: 800;
+  }
+  .lb-shots {
+    margin: 0.2rem 0 0;
+    color: rgba(226,232,240,0.75);
+    font-weight: 600;
+  }
+  .lb-empty {
+    color: rgba(226,232,240,0.65);
+    font-size: 1.1rem;
+  }
+  .ticker {
+    margin-top: 1rem;
+    font-size: 0.95rem;
+    color: rgba(226,232,240,0.7);
+  }
+  @media (max-width: 720px) {
+    .leaderboard-hero { padding: 1.5rem; }
+    .leaderboard-head { flex-direction: column; align-items: flex-start; }
+    .leaderboard-grid { grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); }
+  }
+</style>
+
+<div class="leaderboard-hero" data-refresh-url="{{ url_for('shotcounter_leaderboard_data', limit=limit) }}">
+  <div class="leaderboard-head">
+    <div>
+      <div class="leaderboard-title">Shotcounter</div>
+      <div class="leaderboard-event">{{ event.name }}</div>
+      <div class="leaderboard-sub">Top {{ limit }} Teams · Live</div>
+    </div>
+    <div class="leaderboard-meta">
+      <div class="pill">Auto-Refresh</div>
+      <div class="ticker">Letztes Update: <span id="last-update">jetzt</span></div>
+    </div>
+  </div>
+
+  <div id="leaderboard-grid" class="leaderboard-grid"></div>
+
+  <div class="ticker">Aktualisierung alle 5 Sekunden · Query-Param `limit` anpassbar</div>
+</div>
+
+<script>
+  const refreshUrl = document.querySelector(".leaderboard-hero").dataset.refreshUrl;
+  const gridEl = document.getElementById("leaderboard-grid");
+  const lastUpdateEl = document.getElementById("last-update");
+  const fallbackTeams = {{ teams | tojson }};
+
+  const renderTeams = (teams) => {
+    if (!teams.length) {
+      gridEl.innerHTML = '<div class="lb-card"><div class="lb-empty">Keine Teams vorhanden.</div></div>';
+      return;
+    }
+    gridEl.innerHTML = teams.map((team, idx) => {
+      return `
+        <div class="lb-card">
+          <div class="lb-rank">#${idx + 1}</div>
+          <div class="lb-info">
+            <p class="lb-name">${team.name}</p>
+            <p class="lb-shots">${team.shots} Shots</p>
+          </div>
+        </div>
+      `;
+    }).join("");
+  };
+
+  const updateTimestamp = () => {
+    const now = new Date();
+    lastUpdateEl.textContent = now.toLocaleTimeString();
+  };
+
+  const fetchAndRender = async () => {
+    try {
+      const res = await fetch(refreshUrl, { cache: "no-store" });
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      const data = await res.json();
+      renderTeams(data.teams || []);
+      updateTimestamp();
+    } catch (err) {
+      console.error("Leaderboard Refresh fehlgeschlagen", err);
+    }
+  };
+
+  renderTeams(fallbackTeams);
+  updateTimestamp();
+  fetchAndRender();
+  setInterval(fetchAndRender, 5000);
+</script>
+{% endblock %}

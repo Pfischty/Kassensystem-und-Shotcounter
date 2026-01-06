@@ -393,6 +393,54 @@ def shotcounter():
     return render_template("shotcounter.html", teams=teams, event=event)
 
 
+def _leaderboard_limit(default: int = 10) -> int:
+    """Sanitizes the requested leaderboard size."""
+
+    raw = request.args.get("limit", default=default, type=int)
+    if not raw or raw < 1:
+        return default
+    return min(raw, 50)
+
+
+def _top_teams(event: Event, limit: int) -> List[Team]:
+    return (
+        Team.query.filter_by(event_id=event.id)
+        .order_by(Team.shots.desc(), Team.name.asc())
+        .limit(limit)
+        .all()
+    )
+
+
+def _serialize_teams(teams: Iterable[Team]) -> List[Dict[str, int | str]]:
+    return [{"id": team.id, "name": team.name, "shots": team.shots} for team in teams]
+
+
+@app.route("/shotcounter/leaderboard")
+def shotcounter_leaderboard():
+    event = require_active_event(shotcounter=True)
+    limit = _leaderboard_limit()
+    teams = _top_teams(event, limit)
+    return render_template(
+        "shotcounter_leaderboard.html",
+        teams=_serialize_teams(teams),
+        event=event,
+        limit=limit,
+    )
+
+
+@app.route("/shotcounter/leaderboard/data")
+def shotcounter_leaderboard_data():
+    event = require_active_event(shotcounter=True)
+    limit = _leaderboard_limit()
+    teams = _top_teams(event, limit)
+    payload = {
+        "event": {"id": event.id, "name": event.name},
+        "limit": limit,
+        "teams": _serialize_teams(teams),
+    }
+    return payload
+
+
 @app.route("/shotcounter/teams", methods=["POST"])
 def add_team():
     event = require_active_event(shotcounter=True)
