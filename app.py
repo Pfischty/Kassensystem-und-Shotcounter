@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime
@@ -36,7 +37,10 @@ from sqlalchemy import func
 # App- und DB-Konfiguration
 # ---------------------------------------------------------------------------
 app = Flask(__name__, instance_relative_config=True)
-app.config.setdefault("SECRET_KEY", "dev-secret-key")
+
+# Ensure a usable secret key even when Flask's default (None) is present.
+secret_key = os.environ.get("SECRET_KEY") or app.config.get("SECRET_KEY") or "dev-secret-key"
+app.config["SECRET_KEY"] = secret_key
 app.config.setdefault("SQLALCHEMY_DATABASE_URI", f"sqlite:///{Path(app.instance_path) / 'app.db'}")
 app.config.setdefault("SQLALCHEMY_TRACK_MODIFICATIONS", False)
 app.config.setdefault("SESSION_TYPE", "filesystem")
@@ -436,4 +440,4 @@ def add_shots():
 
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000, debug=True)
+    app.run(host="0.0.0.0", port=5001, debug=True)
