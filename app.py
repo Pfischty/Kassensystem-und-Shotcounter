@@ -137,18 +137,43 @@ class ButtonConfig:
     label: str
     price: int
     css_class: str
+    color: str | None = None
 
 
 DEFAULT_BUTTONS: List[ButtonConfig] = [
-    ButtonConfig(name="Süssgetränke", label="Süssgetränke", price=6, css_class="suess"),
-    ButtonConfig(name="Bier", label="Bier / Mate / Red Bull / Smirnoff", price=7, css_class="bier"),
-    ButtonConfig(name="Wein", label="Wein", price=7, css_class="wein"),
-    ButtonConfig(name="Weinflasche 0.7", label="Weinflasche", price=22, css_class="flasche"),
-    ButtonConfig(name="Drink 10", label="Drink 10", price=12, css_class="gross"),
-    ButtonConfig(name="Depot rein", label="Depot rein", price=-2, css_class="depot"),
-    ButtonConfig(name="Weinglassdepot", label="Weinglas Depot", price=2, css_class="Weinglassdepot"),
-    ButtonConfig(name="Kaffee", label="Kaffee", price=3, css_class="kaffee"),
-    ButtonConfig(name="Shot", label="Shot", price=5, css_class="shot"),
+    ButtonConfig(
+        name="Süssgetränke",
+        label="Süssgetränke",
+        price=6,
+        css_class="suess",
+        color="#1f2a44",
+    ),
+    ButtonConfig(
+        name="Bier",
+        label="Bier / Mate / Red Bull / Smirnoff",
+        price=7,
+        css_class="bier",
+        color="#193f8a",
+    ),
+    ButtonConfig(name="Wein", label="Wein", price=7, css_class="wein", color="#8a1f6f"),
+    ButtonConfig(
+        name="Weinflasche 0.7",
+        label="Weinflasche",
+        price=22,
+        css_class="flasche",
+        color="#5b2d30",
+    ),
+    ButtonConfig(name="Drink 10", label="Drink 10", price=12, css_class="gross", color="#2e4c3d"),
+    ButtonConfig(name="Depot rein", label="Depot rein", price=-2, css_class="depot", color="#374151"),
+    ButtonConfig(
+        name="Weinglassdepot",
+        label="Weinglas Depot",
+        price=2,
+        css_class="Weinglassdepot",
+        color="#3f2d67",
+    ),
+    ButtonConfig(name="Kaffee", label="Kaffee", price=3, css_class="kaffee", color="#4b3322"),
+    ButtonConfig(name="Shot", label="Shot", price=5, css_class="shot", color="#7a1f2a"),
 ]
 
 
@@ -181,6 +206,7 @@ def resolve_button_config(event: Event | None) -> List[ButtonConfig]:
     if event and isinstance(event.kassensystem_settings, dict):
         raw_items = event.kassensystem_settings.get("items")
     normalized: List[ButtonConfig] = []
+    default_color_lookup = {btn.css_class: btn.color for btn in DEFAULT_BUTTONS}
     items_source = raw_items if raw_items else [btn.__dict__ for btn in DEFAULT_BUTTONS]
     for item in items_source:
         try:
@@ -190,11 +216,67 @@ def resolve_button_config(event: Event | None) -> List[ButtonConfig]:
                     label=item.get("label") or item["name"],
                     price=int(item["price"]),
                     css_class=item.get("css_class", "suess"),
+                    color=item.get("color")
+                    or default_color_lookup.get(item.get("css_class", ""))
+                    or "#1f2a44",
                 )
             )
         except (KeyError, TypeError, ValueError):
             continue
     return normalized or DEFAULT_BUTTONS
+
+
+def validate_and_normalize_buttons(settings: Dict | None) -> Dict:
+    """Validates kassensystem settings and normalizes product buttons."""
+
+    if not isinstance(settings, dict):
+        settings = {}
+
+    raw_items = settings.get("items")
+    items = raw_items if isinstance(raw_items, list) else []
+
+    normalized: List[Dict] = []
+    seen_names: set[str] = set()
+    duplicates: List[str] = []
+
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("name") or item.get("label") or "").strip()
+        if not name:
+            continue
+
+        if name in seen_names:
+            duplicates.append(name)
+            continue
+
+        seen_names.add(name)
+        label = (item.get("label") or name).strip() or name
+        try:
+            price = int(item.get("price", 0))
+        except (TypeError, ValueError):
+            price = 0
+
+        normalized.append(
+            {
+                "name": name,
+                "label": label,
+                "price": price,
+                "css_class": item.get("css_class") or "custom",
+                "color": item.get("color"),
+            }
+        )
+
+    if duplicates:
+        dup_list = ", ".join(sorted(set(duplicates)))
+        raise ValueError(f"Doppelte Produktnamen gefunden: {dup_list}")
+
+    if not normalized:
+        raise ValueError("Mindestens ein Produkt erforderlich.")
+
+    sanitized = {k: v for k, v in settings.items() if k != "items"}
+    sanitized["items"] = normalized
+    return sanitized
 
 
 def cart_key(event: Event) -> str:
@@ -216,11 +298,15 @@ def admin():
     events = Event.query.order_by(Event.created_at.desc()).all()
     active_event = get_active_event()
     default_button_presets = [button.__dict__ for button in DEFAULT_BUTTONS]
+    button_map = {event.id: [btn.__dict__ for btn in resolve_button_config(event)] for event in events}
+    kass_settings = {event.id: {**(event.kassensystem_settings or {}), "items": button_map[event.id]} for event in events}
     return render_template(
         "admin.html",
         events=events,
         active_event=active_event,
         default_buttons=default_button_presets,
+        event_buttons=button_map,
+        kass_settings=kass_settings,
     )
 
 
@@ -236,7 +322,7 @@ def create_event():
 
     try:
         shared_settings = parse_json_field(request.form.get("shared_settings"))
-        kass_settings = parse_json_field(request.form.get("kassensystem_settings"))
+        kass_settings = validate_and_normalize_buttons(parse_json_field(request.form.get("kassensystem_settings")))
         shot_settings = parse_json_field(request.form.get("shotcounter_settings"))
     except ValueError as exc:
         flash(str(exc), "error")
@@ -265,7 +351,9 @@ def update_event(event_id: int):
 
     try:
         event.shared_settings = parse_json_field(request.form.get("shared_settings"))
-        event.kassensystem_settings = parse_json_field(request.form.get("kassensystem_settings"))
+        event.kassensystem_settings = validate_and_normalize_buttons(
+            parse_json_field(request.form.get("kassensystem_settings"))
+        )
         event.shotcounter_settings = parse_json_field(request.form.get("shotcounter_settings"))
     except ValueError as exc:
         flash(str(exc), "error")

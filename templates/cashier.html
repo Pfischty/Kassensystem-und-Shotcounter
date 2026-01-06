@@ -3,6 +3,29 @@
 {% block content %}
 <h1>Kassensystem – {{ event.name }}</h1>
 
+<style>
+  .cashier-grid {
+    display:grid;
+    grid-template-columns:repeat(auto-fill, minmax(180px, 1fr));
+    gap:0.8rem;
+  }
+  .cashier-tile {
+    background:#1f2a44;
+    border:1px solid var(--border);
+    border-radius:10px;
+    padding:1rem;
+    height:100%;
+    display:flex;
+    flex-direction:column;
+    justify-content:center;
+    gap:.3rem;
+    color:#e2e8f0;
+    box-shadow:0 8px 20px rgba(0,0,0,0.25);
+    transition: transform 0.12s ease, box-shadow 0.12s ease;
+  }
+  .cashier-tile:hover { transform: translateY(-2px); box-shadow:0 12px 30px rgba(0,0,0,0.3); }
+</style>
+
 <div class="card">
   <div style="display:flex; align-items:center; justify-content: space-between; flex-wrap: wrap; gap: .6rem;">
     <div>
@@ -32,10 +55,10 @@
 
 <div class="card">
   <h2>Artikel</h2>
-  <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(180px, 1fr)); gap:0.8rem;">
+  <div class="cashier-grid">
     {% for button in buttons %}
       <a href="{{ url_for('add_item') }}?name={{ button.name }}" style="text-decoration:none;">
-        <div style="background:#1f2a44; border:1px solid var(--border); border-radius:10px; padding:1rem; height:100%; display:flex; flex-direction:column; justify-content:center; gap:.3rem;">
+        <div class="cashier-tile" style="background: {{ button.color or '#1f2a44' }};">
           <div style="font-weight:700;">{{ button.label }}</div>
           <div style="opacity:0.8;">{{ button.price }} CHF</div>
         </div>
