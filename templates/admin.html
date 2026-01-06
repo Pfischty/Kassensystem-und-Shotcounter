@@ -5,9 +5,17 @@
 
 <style>
   .muted { color: #94a3b8; font-size: 0.95rem; }
-  .event-card { background: #11192e; }
+  .event-card { background: #0b1222; border: 1px solid rgba(255,255,255,0.05); }
+  .hint { font-size:0.9rem; color:#cbd5e1; margin-top:0.2rem; }
+  .stack { display:flex; flex-direction:column; gap:0.35rem; }
+  .field-inline { display:flex; gap:0.6rem; flex-wrap:wrap; align-items:center; }
+  .collapsible { border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
+  .collapsible__header { display:flex; justify-content:space-between; align-items:center; gap:0.8rem; padding: 0.75rem 1rem; background: rgba(255,255,255,0.04); }
+  .collapsible__content { padding: 1rem; border-top: 1px solid var(--border); background: rgba(255,255,255,0.02); }
+  .collapsible [data-toggle] { min-width: 130px; }
+  .inline-actions { display:flex; gap:0.4rem; flex-wrap:wrap; align-items:center; }
   .product-editor {
-    margin-top: 1rem;
+    margin-top: 0.6rem;
     border: 1px dashed var(--border);
     border-radius: 10px;
     padding: 0.9rem;
@@ -45,29 +53,59 @@
   .product-row label { font-size: 0.9rem; color: #cbd5e1; display:block; margin-bottom:0.2rem; }
   .product-row .row-actions { display:flex; justify-content:flex-end; align-items:flex-end; }
   .product-row .row-actions button { width:100%; }
-  .hint { font-size:0.9rem; color:#cbd5e1; margin-top:0.4rem; }
-  .stack { display:flex; flex-direction:column; gap:0.4rem; }
-  .field-inline { display:flex; gap:0.6rem; flex-wrap:wrap; align-items:center; }
   .color-input { width:100%; min-height:44px; padding: 0; }
+  .pill { padding: 0.3rem 0.7rem; border-radius: 999px; background: rgba(255,255,255,0.06); border: 1px solid var(--border); font-size: 0.9rem; }
 </style>
 
-<div class="card">
-  <h2>Neues Event</h2>
-  <form method="post" action="{{ url_for('create_event') }}">
-    <label for="name">Name</label><br>
-    <input id="name" name="name" placeholder="z.B. Sommerfest" required>
-    <div style="margin: 0.6rem 0;">
-      <label><input type="checkbox" name="kassensystem_enabled" checked> Kassensystem aktiv</label>
-      <label style="margin-left:1rem;"><input type="checkbox" name="shotcounter_enabled" checked> Shotcounter aktiv</label>
+<div class="collapsible card" data-collapsible>
+  <div class="collapsible__header">
+    <div>
+      <h2 style="margin:0;">Neues Event</h2>
+      <div class="muted">Optional Vorlage kopieren oder später Details bearbeiten.</div>
     </div>
-    <label for="shared_settings">Gemeinsame Einstellungen (JSON)</label>
-    <textarea id="shared_settings" name="shared_settings" placeholder='{"waehrung": "CHF"}'></textarea>
-    <input type="hidden" name="kassensystem_settings" value='{{ {"items": default_buttons} | tojson }}'>
-    <p class="hint">Produkte kannst du nach dem Speichern im jeweiligen Event bearbeiten.</p>
-    <label for="shotcounter_settings">Shotcounter Einstellungen (JSON)</label>
-    <textarea id="shotcounter_settings" name="shotcounter_settings" placeholder='{"max_shots": 10}'></textarea>
-    <button type="submit">Event anlegen</button>
-  </form>
+    <button type="button" class="secondary" data-toggle>Details einblenden</button>
+  </div>
+  <div class="collapsible__content" hidden>
+    <form method="post" action="{{ url_for('create_event') }}" data-event-form data-scope="new">
+      <div class="stack">
+        <label for="name">Name</label>
+        <input id="name" name="name" placeholder="z.B. Sommerfest" required>
+      </div>
+      <div class="field-inline" style="margin: 0.6rem 0;">
+        <label><input type="checkbox" name="kassensystem_enabled" checked> Kassensystem aktiv</label>
+        <label><input type="checkbox" name="shotcounter_enabled" checked> Shotcounter aktiv</label>
+      </div>
+      {% if events %}
+      <div class="stack" style="margin: 0.6rem 0;">
+        <label>Vorlage kopieren</label>
+        <div class="field-inline">
+          <select data-copy-select>
+            <option value="">Bitte wählen</option>
+            {% for template in events %}
+              <option value="{{ template.id }}">{{ template.name }}</option>
+            {% endfor %}
+          </select>
+          <button type="button" class="secondary" data-copy-btn>Übernehmen</button>
+        </div>
+        <div class="muted">Übernimmt Einstellungen, Shotcounter-Optionen und Kassenartikel der gewählten Vorlage.</div>
+      </div>
+      {% endif %}
+
+      <input type="hidden" name="shared_settings" value='{}'>
+      <input type="hidden" name="shotcounter_settings" value='{}'>
+
+      <input type="hidden" name="kassensystem_settings" value='{{ {"items": default_buttons} | tojson }}'>
+      <p class="hint">Kassenartikel lassen sich nach dem Speichern oder per Vorlage übernehmen.</p>
+      <div class="field-inline">
+        <label class="secondary" style="padding:0.45rem 0.65rem; cursor:pointer;">
+          Event-JSON importieren
+          <input type="file" accept="application/json" data-import-event hidden>
+        </label>
+        <button type="button" class="secondary" data-export-event>Event-JSON exportieren</button>
+      </div>
+      <button type="submit">Event anlegen</button>
+    </form>
+  </div>
 </div>
 
 <div class="card">
@@ -76,54 +114,120 @@
     <p>Es wurden noch keine Events angelegt.</p>
   {% endif %}
   {% for event in events %}
-    <div class="card" style="background: #0b1222;">
-      <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap: wrap; gap: .4rem;">
+    <div class="event-card collapsible" data-collapsible data-event-card="{{ event.id }}">
+      <div class="collapsible__header">
         <div>
           <strong>{{ event.name }}</strong>
           {% if event.is_active %}<span class="badge badge-green">aktiv</span>{% endif %}
           {% if event.is_archived %}<span class="badge badge-red">archiviert</span>{% endif %}
+          <div class="muted">Letzte Änderung: {{ event.updated_at.strftime("%d.%m.%Y %H:%M") if event.updated_at else "–" }}</div>
         </div>
-        <div>
+        <div class="inline-actions">
           <form class="inline" method="post" action="{{ url_for('activate_event', event_id=event.id) }}">
             <button type="submit" class="secondary">Aktivieren</button>
           </form>
           <form class="inline" method="post" action="{{ url_for('archive_event', event_id=event.id) }}">
             <button type="submit" class="danger">Archivieren</button>
           </form>
+          <button type="button" class="secondary" data-toggle>Details</button>
         </div>
       </div>
-
-      <form method="post" action="{{ url_for('update_event', event_id=event.id) }}" style="margin-top:.8rem;">
-        <div style="margin-bottom:0.6rem;">
-          <label><input type="checkbox" name="kassensystem_enabled" {% if event.kassensystem_enabled %}checked{% endif %}> Kassensystem aktiv</label>
-          <label style="margin-left:1rem;"><input type="checkbox" name="shotcounter_enabled" {% if event.shotcounter_enabled %}checked{% endif %}> Shotcounter aktiv</label>
-        </div>
-        <label>Gemeinsame Einstellungen</label>
-        <textarea name="shared_settings">{{ (event.shared_settings or {}) | tojson(indent=2) }}</textarea>
-        <label>Shotcounter Einstellungen</label>
-        <textarea name="shotcounter_settings">{{ (event.shotcounter_settings or {}) | tojson(indent=2) }}</textarea>
-
-        <div class="product-editor" data-product-editor data-items='{{ event_buttons.get(event.id, default_buttons) | tojson }}'>
-          <div class="product-editor__top">
-            <div>
-              <strong>Produkte für dieses Event</strong>
-              <div class="muted">Titel, Preis und Hintergrundfarbe bearbeiten. Reihenfolge per Drag & Drop ändern.</div>
-            </div>
-            <button type="button" class="secondary" data-add-product>+ Produkt</button>
+      <div class="collapsible__content" hidden>
+        <form method="post" action="{{ url_for('update_event', event_id=event.id) }}" data-event-form data-scope="{{ event.id }}">
+          <div class="field-inline" style="margin: 0.4rem 0;">
+            <label><input type="checkbox" name="kassensystem_enabled" {% if event.kassensystem_enabled %}checked{% endif %}> Kassensystem aktiv</label>
+            <label><input type="checkbox" name="shotcounter_enabled" {% if event.shotcounter_enabled %}checked{% endif %}> Shotcounter aktiv</label>
           </div>
-          <div class="product-editor__preview" data-product-preview></div>
-          <div class="product-editor__list" data-product-list></div>
-          <input type="hidden" name="kassensystem_settings" value='{{ kass_settings.get(event.id, {"items": event_buttons.get(event.id, default_buttons)}) | tojson }}'>
-        </div>
-        <button type="submit">Speichern</button>
-      </form>
+
+          {% if events|length > 1 %}
+          <div class="stack" style="margin:0.6rem 0;">
+            <label>Einstellungen aus Event kopieren</label>
+            <div class="field-inline">
+              <select data-copy-select>
+                <option value="">Bitte wählen</option>
+                {% for template in events if template.id != event.id %}
+                  <option value="{{ template.id }}">{{ template.name }}</option>
+                {% endfor %}
+              </select>
+              <button type="button" class="secondary" data-copy-btn>Übernehmen</button>
+              <span class="pill">kopiert auch Produkte</span>
+            </div>
+          </div>
+          {% endif %}
+
+          <input type="hidden" name="shared_settings" value='{{ (event.shared_settings or {}) | tojson }}'>
+          <input type="hidden" name="shotcounter_settings" value='{{ (event.shotcounter_settings or {}) | tojson }}'>
+
+          <div class="product-editor" data-product-editor data-items='{{ event_buttons.get(event.id, default_buttons) | tojson }}'>
+            <div class="product-editor__top">
+              <div>
+                <strong>Produkte für dieses Event</strong>
+                <div class="muted">Titel, Preis, Farbe bearbeiten. Reihenfolge per Drag & Drop ändern.</div>
+              </div>
+              <div class="inline-actions">
+                <label class="secondary" style="padding:0.45rem 0.65rem; cursor:pointer;">
+                  JSON importieren
+                  <input type="file" accept="application/json" data-product-import hidden>
+                </label>
+                <button type="button" class="secondary" data-product-export>Daten exportieren</button>
+                <button type="button" class="secondary" data-add-product>+ Produkt</button>
+              </div>
+            </div>
+            <div class="product-editor__preview" data-product-preview></div>
+            <div class="product-editor__list" data-product-list></div>
+            <input type="hidden" name="kassensystem_settings" value='{{ kass_settings.get(event.id, {"items": event_buttons.get(event.id, default_buttons)}) | tojson }}'>
+          </div>
+
+          <div class="field-inline" style="margin-top:0.8rem;">
+            <label class="secondary" style="padding:0.45rem 0.65rem; cursor:pointer;">
+              Event-JSON importieren
+              <input type="file" accept="application/json" data-import-event hidden>
+            </label>
+            <button type="button" class="secondary" data-export-event>Event-JSON exportieren</button>
+            <span class="muted">Import ersetzt die Felder oben, JSON bleibt optional.</span>
+          </div>
+          <button type="submit">Speichern</button>
+        </form>
+      </div>
     </div>
   {% endfor %}
 </div>
 
+<script id="event-settings-data" type="application/json">
+  {{ event_payloads | tojson }}
+</script>
+<script id="default-buttons-data" type="application/json">
+  {{ default_buttons | tojson }}
+</script>
+
 <script>
   (function () {
+    try {
     const fallbackColor = "#1f2a44";
+
+    const getTextContent = (id) => {
+      const el = document.getElementById(id);
+      return el ? el.textContent : "";
+    };
+
+    const parseJson = (value, fallback) => {
+      if (!value) return fallback;
+      try { return JSON.parse(value); } catch (err) { return fallback; }
+    };
+
+    const eventData = parseJson(getTextContent("event-settings-data"), {});
+    const defaultButtons = parseJson(getTextContent("default-buttons-data"), []);
+
+    document.querySelectorAll("[data-collapsible]").forEach((wrap) => {
+      const content = wrap.querySelector(".collapsible__content");
+      const toggle = wrap.querySelector("[data-toggle]");
+      if (!content || !toggle) return;
+      const startOpen = wrap.dataset.startOpen === "true";
+      if (startOpen) content.hidden = false;
+      const syncLabel = () => { toggle.textContent = content.hidden ? "Details einblenden" : "Details ausblenden"; };
+      syncLabel();
+      toggle.addEventListener("click", () => { content.hidden = !content.hidden; syncLabel(); });
+    });
 
     const sanitizeColor = (value) => {
       if (typeof value !== "string") return fallbackColor;
@@ -132,37 +236,33 @@
     };
 
     const normalizeItem = (item, index) => {
-      const label = (item?.label || item?.name || "").trim() || `Produkt ${index + 1}`;
-      const name = (item?.name || label || `produkt-${index + 1}`).trim();
-      const price = Number.isFinite(Number(item?.price)) ? Number(item.price) : 0;
+      const safeItem = item || {};
+      const label = (safeItem.label || safeItem.name || "").trim() || "Produkt " + (index + 1);
+      const name = (safeItem.name || label || "produkt-" + (index + 1)).trim();
+      const price = Number.isFinite(Number(safeItem.price)) ? Number(safeItem.price) : 0;
       return {
         name,
         label,
         price,
-        css_class: item?.css_class || "custom",
-        color: sanitizeColor(item?.color || ""),
+        css_class: safeItem.css_class || "custom",
+        color: sanitizeColor(safeItem.color || ""),
       };
     };
 
+    // Produkt-Editor
     document.querySelectorAll("[data-product-editor]").forEach((wrapper) => {
       const addButton = wrapper.querySelector("[data-add-product]");
       const preview = wrapper.querySelector("[data-product-preview]");
       const list = wrapper.querySelector("[data-product-list]");
       const hidden = wrapper.querySelector('input[name="kassensystem_settings"]');
+      const importInput = wrapper.querySelector("[data-product-import]");
+      const exportButton = wrapper.querySelector("[data-product-export]");
 
       let baseSettings = {};
-      try {
-        baseSettings = JSON.parse(hidden.value || "{}");
-      } catch (err) {
-        baseSettings = {};
-      }
+      try { baseSettings = JSON.parse(hidden.value || "{}"); } catch (err) { baseSettings = {}; }
 
       let parsedItems = [];
-      try {
-        parsedItems = JSON.parse(wrapper.dataset.items || "[]");
-      } catch (err) {
-        parsedItems = [];
-      }
+      try { parsedItems = JSON.parse(wrapper.dataset.items || "[]"); } catch (err) { parsedItems = []; }
 
       let items = Array.isArray(parsedItems) ? parsedItems.map(normalizeItem) : [];
       if (!items.length) {
@@ -304,27 +404,165 @@
         });
       };
 
-      addButton?.addEventListener("click", () => {
-        items.push(
-          normalizeItem(
-            {
-              name: `produkt-${Date.now()}`,
-              label: "Neues Produkt",
-              price: 0,
-              color: fallbackColor,
-            },
-            items.length
-          )
-        );
-        renderList();
-        renderPreview();
-        syncHidden();
-      });
+      if (addButton) {
+        addButton.addEventListener("click", () => {
+          items.push(
+            normalizeItem(
+              {
+                name: "produkt-" + Date.now(),
+                label: "Neues Produkt",
+                price: 0,
+                color: fallbackColor,
+              },
+              items.length
+            )
+          );
+          renderList();
+          renderPreview();
+          syncHidden();
+        });
+      }
+
+      if (importInput) {
+        importInput.addEventListener("change", (ev) => {
+          const file = ev.target.files && ev.target.files[0];
+          if (!file) return;
+          const reader = new FileReader();
+          reader.onload = () => {
+            const data = parseJson(reader.result, {});
+            const importedItems = Array.isArray(data && data.items) ? data.items : Array.isArray(data) ? data : [];
+            baseSettings = data && typeof data === "object" && !Array.isArray(data) ? { ...data } : {};
+            items = (importedItems || []).map((it, idx) => normalizeItem(it, idx));
+            if (!items.length) items = [normalizeItem({ name: "Produkt", label: "Neues Produkt", price: 0, color: fallbackColor }, 0)];
+            renderList();
+            renderPreview();
+            syncHidden();
+          };
+          reader.readAsText(file);
+        });
+      }
+
+      if (exportButton) {
+        exportButton.addEventListener("click", () => {
+          const blob = new Blob([hidden.value || "{}"], { type: "application/json" });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement("a");
+          a.href = url;
+          a.download = "produkte.json";
+          a.click();
+          URL.revokeObjectURL(url);
+        });
+      }
+
+      wrapper.productApi = {
+        getSettings: () => parseJson(hidden.value, { items: items }),
+        setSettings: (data) => {
+          const importedItems = Array.isArray(data && data.items) ? data.items : [];
+          baseSettings = data && typeof data === "object" && !Array.isArray(data) ? { ...data } : {};
+          items = importedItems.length ? importedItems.map((it, idx) => normalizeItem(it, idx)) : [normalizeItem({ name: "Produkt", label: "Produkt", price: 0, color: fallbackColor }, 0)];
+          renderList();
+          renderPreview();
+          syncHidden();
+        },
+      };
 
       renderList();
       renderPreview();
       syncHidden();
     });
+
+    const collectSnapshot = (form) => {
+      const sharedInput = form.querySelector('input[name="shared_settings"]');
+      const shotInput = form.querySelector('input[name="shotcounter_settings"]');
+      const productEditor = form.querySelector("[data-product-editor]");
+      return {
+        kassensystem_enabled: Boolean((form.querySelector('[name="kassensystem_enabled"]') || {}).checked),
+        shotcounter_enabled: Boolean((form.querySelector('[name="shotcounter_enabled"]') || {}).checked),
+        shared_settings: parseJson(sharedInput ? sharedInput.value : "", {}),
+        shotcounter_settings: parseJson(shotInput ? shotInput.value : "", {}),
+        kassensystem_settings:
+          (productEditor && productEditor.productApi && productEditor.productApi.getSettings()) ||
+          parseJson((form.querySelector('input[name="kassensystem_settings"]') || {}).value, {}),
+      };
+    };
+
+    const applySnapshot = (form, snapshot) => {
+      const kassCheck = form.querySelector('[name="kassensystem_enabled"]');
+      const shotCheck = form.querySelector('[name="shotcounter_enabled"]');
+      if (kassCheck) kassCheck.checked = Boolean(snapshot.kassensystem_enabled);
+      if (shotCheck) shotCheck.checked = Boolean(snapshot.shotcounter_enabled);
+
+      const sharedHidden = form.querySelector('input[name="shared_settings"]');
+      const shotHidden = form.querySelector('input[name="shotcounter_settings"]');
+      if (sharedHidden) sharedHidden.value = JSON.stringify(snapshot.shared_settings || {});
+      if (shotHidden) shotHidden.value = JSON.stringify(snapshot.shotcounter_settings || {});
+
+      const productEditor = form.querySelector("[data-product-editor]");
+      const kassInput = form.querySelector('input[name="kassensystem_settings"]');
+      if (productEditor && productEditor.productApi) {
+        productEditor.productApi.setSettings(snapshot.kassensystem_settings || { items: defaultButtons });
+      } else if (kassInput) {
+        kassInput.value = JSON.stringify(snapshot.kassensystem_settings || { items: defaultButtons });
+      }
+    };
+
+    const bindCopyAndImport = (form) => {
+      const select = form.querySelector("[data-copy-select]");
+      const copyBtn = form.querySelector("[data-copy-btn]");
+      const importTrigger = form.querySelector("[data-import-event]");
+      const exportBtn = form.querySelector("[data-export-event]");
+
+      if (copyBtn) {
+        copyBtn.addEventListener("click", () => {
+          const selectedId = select ? select.value : null;
+          if (!selectedId || !eventData[selectedId]) return;
+          applySnapshot(form, eventData[selectedId]);
+        });
+      }
+
+      if (exportBtn) {
+        exportBtn.addEventListener("click", () => {
+          const data = collectSnapshot(form);
+          const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement("a");
+          a.href = url;
+          a.download = "event-settings.json";
+          a.click();
+          URL.revokeObjectURL(url);
+        });
+      }
+
+      if (importTrigger) {
+        importTrigger.addEventListener("change", (ev) => {
+          const file = ev.target.files && ev.target.files[0];
+          if (!file) return;
+          const reader = new FileReader();
+          reader.onload = () => {
+            const data = parseJson(reader.result, null);
+            if (!data) return;
+            applySnapshot(form, {
+              kassensystem_enabled: data.kassensystem_enabled !== undefined ? data.kassensystem_enabled : true,
+              shotcounter_enabled: data.shotcounter_enabled !== undefined ? data.shotcounter_enabled : true,
+              shared_settings: data.shared_settings || {},
+              shotcounter_settings: data.shotcounter_settings || {},
+              kassensystem_settings: data.kassensystem_settings || { items: defaultButtons },
+            });
+          };
+          reader.readAsText(file);
+        });
+      }
+    };
+
+    document.querySelectorAll("[data-event-form]").forEach((form) => {
+      bindCopyAndImport(form);
+    });
+    } catch (err) {
+      console.error("Admin UI Init Error", err);
+      document.querySelectorAll(".collapsible__content").forEach((content) => {
+        content.hidden = false;
+      });
+    }
   })();
 </script>
 

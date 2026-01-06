@@ -509,6 +509,17 @@ def admin():
     default_button_presets = [button.__dict__ for button in DEFAULT_BUTTONS]
     button_map = {event.id: [btn.__dict__ for btn in resolve_button_config(event)] for event in events}
     kass_settings = {event.id: {**(event.kassensystem_settings or {}), "items": button_map[event.id]} for event in events}
+    event_payloads = {
+        event.id: {
+            "name": event.name,
+            "kassensystem_enabled": event.kassensystem_enabled,
+            "shotcounter_enabled": event.shotcounter_enabled,
+            "shared_settings": event.shared_settings or {},
+            "shotcounter_settings": event.shotcounter_settings or {},
+            "kassensystem_settings": kass_settings[event.id],
+        }
+        for event in events
+    }
     return render_template(
         "admin.html",
         events=events,
@@ -516,6 +527,7 @@ def admin():
         default_buttons=default_button_presets,
         event_buttons=button_map,
         kass_settings=kass_settings,
+        event_payloads=event_payloads,
     )
 
 
