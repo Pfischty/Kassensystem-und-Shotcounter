@@ -16,6 +16,16 @@
 </style>
 
 <div class="card">
+  <h2>Export</h2>
+  <p class="muted">CSV-Downloads für Abschlüsse, Shot-Logs und verkaufte Getränke.</p>
+  <div style="display:flex; gap:0.6rem; flex-wrap:wrap;">
+    <a href="{{ url_for('export_order_logs', event_id=event.id) }}"><button>Abschlüsse / Bestell-Log</button></a>
+    <a href="{{ url_for('export_drink_sales', event_id=event.id) }}"><button class="secondary">Verkaufte Getränke</button></a>
+    <a href="{{ url_for('export_shot_logs', event_id=event.id) }}"><button class="secondary">Shot-Log</button></a>
+  </div>
+</div>
+
+<div class="card">
   <div class="stat-grid">
     <div class="stat-card">
       <div class="stat-label">Umsatz gesamt</div>

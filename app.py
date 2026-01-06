@@ -9,18 +9,21 @@ Shotcounter aktiv sein sollen.
 
 from __future__ import annotations
 
+import csv
 import json
 import logging
 import os
 from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime
+from io import StringIO
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Dict, Iterable, List
 
 from flask import (
     Flask,
+    Response,
     abort,
     flash,
     redirect,
@@ -153,6 +156,25 @@ class ShotLog(db.Model):
 
 with app.app_context():
     db.create_all()
+
+
+# ---------------------------------------------------------------------------
+# CSV Export Helpers
+# ---------------------------------------------------------------------------
+def csv_response(filename: str, headers: List[str], rows: Iterable[Iterable[object]]) -> Response:
+    """Return a CSV download with the given rows."""
+
+    buffer = StringIO()
+    writer = csv.writer(buffer)
+    writer.writerow(headers)
+    for row in rows:
+        writer.writerow([value if value is not None else "" for value in row])
+
+    return Response(
+        buffer.getvalue(),
+        mimetype="text/csv",
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -404,6 +426,80 @@ def event_detail(event_id: int):
         sales=sales,
         teams=teams,
     )
+
+
+@app.route("/events/<int:event_id>/export/order_logs.csv")
+def export_order_logs(event_id: int):
+    event = Event.query.get_or_404(event_id)
+    logs = OrderLog.query.filter_by(event_id=event.id).order_by(OrderLog.created_at.asc()).all()
+
+    rows = []
+    for log in logs:
+        item_parts = []
+        for item in log.items or []:
+            name = item.get("name") or "unbekannt"
+            qty = item.get("qty") or 0
+            price = item.get("price")
+            part = f"{qty}x {name}"
+            if price is not None:
+                part += f" ({price} CHF)"
+            item_parts.append(part)
+
+        rows.append(
+            [
+                log.id,
+                log.created_at.isoformat(timespec="seconds") if log.created_at else "",
+                log.order_id or "",
+                log.total,
+                " | ".join(item_parts),
+                log.actor or "",
+                log.user_agent or "",
+            ]
+        )
+
+    headers = ["Log-ID", "Zeit", "Order-ID", "Summe (CHF)", "Artikel", "Actor", "User Agent"]
+    filename = f"event-{event.id}-order-logs.csv"
+    return csv_response(filename, headers, rows)
+
+
+@app.route("/events/<int:event_id>/export/shot_logs.csv")
+def export_shot_logs(event_id: int):
+    event = Event.query.get_or_404(event_id)
+    logs = ShotLog.query.filter_by(event_id=event.id).order_by(ShotLog.created_at.asc()).all()
+
+    rows = [
+        [
+            log.id,
+            log.created_at.isoformat(timespec="seconds") if log.created_at else "",
+            log.team_name or "",
+            log.amount,
+            log.actor or "",
+            log.user_agent or "",
+        ]
+        for log in logs
+    ]
+
+    headers = ["Log-ID", "Zeit", "Team", "Shots", "Actor", "User Agent"]
+    filename = f"event-{event.id}-shot-logs.csv"
+    return csv_response(filename, headers, rows)
+
+
+@app.route("/events/<int:event_id>/export/drink_sales.csv")
+def export_drink_sales(event_id: int):
+    event = Event.query.get_or_404(event_id)
+    sales = (
+        db.session.query(DrinkSale.name, func.coalesce(func.sum(DrinkSale.quantity), 0))
+        .join(Order, Order.id == DrinkSale.order_id)
+        .filter(Order.event_id == event.id)
+        .group_by(DrinkSale.name)
+        .order_by(DrinkSale.name.asc())
+        .all()
+    )
+
+    rows = [[name, quantity] for name, quantity in sales]
+    headers = ["Produkt", "Menge"]
+    filename = f"event-{event.id}-drink-sales.csv"
+    return csv_response(filename, headers, rows)
 
 
 @app.route("/admin")
