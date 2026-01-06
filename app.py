@@ -1,21 +1,62 @@
-from flask import Flask, redirect, render_template, request, session, url_for, abort, render_template_string
 from collections import Counter
-from flask_sqlalchemy import SQLAlchemy
-from flask_socketio import SocketIO, emit
+from functools import wraps
+
+from flask import (
+    Flask,
+    Response,
+    abort,
+    redirect,
+    render_template,
+    render_template_string,
+    request,
+    session,
+    url_for,
+)
 from flask_session import Session
+from flask_socketio import SocketIO
+from flask_sqlalchemy import SQLAlchemy
+from flask_wtf import CSRFProtect
+from flask_wtf.csrf import generate_csrf
+
+from config import Config
+
+config = Config()
 
 app = Flask(__name__)
-app.secret_key = b'gskjd%hsgd82jsd'
-app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///teamliste.db'
+app.config.from_object(config)
 db = SQLAlchemy(app)
 socketio = SocketIO(app, manage_session=True)
-app.config['SESSION_TYPE'] = 'filesystem'  # Session-Daten auf dem Server speichern
+csrf = CSRFProtect(app)
 Session(app)
+
+
+def requires_auth(view_func):
+    @wraps(view_func)
+    def wrapped(*args, **kwargs):
+        auth = request.authorization
+        if not auth or not (
+            auth.username == app.config["ADMIN_USERNAME"]
+            and auth.password == app.config["ADMIN_PASSWORD"]
+        ):
+            return Response(
+                "Authentication required",
+                401,
+                {"WWW-Authenticate": 'Basic realm="Login Required"'},
+            )
+        return view_func(*args, **kwargs)
+
+    return wrapped
+
+
+@app.context_processor
+def inject_csrf_token():
+    return {"csrf_token": generate_csrf}
 
 class teamliste(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     score = db.Column(db.Integer, unique=False, nullable=False)
     team = db.Column(db.String(150), unique=True, nullable=False)
+
 
 @app.route('/registration', methods=('GET', 'POST'))
 def registration():
@@ -64,12 +105,14 @@ def leaderboard():
     return render_template('leaderboard.html', teams=teams)
 
 @app.route('/admin', methods=('GET', 'POST'))
+@requires_auth
 def admin():
     teams = db.session.execute(
         db.select(teamliste).order_by(teamliste.score)).scalars()
     return render_template('admin.html', teams=teams) 
 
-@app.route('/team/delete/<id>')
+@app.route('/team/delete/<int:id>', methods=['POST'])
+@requires_auth
 def loescher(id):
     grocery = teamliste.query.filter_by(id=id).first()
     if grocery == None:
@@ -79,7 +122,8 @@ def loescher(id):
         db.session.commit()
         return redirect(url_for("admin"))
 
-@app.route('/team/update/<id>', methods=('GET', 'POST'))
+@app.route('/team/update/<int:id>', methods=('GET', 'POST'))
+@requires_auth
 def update(id):
     message = ''
     teams = teamliste.query.filter_by(id=id).first()
@@ -96,7 +140,7 @@ def update(id):
         if not teamname: 
             message = "Bitte geben Sie bei der Beschreibung einen Text ein."
         if not message:
-            teams.score = score
+            teams.score = int(score)
             teams.team = teamname
             db.session.commit()
             return redirect(url_for("admin"))        
@@ -111,6 +155,7 @@ def preisliste():
 def liste():
     return render_template('index.html')
 @app.route('/manage', methods=('GET', 'POST'))
+@requires_auth
 def manage():
     teams = teamliste.query.all()
     if request.method == 'POST':
@@ -157,10 +202,12 @@ def manage():
             score = request.form.get("score")
             if not team_id or not teamname or not score:
                 message = "Alle Felder müssen ausgefüllt werden."
+            elif not team_id.isnumeric():
+                message = "Ungültige Team-ID."
             elif not score.isnumeric():
                 message = "Punkte müssen eine Zahl sein."
             else:
-                team = teamliste.query.get(team_id)
+                team = teamliste.query.get(int(team_id))
                 if team:
                     team.team = teamname
                     team.score = int(score)
@@ -172,14 +219,17 @@ def manage():
         elif action == 'admin_delete':
             # Team löschen
             team_id = request.form.get("team_id")
-            team = teamliste.query.get(team_id)
-            if team:
-                db.session.delete(team)
-                db.session.commit()
-                message = "Team wurde gelöscht."
-                socketio.emit('update_leaderboard')
+            if not team_id or not team_id.isnumeric():
+                message = "Ungültige Team-ID."
             else:
-                message = "Team nicht gefunden."
+                team = teamliste.query.get(int(team_id))
+                if team:
+                    db.session.delete(team)
+                    db.session.commit()
+                    message = "Team wurde gelöscht."
+                    socketio.emit('update_leaderboard')
+                else:
+                    message = "Team nicht gefunden."
         # Nachricht in der Session speichern und Weiterleitung zur Verhinderung von doppelten Aktionen
         session['message'] = message
         return redirect(url_for('manage'))
@@ -388,6 +438,18 @@ def clear_order():
     """Löscht die gesamte Bestellung."""
     session['items'] = []
     return redirect(url_for('index'))
+
 if __name__ == '__main__':
-    socketio.run(app, host='192.168.137.1', port=5000, debug=True)
+    if app.config.get("APP_ENV") == "production":
+        print(
+            "Production environment detected. "
+            "Use a production-ready WSGI/ASGI server instead of socketio.run."
+        )
+    else:
+        socketio.run(
+            app,
+            host=app.config.get("SOCKETIO_HOST", "0.0.0.0"),
+            port=app.config.get("SOCKETIO_PORT", 5000),
+            debug=app.config.get("DEBUG", False),
+        )
 

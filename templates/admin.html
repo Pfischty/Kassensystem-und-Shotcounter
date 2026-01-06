@@ -20,12 +20,16 @@
                                     <td>{{ loop.index }}</td>
                                     <td>{{ team.team }}</td>
                                     <td>{{ team.score }}</td>
-                                    <td><a href="{{ url_for('loescher', id=team.id) }}">Löschen</a></td>
+                                    <td>
+                                        <form method="post" action="{{ url_for('loescher', id=team.id) }}">
+                                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                            <button type="submit">Löschen</button>
+                                        </form>
+                                    </td>
                                     <td><a href="{{ url_for('update', id=team.id) }}">Ändern</a></td>
                                 </tr>
                                 {% endfor %}
                             </tbody>
                 </table>
-        </form> 
     </body>
 </html>

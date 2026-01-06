@@ -1,0 +1,6 @@
+Flask
+Flask-SQLAlchemy
+Flask-Session
+Flask-SocketIO
+Flask-WTF
+python-dotenv

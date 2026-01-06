@@ -57,6 +57,7 @@
     <div class="container">
         <h1>Punkteverteilen</h1>
         <form method="post">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <div>
                 <label for="team">Team auswählen:</label>
                 <select name="Team" class="select-large" id="team">

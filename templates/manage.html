@@ -114,7 +114,7 @@
             <div class="form-section">
                 <h2>Neues Team registrieren</h2>
                 <form method="post" onsubmit="disableSubmitButton(this);">
-                    
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <input type="hidden" name="action" value="register">
                     <label for="Teamname">Teamname:</label>
                     <input type="text" name="Teamname" id="Teamname" required>
@@ -125,7 +125,7 @@
             <div class="form-section">
                 <h2>Punkte verteilen</h2>
                 <form method="post" onsubmit="disableSubmitButton(this);">
-                    
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <input type="hidden" name="action" value="add_points">
                     <div>
                         <label for="team">Team auswählen:</label>
@@ -163,7 +163,7 @@
                     {% for team in teams %}
                     <tr>
                         <form method="post" onsubmit="disableSubmitButton(this);">
-                            
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                             <input type="hidden" name="action" value="admin_update">
                             <input type="hidden" name="team_id" value="{{ team.id }}">
                             <td>{{ team.id }}</td>
@@ -184,6 +184,7 @@
 
     <!-- SocketIO-Client-Skript -->
     <script>
+        const csrfToken = "{{ csrf_token() }}";
         var socket = io();
 
         socket.on('update_leaderboard', function() {
@@ -236,6 +237,7 @@
                 var form = document.createElement('form');
                 form.method = 'post';
                 form.innerHTML = `
+                    <input type="hidden" name="csrf_token" value="${csrfToken}">
                     <input type="hidden" name="action" value="admin_delete">
                     <input type="hidden" name="team_id" value="${teamId}">
                 `;

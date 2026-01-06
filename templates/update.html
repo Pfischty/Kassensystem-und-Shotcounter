@@ -8,6 +8,7 @@
         <h1>Punkteanpassen</h1>
         <p>{{message}}</p>
         <form  method="post">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <input  type="number" value='{{  teams.score  }}' min="1"  name="score"  required>
         <input  type="text" value='{{  teams.team  }}'  name="teamname"  required>
         <input  type="submit">
