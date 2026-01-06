@@ -1,6 +1,9 @@
-from flask import Flask, redirect, render_template_string, request, session, url_for
+import json
 from collections import Counter
 from datetime import datetime
+from pathlib import Path
+
+from flask import Flask, redirect, render_template_string, request, session, url_for
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy import func
 
@@ -43,19 +46,46 @@ with app.app_context():
     db.create_all()
 
 # ---------------------------------------------------------------------------
-# Artikel-Preise
+# Artikel-Preise (datengetrieben via JSON)
 # ---------------------------------------------------------------------------
-PRICES = {
-    "Süssgetränke":     6,
-    "Bier":             7,
-    "Wein":             7,
-    "Weinflasche 0.7":  22,
-    "Drink 10":         12,
-    "Depot rein":      -2,
-    "Weinglassdepot":   2,
-    "Kaffee":           3,
-    "Shot":             5,
+DEFAULT_CONFIG = {
+    "items": [
+        {"name": "Süssgetränke", "label": "Süssgetränke", "price": 6, "css_class": "suess"},
+        {
+            "name": "Bier",
+            "label": "Bier / Mate / Red Bull / Smirnoff",
+            "price": 7,
+            "css_class": "bier",
+        },
+        {"name": "Wein", "label": "Wein", "price": 7, "css_class": "wein"},
+        {"name": "Weinflasche 0.7", "label": "Weinflasche", "price": 22, "css_class": "flasche"},
+        {"name": "Drink 10", "label": "Drink 10", "price": 12, "css_class": "gross"},
+        {"name": "Depot rein", "label": "Depot rein", "price": -2, "css_class": "depot"},
+        {"name": "Weinglassdepot", "label": "Weinglas Depot", "price": 2, "css_class": "Weinglassdepot"},
+        {"name": "Kaffee", "label": "Kaffee", "price": 3, "css_class": "kaffee"},
+        {"name": "Shot", "label": "Shot", "price": 5, "css_class": "shot"},
+    ]
 }
+
+CONFIG_PATH = Path(__file__).with_name("kassensystem_config.json")
+EXAMPLE_PATH = Path(__file__).with_name("kassensystem_config.example.json")
+
+
+def load_button_config() -> dict:
+    """Load button and price configuration from JSON, fall back to defaults."""
+    for candidate in (CONFIG_PATH, EXAMPLE_PATH):
+        if candidate.exists():
+            try:
+                with candidate.open("r", encoding="utf-8") as config_file:
+                    return json.load(config_file)
+            except (OSError, json.JSONDecodeError):
+                continue
+    return DEFAULT_CONFIG.copy()
+
+
+button_config = load_button_config()
+ITEM_BUTTONS = button_config.get("items", DEFAULT_CONFIG["items"])
+PRICES = {item["name"]: item["price"] for item in ITEM_BUTTONS}
 
 # ---------------------------------------------------------------------------
 # HTML-Vorlagen
@@ -167,15 +197,9 @@ index_template = """
     <!-- Buttons -->
     <div class="bottom-section">
       <div class="buttons-container">
-        <a class="item-button suess"   href="{{ url_for('add_item', name='Süssgetränke') }}">Süssgetränke</a>
-        <a class="item-button bier"    href="{{ url_for('add_item', name='Bier') }}">Bier&nbsp;/&nbsp;Mate&nbsp;/&nbsp;Red&nbsp;Bull&nbsp;/&nbsp;Smirnoff</a>
-        <a class="item-button wein"    href="{{ url_for('add_item', name='Wein') }}">Wein</a>
-        <a class="item-button flasche" href="{{ url_for('add_item', name='Weinflasche 0.7') }}">Weinflasche</a>
-        <a class="item-button gross"   href="{{ url_for('add_item', name='Drink 10') }}">Drink&nbsp;10</a>
-        <a class="item-button depot"   href="{{ url_for('add_item', name='Depot rein') }}">Depot&nbsp;rein</a>
-        <a class="item-button Weinglassdepot" href="{{ url_for('add_item', name='Weinglassdepot') }}">Weinglas&nbsp;Depot</a>
-        <a class="item-button kaffee"  href="{{ url_for('add_item', name='Kaffee') }}">Kaffee</a>
-        <a class="item-button shot"    href="{{ url_for('add_item', name='Shot') }}">Shot</a>
+        {% for button in buttons %}
+          <a class="item-button {{ button.css_class }}" href="{{ url_for('add_item', name=button.name) }}">{{ button.label }}</a>
+        {% endfor %}
         <a class="item-button clear"   href="{{ url_for('remove_last') }}">1&nbsp;zurück</a>
       </div>
     </div>
@@ -224,7 +248,7 @@ def index():
     items = session.get("items", [])
     total = sum(PRICES.get(item, 0) for item in items)
     grouped = list(Counter(items).items())
-    return render_template_string(index_template, items=grouped, total=total)
+    return render_template_string(index_template, items=grouped, total=total, buttons=ITEM_BUTTONS)
 
 @app.route("/add")
 def add_item():
