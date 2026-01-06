@@ -1,0 +1,156 @@
+
+
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8" />
+  <title>Kassensystem</title>
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      height: 100%;
+      font-family: Arial, sans-serif;
+      font-size: 18px;
+      overflow: hidden;
+    }
+
+    .wrapper {
+      display: flex;
+      flex-direction: column; 
+      height: 100vh;
+    }
+
+    .bestellung-container h3 {
+      margin: 5px 0;
+    }
+    .top-section {
+      flex: 0 0 33%;
+      border-bottom: 1px solid #999;
+      box-sizing: border-box;
+      padding: 10px 20px;
+      overflow-y: auto;
+    }
+    .top-section h1 {
+      margin-top: 0;
+    }
+
+    #total {
+      font-weight: bold;
+      margin-top: 10px;
+      font-size: 1.5em;
+      background-color: #ffe680;
+      border: 2px solid #ccc;
+      border-radius: 5px;
+      padding: 10px;
+      text-align: center;
+      width: fit-content;
+    }
+
+    .bottom-section {
+      flex: 1;
+      padding: 10px;
+      box-sizing: border-box;
+    }
+
+
+  .buttons-container {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(400px, 2fr)); /* Breite reduziert */
+    gap: 5px; /* Geringerer Abstand zwischen Buttons */
+    height: 200%;
+    box-sizing: border-box;
+    align-content: start;
+  }
+
+  .item-button {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    text-decoration: none;
+    color: white;
+    border: 1px solid #999;
+    border-radius: 4px;
+    font-size: 60px; /* Kleinere Schriftgröße */
+    padding: 10px; /* Geringeres Padding */
+    text-align: center;
+  }
+
+  .item-button:hover {
+    background-color: #bbb;
+  }
+
+  /* Anpassung für spezifische Farben bleibt gleich */
+  .item-button.suess {
+    background-color: #0099ff;
+  }
+  .item-button.bier {
+    background-color: #6b6b6b;
+  }
+  .item-button.wein {
+    background-color: #350097;
+  }
+  .item-button.shots {
+    background-color: #ffe4b5;
+  }
+  .item-button.gross {
+    background-color: #ff00c8;
+  }
+  .item-button.depot {
+    background-color: #000000;
+  }  
+  .item-button.clear {
+    background-color: #fc0303;
+  }
+</style>
+</head>
+<body>
+  <div class="wrapper">
+    <div class="top-section">
+      <h1>Kassensystem Demo</h1>
+      <div id="total">
+        Total: {{ total }} CHF
+      </div>
+      <div class="bestellung-container">
+        <h3>Bestellliste</h3>
+        {% if items %}
+            <ul>
+            {% for (item, count) in items %}
+                <li>{{ count }}x {{ item }}</li>
+            {% endfor %}
+            </ul>
+        {% else %}
+            <p>(Noch keine Artikel)</p>
+        {% endif %}
+      </div>
+    </div>
+
+    <div class="bottom-section">
+      <div class="buttons-container">
+        <a class="item-button suess" href="{{ url_for('add_item', name='Süssgetränke') }}">Süssgetränke</a>
+        <a class="item-button bier" href="{{ url_for('add_item', name='Bier') }}">Bier, Mate, Redbull, Smirnoff</a>
+        <a class="item-button wein" href="{{ url_for('add_item', name='Wein') }}">Wein</a>
+        <a class="item-button wein" href="{{ url_for('add_item', name='Weinflasche 0.7') }}">Weinflasche</a>      
+        <a class="item-button gross" href="{{ url_for('add_item', name='Drink') }}">Drink 10</a>
+        <a class="item-button suess" href="{{ url_for('add_item', name='Depot rein') }}">Depot rein</a>
+        <a class="item-button suess" href="{{ url_for('add_item', name='Weinglassdepot') }}">Weinglassdepot</a>
+        <a class="item-button clear" href="{{ url_for('remove_last') }}">1 zurück</a>
+        <a class="item-button clear" href="{{ url_for('clear_order') }}">Neuer Kunde</a>
+      </div>
+    </div>
+  </div>
+</body>
+</html>
+"""
+
+PRICES = {
+    'Süssgetränke': 6,
+    'Bier': 7,
+    'Wein': 7,
+    'Drink 10': 12,
+    'Depot rein': -2,
+    'Weinflasche 0.7': 22,
+    'Weinglassdepot': 2,
+
+}

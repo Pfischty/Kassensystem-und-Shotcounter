@@ -1,0 +1,16 @@
+<!DOCTYPE html>
+<html lang="de">
+    <head>
+        <title>Teamregrestration</title>
+        <link rel="stylesheet" href="{{ url_for('static', filename='css/pure.css') }}">
+    </head>
+    <body>
+        <h1>Teamregrestration</h1>
+        <p>{{  message  }}</p>
+        <form  method="post">
+                <input  type="text"  name="Teamname"  required>
+                <input  type="submit">
+        </form> 
+    </body>
+</html>
+ 

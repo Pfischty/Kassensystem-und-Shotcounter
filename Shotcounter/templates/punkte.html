@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <title>Punkte Verteilen</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/pure.css') }}">
+    
+    <style>
+        .container {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            flex-direction: column;
+        }
+        .number-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 10px;
+            margin: 20px;
+        }
+        .number-grid button {
+            padding: 10px;
+            font-size: 5em;
+        }
+        .number-display {
+            margin-bottom: 20px;
+            font-size: 5em;
+            padding: 10px;
+            border: 1px solid #ccc;
+            min-width: 200px;
+            text-align: center;
+        }
+        .action-buttons {
+            display: flex;
+            justify-content: space-between;
+            width: 100%;
+        }
+        .action-buttons button {
+            padding: 10px 20px;
+            font-size: 1em;
+        }
+        /* Stil für das Auswahlelement */
+        .select-large {
+            padding: 15px 30px; /* Größeres Padding für Touch-Freundlichkeit */
+            margin: 10px 0; /* Abstand oben und unten */
+            font-size: 1.5rem; /* Größere Schrift für bessere Lesbarkeit */
+            border: 2px solid #ccc; /* Dickerer Rand für bessere Sichtbarkeit */
+            border-radius: 5px; /* Abgerundete Ecken */
+            width: 50%; /* Breiteres Auswahlelement */
+            -webkit-appearance: none; /* Entfernt den Standard-Style von Webkit-Browsern */
+            -moz-appearance: none; /* Entfernt den Standard-Style von Mozilla-Browsern */
+            appearance: none; /* Standard-Style entfernen */
+            cursor: pointer; /* Cursor zu Hand ändern, um Klickbarkeit anzuzeigen */
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Punkteverteilen</h1>
+        <form method="post">
+            <div>
+                <label for="team">Team auswählen:</label>
+                <select name="Team" class="select-large" id="team">
+                    {% for team in teams %}
+                        <option value="{{ team.team }}">{{ team.team }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="number-display" id="numberDisplay">0</div>
+            <div class="number-grid">
+                <!-- Generate numbers 1 to 9 first -->
+                {% for number in range(1, 10) %}
+                    <button type="button" class="button-large" onclick="addNumber({{ number }})">{{ number }}</button>
+                {% endfor %}
+                <!-- Add 0 as the last button -->
+                <button type="button" class="button-large" onclick="addNumber(0)">0</button>
+                <button type="button" class="button-large" onclick="deleteNumber()">Delete</button>
+                <button class="button-large" type="submit">Add</button>
+            </div>
+            
+            <div class="action-buttons">
+                <input type="hidden" name="number" id="hiddenNumberInput">
+            </div>
+        </form> 
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', (event) => {
+            numberDisplay.innerText = '0'; // Set the initial text to '0'
+            hiddenNumberInput.value = '0'; // Ensure the hidden input field is also '0'
+        });
+
+        function addNumber(num) {
+            if (numberDisplay.innerText === '0') {
+                numberDisplay.innerText = ''; // Clear the initial '0'
+            }
+            numberDisplay.innerText += num.toString(); // Append the new number
+            hiddenNumberInput.value = numberDisplay.innerText; // Update the hidden input
+        }
+
+        function deleteNumber() {
+            let currentDisplay = numberDisplay.innerText;
+            numberDisplay.innerText = currentDisplay.slice(0, -1);
+            if (numberDisplay.innerText === '') {
+                numberDisplay.innerText = '0'; // Reset to '0' if empty
+            }
+            hiddenNumberInput.value = numberDisplay.innerText; // Update the hidden input
+        }
+    </script>
+</body>
+</html>

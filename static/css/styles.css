@@ -1,0 +1,72 @@
+html, body {
+    margin: 0;
+    padding: 0;
+    width: 100%;
+    height: 100%;
+    background: #000; /* Fallback-Hintergrund */
+    /* overflow: hidden; // optional, damit kein Scrollen möglich ist */
+  }
+  
+  #backgroundCanvas {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    z-index: -1;   /* So liegt er unter den anderen Inhalten */
+    display: block;
+    pointer-events: none;
+  }
+  
+  /* Titel */
+  h1 {
+    text-align: center;
+    color: #fa8806;       /* Orange */
+    font-size: 5em;
+    margin-top: 0.5em;
+    position: relative;
+    z-index: 2;           /* Damit er über dem Canvas liegt */
+  }
+  
+  /* Tabellenkopf etc. in Orange/Schwarz */
+  table {
+    margin: 0 auto;
+    margin-top: 20px;
+    background-color: #000;
+    border-collapse: separate;
+    border-spacing: 0;
+    position: relative;
+    z-index: 2;           /* Über dem Canvas */
+    width: 80%;
+  }
+  th, td {
+    text-align: center;
+    padding: 20px;
+    border: none;
+    font-size: 4em;       /* Anpassen, falls dir 5em zu groß ist */
+    color: #fff;
+  }
+  th {
+    background-color: #111; 
+    color: #fa8806;       /* Orange */
+  }
+  
+  /* Logo-Bereich */
+  .logo-area {
+    position: fixed;
+    bottom: 10px;
+    right: 10px;
+    width: 200px;
+    height: 200px;
+    background-color: #000;
+    border-radius: 50%;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    z-index: 2;
+  }
+  .logo-area img {
+    max-width: 90%;
+    max-height: 90%;
+  }
+  

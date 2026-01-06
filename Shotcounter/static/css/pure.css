@@ -1,0 +1,26 @@
+/* Stil für die Buttons */
+.button-large {
+    padding: 20px; /* Noch größeres Padding für Touch-Freundlichkeit */
+    margin: 10px; /* Abstand zwischen den Buttons */
+    font-size: 5rem; /* Noch größere Schrift für bessere Lesbarkeit */
+    border: none;
+    background-color: #d8d8d8; /* Neutrale Farbe für den Button */
+    color: rgb(0, 0, 0);
+}
+
+/* Stil für das Nummernfeld */
+.number-display {
+    font-size: 5rem; /* Noch größere Schriftgröße */
+    padding: 40px; /* Beibehaltung des großen Padding für das Nummernfeld */
+    margin: 10px 0;
+    text-align: center;
+    border: 1px solid #4030a0;
+    min-width: 300px; /* Vergrößerung der Breite des Nummernfeldes */
+}
+
+/* Layout für die Zahlen-Buttons */
+.number-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 20px; /* Vergrößerung des Abstands zwischen den Buttons */
+}
