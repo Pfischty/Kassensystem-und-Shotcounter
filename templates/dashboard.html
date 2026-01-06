@@ -6,17 +6,39 @@
 <div class="card">
   <h2>Aktuelles Event</h2>
   {% if active_event %}
-    <p><strong>{{ active_event.name }}</strong></p>
-    <p>
-      Kassensystem: {% if active_event.kassensystem_enabled %}<span class="badge badge-green">aktiv</span>{% else %}<span class="badge badge-red">aus</span>{% endif %}
-      &nbsp;|&nbsp;
-      Shotcounter: {% if active_event.shotcounter_enabled %}<span class="badge badge-green">aktiv</span>{% else %}<span class="badge badge-red">aus</span>{% endif %}
-    </p>
-    <div style="display:flex; gap:0.6rem; flex-wrap: wrap;">
-      <a href="{{ url_for('cashier') }}"><button>Zur Kasse</button></a>
-      <a href="{{ url_for('shotcounter') }}"><button class="secondary">Zum Shotcounter</button></a>
-      <a href="{{ url_for('admin') }}"><button class="secondary">Einstellungen</button></a>
+    <div style="display:flex; align-items:center; justify-content: space-between; flex-wrap:wrap; gap:1rem;">
+      <div>
+        <p style="margin:0;"><strong>{{ active_event.name }}</strong></p>
+        <p style="margin:0.25rem 0 0;">
+          Kassensystem: {% if active_event.kassensystem_enabled %}<span class="badge badge-green">aktiv</span>{% else %}<span class="badge badge-red">aus</span>{% endif %}
+          &nbsp;|&nbsp;
+          Shotcounter: {% if active_event.shotcounter_enabled %}<span class="badge badge-green">aktiv</span>{% else %}<span class="badge badge-red">aus</span>{% endif %}
+        </p>
+      </div>
+      <div style="display:flex; gap:0.6rem; flex-wrap: wrap;">
+        <a href="{{ url_for('cashier') }}"><button>Zur Kasse</button></a>
+        <a href="{{ url_for('shotcounter') }}"><button class="secondary">Zum Shotcounter</button></a>
+        <a href="{{ url_for('event_detail', event_id=active_event.id) }}"><button class="secondary">Statistik & Logs</button></a>
+        <a href="{{ url_for('admin') }}"><button class="secondary">Einstellungen</button></a>
+      </div>
     </div>
+    {% set active_stats = stats_map.get(active_event.id) %}
+    {% if active_stats %}
+      <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap:0.6rem; margin-top:0.8rem;">
+        <div class="card" style="margin:0;">
+          <div style="color:#cbd5e1;">Umsatz</div>
+          <div style="font-size:1.4rem; font-weight:700;">{{ active_stats.revenue }} CHF</div>
+        </div>
+        <div class="card" style="margin:0;">
+          <div style="color:#cbd5e1;">Bestellungen</div>
+          <div style="font-size:1.4rem; font-weight:700;">{{ active_stats.order_count }}</div>
+        </div>
+        <div class="card" style="margin:0;">
+          <div style="color:#cbd5e1;">Shots gesamt</div>
+          <div style="font-size:1.4rem; font-weight:700;">{{ active_stats.shots_total }}</div>
+        </div>
+      </div>
+    {% endif %}
   {% else %}
     <p>Kein aktives Event. Bitte im Adminbereich aktivieren.</p>
     <a href="{{ url_for('admin') }}"><button>Zum Adminbereich</button></a>
@@ -29,14 +51,19 @@
     <p>Noch keine Events vorhanden.</p>
   {% endif %}
   <table>
-    <tr><th>Name</th><th>Status</th><th>Erstellt</th></tr>
+    <tr><th>Name</th><th>Status</th><th>Erstellt</th><th>Umsatz</th><th>Bestellungen</th><th>Shots</th><th></th></tr>
     {% for event in events %}
+      {% set data = stats_map.get(event.id) %}
       <tr>
         <td>{{ event.name }}</td>
         <td>
           {% if event.is_active %}<span class="badge badge-green">aktiv</span>{% elif event.is_archived %}<span class="badge badge-red">archiviert</span>{% else %}<span class="badge badge-blue">bereit</span>{% endif %}
         </td>
         <td>{{ event.created_at.strftime('%d.%m.%Y %H:%M') }}</td>
+        <td>{{ (data.revenue if data else 0) }} CHF</td>
+        <td>{{ (data.order_count if data else 0) }}</td>
+        <td>{{ (data.shots_total if data else 0) }}</td>
+        <td><a href="{{ url_for('event_detail', event_id=event.id) }}">Details</a></td>
       </tr>
     {% endfor %}
   </table>

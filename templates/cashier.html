@@ -6,14 +6,21 @@
 <style>
   .cashier-grid {
     display:grid;
-    grid-template-columns:repeat(auto-fill, minmax(180px, 1fr));
-    gap:0.8rem;
+    grid-template-columns:repeat(auto-fit, minmax(170px, 1fr));
+    gap:1.2rem;
+    align-items:start;
+  }
+  .cashier-grid a {
+    display:block;
+    height:100%;
   }
   .cashier-tile {
     background:#1f2a44;
     border:1px solid var(--border);
     border-radius:10px;
-    padding:1rem;
+    padding:0.85rem 0.95rem 0.9rem;
+    box-sizing:border-box;
+    min-height:110px;
     height:100%;
     display:flex;
     flex-direction:column;
@@ -22,8 +29,24 @@
     color:#e2e8f0;
     box-shadow:0 8px 20px rgba(0,0,0,0.25);
     transition: transform 0.12s ease, box-shadow 0.12s ease;
+    height:100%;
   }
   .cashier-tile:hover { transform: translateY(-2px); box-shadow:0 12px 30px rgba(0,0,0,0.3); }
+  .action-buttons { display:flex; gap:0.75rem; flex-wrap: wrap; }
+  .action-buttons button { padding:0.9rem 1.1rem; font-size:1rem; }
+  @media (orientation: portrait) {
+    .cashier-grid { grid-template-columns: 1fr; }
+    .action-buttons { flex-direction:column; align-items:stretch; }
+    .action-buttons a { width:100%; }
+    .action-buttons button { width:100%; }
+  }
+  @media (max-width: 720px) {
+    .cashier-grid { grid-template-columns: 1fr; }
+    .order-list { columns:1 !important; }
+  }
+  @media (max-width: 1024px) {
+    .order-list { columns:1 !important; }
+  }
 </style>
 
 <div class="card">
@@ -32,19 +55,18 @@
       <div class="badge badge-blue">Aktives Event</div>
       <div style="font-size:1.4rem; margin-top:0.4rem;">Total: <strong>{{ total }}</strong> CHF</div>
     </div>
-    <div style="display:flex; gap:0.5rem; flex-wrap: wrap;">
-      <a href="{{ url_for('remove_last') }}"><button class="secondary">1 zurück</button></a>
+    <div class="action-buttons">
+      <a href="{{ url_for('remove_last') }}"><button class="secondary">Letzter Artikel löschen</button></a>
       <a href="{{ url_for('checkout') }}"><button>Bestellung abschließen</button></a>
-      <a href="{{ url_for('cashier_stats') }}"><button class="secondary">Statistik</button></a>
     </div>
   </div>
 
   <div style="margin-top:0.8rem;">
     <h3>Bestellliste</h3>
     {% if items %}
-      <ul style="columns:2; list-style:none; padding-left:0;">
-        {% for item, qty in items %}
-          <li>{{ qty }}× {{ item }}</li>
+      <ul class="order-list" style="columns:2; list-style:none; padding-left:0; margin:0;">
+        {% for item in items %}
+          <li>{{ item.qty }}× {{ item.name }} — {{ item.price }} CHF ({{ item.line_total }} CHF)</li>
         {% endfor %}
       </ul>
     {% else %}

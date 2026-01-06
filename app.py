@@ -124,6 +124,33 @@ class DrinkSale(db.Model):
     order = db.relationship("Order", backref=db.backref("drink_sales", cascade="all, delete-orphan"))
 
 
+class OrderLog(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    event_id = db.Column(db.Integer, db.ForeignKey("event.id", ondelete="CASCADE"), nullable=False)
+    order_id = db.Column(db.Integer, db.ForeignKey("order.id", ondelete="CASCADE"), nullable=True)
+    total = db.Column(db.Integer, nullable=False)
+    items = db.Column(db.JSON, default=list)  # [{"name": str, "qty": int, "price": int}]
+    actor = db.Column(db.String(200))
+    user_agent = db.Column(db.String(300))
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    event = db.relationship("Event", backref=db.backref("order_logs", cascade="all, delete-orphan"))
+
+
+class ShotLog(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    event_id = db.Column(db.Integer, db.ForeignKey("event.id", ondelete="CASCADE"), nullable=False)
+    team_id = db.Column(db.Integer, db.ForeignKey("team.id", ondelete="SET NULL"), nullable=True)
+    team_name = db.Column(db.String(150))
+    amount = db.Column(db.Integer, nullable=False)
+    actor = db.Column(db.String(200))
+    user_agent = db.Column(db.String(300))
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    event = db.relationship("Event", backref=db.backref("shot_logs", cascade="all, delete-orphan"))
+    team = db.relationship("Team")
+
+
 with app.app_context():
     db.create_all()
 
@@ -279,8 +306,61 @@ def validate_and_normalize_buttons(settings: Dict | None) -> Dict:
     return sanitized
 
 
+def resolve_actor() -> tuple[str, str]:
+    """Returns tuple of (actor, user_agent) derived from request context."""
+
+    try:
+        ip = request.headers.get("X-Forwarded-For", request.remote_addr) or "unbekannt"
+        ua = (request.user_agent.string or "").strip()[:280]
+    except Exception:
+        ip, ua = "unbekannt", ""
+    actor = ip
+    return actor, ua
+
+
 def cart_key(event: Event) -> str:
     return f"cart_{event.id}"
+
+
+def event_statistics(event: Event) -> Dict:
+    """Aggregates revenue/orders and shot data for an event."""
+
+    revenue = (
+        db.session.query(func.coalesce(func.sum(Order.total), 0))
+        .filter(Order.event_id == event.id)
+        .scalar()
+        or 0
+    )
+    order_count = db.session.query(func.count(Order.id)).filter(Order.event_id == event.id).scalar() or 0
+    shots_total = (
+        db.session.query(func.coalesce(func.sum(ShotLog.amount), 0))
+        .filter(ShotLog.event_id == event.id)
+        .scalar()
+        or 0
+    )
+    top_products = (
+        db.session.query(DrinkSale.name, func.sum(DrinkSale.quantity))
+        .join(Order, Order.id == DrinkSale.order_id)
+        .filter(Order.event_id == event.id)
+        .group_by(DrinkSale.name)
+        .order_by(func.sum(DrinkSale.quantity).desc())
+        .limit(5)
+        .all()
+    )
+    top_shots = (
+        db.session.query(Team.name, Team.shots)
+        .filter(Team.event_id == event.id)
+        .order_by(Team.shots.desc(), Team.name.asc())
+        .limit(5)
+        .all()
+    )
+    return {
+        "revenue": revenue,
+        "order_count": order_count,
+        "shots_total": shots_total,
+        "top_products": top_products,
+        "top_shots": top_shots,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -290,7 +370,40 @@ def cart_key(event: Event) -> str:
 def dashboard():
     active_event = get_active_event()
     events = Event.query.order_by(Event.created_at.desc()).all()
-    return render_template("dashboard.html", active_event=active_event, events=events)
+    stats_map = {event.id: event_statistics(event) for event in events}
+    return render_template("dashboard.html", active_event=active_event, events=events, stats_map=stats_map)
+
+
+@app.route("/events/<int:event_id>")
+def event_detail(event_id: int):
+    event = Event.query.get_or_404(event_id)
+    stats = event_statistics(event)
+    order_logs = (
+        OrderLog.query.filter_by(event_id=event.id).order_by(OrderLog.created_at.desc()).limit(50).all()
+    )
+    shot_logs = (
+        ShotLog.query.filter_by(event_id=event.id).order_by(ShotLog.created_at.desc()).limit(50).all()
+    )
+    sales = (
+        db.session.query(DrinkSale.name, func.sum(DrinkSale.quantity))
+        .join(Order, Order.id == DrinkSale.order_id)
+        .filter(Order.event_id == event.id)
+        .group_by(DrinkSale.name)
+        .order_by(func.sum(DrinkSale.quantity).desc())
+        .all()
+    )
+    teams = (
+        Team.query.filter_by(event_id=event.id).order_by(Team.shots.desc(), Team.name.asc()).all()
+    )
+    return render_template(
+        "event_detail.html",
+        event=event,
+        stats=stats,
+        order_logs=order_logs,
+        shot_logs=shot_logs,
+        sales=sales,
+        teams=teams,
+    )
 
 
 @app.route("/admin")
@@ -399,7 +512,13 @@ def cashier():
     prices = {button.name: button.price for button in buttons}
     total = sum(prices.get(item, 0) for item in items)
     grouped = Counter(items).items()
-    return render_template("cashier.html", buttons=buttons, items=grouped, total=total, event=event)
+    detailed_items = [
+        {"name": name, "qty": qty, "price": prices.get(name, 0), "line_total": prices.get(name, 0) * qty}
+        for name, qty in grouped
+    ]
+    return render_template(
+        "cashier.html", buttons=buttons, items=detailed_items, total=total, event=event
+    )
 
 
 @app.route("/cashier/add")
@@ -441,9 +560,24 @@ def checkout():
         for item_name in items:
             db.session.add(OrderItem(order_id=order.id, name=item_name, price=prices.get(item_name, 0)))
 
+        aggregated_items = []
         for name, qty in Counter(items).items():
+            price = prices.get(name, 0)
+            aggregated_items.append({"name": name, "qty": qty, "price": price})
             db.session.add(DrinkSale(order_id=order.id, name=name, quantity=qty))
 
+        db.session.commit()
+        actor, user_agent = resolve_actor()
+        db.session.add(
+            OrderLog(
+                event_id=event.id,
+                order_id=order.id,
+                total=total,
+                items=aggregated_items,
+                actor=actor,
+                user_agent=user_agent,
+            )
+        )
         db.session.commit()
         app.logger.info("Bestellung abgeschlossen (Event %s, Summe %s)", event.name, total)
 
@@ -568,6 +702,18 @@ def add_shots():
         return redirect(url_for("shotcounter"))
 
     team.shots += amount
+    db.session.commit()
+    actor, user_agent = resolve_actor()
+    db.session.add(
+        ShotLog(
+            event_id=event.id,
+            team_id=team.id,
+            team_name=team.name,
+            amount=amount,
+            actor=actor,
+            user_agent=user_agent,
+        )
+    )
     db.session.commit()
     app.logger.info("%s Shots zu Team %s hinzugefügt (Event %s)", amount, team.name, event.name)
     flash("Shots verbucht.", "success")

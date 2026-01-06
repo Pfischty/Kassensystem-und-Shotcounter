@@ -1,0 +1,123 @@
+{% extends "base.html" %}
+{% block title %}Event {{ event.name }}{% endblock %}
+{% block content %}
+<h1>Event: {{ event.name }}</h1>
+
+<style>
+  .stat-grid { display:grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap:0.8rem; margin-bottom:1rem; }
+  .stat-card { background:#10192c; border:1px solid var(--border); border-radius:12px; padding:0.9rem 1rem; }
+  .stat-label { font-size:0.95rem; color:#cbd5e1; margin-bottom:0.25rem; }
+  .stat-value { font-size:1.6rem; font-weight:700; }
+  .flex-grid { display:grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap:0.8rem; }
+  .list-plain { list-style:none; padding-left:0; margin:0; display:flex; flex-direction:column; gap:0.45rem; }
+  .log-table { width:100%; border-collapse:collapse; }
+  .log-table th, .log-table td { border-bottom:1px solid var(--border); padding:0.5rem 0.35rem; text-align:left; }
+  .muted { color:#94a3b8; font-size:0.95rem; }
+</style>
+
+<div class="card">
+  <div class="stat-grid">
+    <div class="stat-card">
+      <div class="stat-label">Umsatz gesamt</div>
+      <div class="stat-value">{{ stats.revenue }} CHF</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Bestellungen</div>
+      <div class="stat-value">{{ stats.order_count }}</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Shots gesamt</div>
+      <div class="stat-value">{{ stats.shots_total }}</div>
+    </div>
+  </div>
+  <div class="flex-grid">
+    <div class="card">
+      <h3>Top Produkte</h3>
+      {% if stats.top_products %}
+        <ul class="list-plain">
+          {% for name, qty in stats.top_products %}
+            <li>{{ name }} — {{ qty }}×</li>
+          {% endfor %}
+        </ul>
+      {% else %}
+        <p class="muted">Noch keine Verkäufe.</p>
+      {% endif %}
+    </div>
+    <div class="card">
+      <h3>Top Teams (Shots)</h3>
+      {% if stats.top_shots %}
+        <ul class="list-plain">
+          {% for name, shots in stats.top_shots %}
+            <li>{{ name }} — {{ shots }} Shots</li>
+          {% endfor %}
+        </ul>
+      {% else %}
+        <p class="muted">Noch keine Shots verbucht.</p>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <h2>Bestelllog</h2>
+  {% if order_logs %}
+    <table class="log-table">
+      <tr><th>Zeit</th><th>Summe</th><th>Artikel</th><th>Gerät / User</th></tr>
+      {% for log in order_logs %}
+        <tr>
+          <td>{{ log.created_at.strftime('%d.%m.%Y %H:%M:%S') }}</td>
+          <td>{{ log.total }} CHF</td>
+          <td>
+            {% for item in log.items or [] %}
+              <div>{{ item.qty }}× {{ item.name }} ({{ item.price }} CHF)</div>
+            {% endfor %}
+          </td>
+          <td>
+            <div>{{ log.actor or 'unbekannt' }}</div>
+            <div class="muted">{{ log.user_agent }}</div>
+          </td>
+        </tr>
+      {% endfor %}
+    </table>
+  {% else %}
+    <p class="muted">Noch keine Bestellungen protokolliert.</p>
+  {% endif %}
+</div>
+
+<div class="card">
+  <h2>Shot-Log</h2>
+  {% if shot_logs %}
+    <table class="log-table">
+      <tr><th>Zeit</th><th>Team</th><th>Anzahl</th><th>Gerät / User</th></tr>
+      {% for log in shot_logs %}
+        <tr>
+          <td>{{ log.created_at.strftime('%d.%m.%Y %H:%M:%S') }}</td>
+          <td>{{ log.team_name or 'unbekannt' }}</td>
+          <td>{{ log.amount }}</td>
+          <td>
+            <div>{{ log.actor or 'unbekannt' }}</div>
+            <div class="muted">{{ log.user_agent }}</div>
+          </td>
+        </tr>
+      {% endfor %}
+    </table>
+  {% else %}
+    <p class="muted">Noch keine Shots protokolliert.</p>
+  {% endif %}
+</div>
+
+<div class="card">
+  <h2>Aktuelle Teamstände</h2>
+  {% if teams %}
+    <table>
+      <tr><th>Team</th><th>Shots</th></tr>
+      {% for team in teams %}
+        <tr><td>{{ team.name }}</td><td>{{ team.shots }}</td></tr>
+      {% endfor %}
+    </table>
+  {% else %}
+    <p class="muted">Keine Teams vorhanden.</p>
+  {% endif %}
+</div>
+
+{% endblock %}
