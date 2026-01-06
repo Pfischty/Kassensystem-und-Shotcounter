@@ -19,9 +19,12 @@
     
     <!-- Titel -->
     <h1>Winterfäscht Beachparty Shotcounter</h1>
+    <div id="refresh-indicator">
+        Live-Update aktiv. Letzte Aktualisierung: <span id="last-update">-</span>
+    </div>
 
     <!-- Tabelle -->
-    <table>
+    <table id="leaderboard-table">
         <thead>
             <tr>
                 <th>Rang</th>
@@ -29,7 +32,7 @@
                 <th>Shots</th>
             </tr>
         </thead>
-        <tbody>
+        <tbody id="leaderboard-body">
             {% for team in teams %}
             <tr>
                 <td>{{ loop.index }}</td>
@@ -42,14 +45,71 @@
 
     <!-- Socket.io Script -->
     <script>
-        // Verbindung zum Server herstellen (z. B. Flask-SocketIO)
-        var socket = io.connect('http://' + document.domain + ':' + location.port);
+        const tableBody = document.getElementById('leaderboard-body');
+        const lastUpdate = document.getElementById('last-update');
+        let updateTimer = null;
 
-        // Wenn das 'update_leaderboard'-Event ankommt, Seite neu laden
-        socket.on('update_leaderboard', function() {
-            console.log('Leaderboard wird aktualisiert');
-            location.reload(); 
-        });
+        function updateIndicator(timestamp) {
+            const date = new Date(timestamp * 1000);
+            lastUpdate.textContent = date.toLocaleTimeString();
+            if (updateTimer) {
+                clearInterval(updateTimer);
+            }
+            let seconds = 0;
+            updateTimer = setInterval(() => {
+                seconds += 1;
+                lastUpdate.textContent = `${date.toLocaleTimeString()} (+${seconds}s)`;
+            }, 1000);
+        }
+
+        function renderLeaderboard(payload) {
+            if (!payload || !payload.teams) return;
+            tableBody.innerHTML = '';
+            payload.teams.forEach(entry => {
+                const row = document.createElement('tr');
+                row.innerHTML = `
+                    <td>${entry.rank}</td>
+                    <td>${entry.team}</td>
+                    <td>${entry.score}</td>
+                `;
+                tableBody.appendChild(row);
+            });
+            if (payload.generated_at) {
+                updateIndicator(payload.generated_at);
+            }
+        }
+
+        function fetchInitial() {
+            fetch('{{ url_for("leaderboard_data") }}')
+                .then(response => response.json())
+                .then(renderLeaderboard)
+                .catch(() => {});
+        }
+
+        function startSocket() {
+            const socket = io();
+            socket.on('leaderboard_data', renderLeaderboard);
+            socket.on('connect_error', startSSE);
+            socket.on('disconnect', startSSE);
+        }
+
+        function startSSE() {
+            const source = new EventSource('{{ url_for("leaderboard_stream") }}');
+            source.onmessage = (event) => {
+                try {
+                    const data = JSON.parse(event.data);
+                    renderLeaderboard(data);
+                } catch (e) {
+                    console.error('Fehler beim Parsen des SSE-Events', e);
+                }
+            };
+            source.onerror = () => {
+                source.close();
+            };
+        }
+
+        fetchInitial();
+        startSocket();
     </script>
     
 

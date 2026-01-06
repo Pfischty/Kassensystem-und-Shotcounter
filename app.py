@@ -1,8 +1,15 @@
-from flask import Flask, redirect, render_template, request, session, url_for, abort, render_template_string
-from collections import Counter
-from flask_sqlalchemy import SQLAlchemy
-from flask_socketio import SocketIO, emit
+import json
+import queue
+import time
+from collections import Counter, defaultdict
+from time import monotonic
+
+from flask import (Flask, Response, abort, jsonify, redirect, render_template,
+                   render_template_string, request, session, stream_with_context,
+                   url_for)
 from flask_session import Session
+from flask_socketio import SocketIO, emit
+from flask_sqlalchemy import SQLAlchemy
 
 app = Flask(__name__)
 app.secret_key = b'gskjd%hsgd82jsd'
@@ -11,6 +18,45 @@ db = SQLAlchemy(app)
 socketio = SocketIO(app, manage_session=True)
 app.config['SESSION_TYPE'] = 'filesystem'  # Session-Daten auf dem Server speichern
 Session(app)
+
+RATE_LIMIT_MAX_REQUESTS = 10
+RATE_LIMIT_WINDOW_SECONDS = 30
+rate_limit_state = defaultdict(list)
+_sse_subscribers: set[queue.Queue] = set()
+
+
+def _rate_limit_or_abort(key: str) -> None:
+    now = monotonic()
+    window_start = now - RATE_LIMIT_WINDOW_SECONDS
+    timestamps = rate_limit_state[key]
+    # Alte Einträge entfernen
+    while timestamps and timestamps[0] < window_start:
+        timestamps.pop(0)
+    if len(timestamps) >= RATE_LIMIT_MAX_REQUESTS:
+        abort(429, description="Zu viele Anfragen. Bitte später erneut versuchen.")
+    timestamps.append(now)
+
+
+def _leaderboard_payload() -> dict:
+    teams = teamliste.query.order_by(teamliste.score.desc()).all()
+    payload = {
+        "generated_at": time.time(),
+        "teams": [
+            {"rank": index + 1, "team": team.team, "score": team.score}
+            for index, team in enumerate(teams)
+        ],
+    }
+    return payload
+
+
+def _broadcast_leaderboard() -> None:
+    payload = _leaderboard_payload()
+    socketio.emit("leaderboard_data", payload, broadcast=True, namespace="/")
+    for subscriber in set(_sse_subscribers):
+        try:
+            subscriber.put_nowait(payload)
+        except queue.Full:
+            continue
 
 class teamliste(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -29,12 +75,13 @@ def registration():
             db.session.add(team_item)
             db.session.commit()
             message = "Team wurde erfolgreich hinzugefügt."
-            socketio.emit('update_leaderboard', namespace='/', to=None)
+            _broadcast_leaderboard()
     return render_template('registration.html', message=message)
 
 @app.route('/punkte', methods=('GET', 'POST'))
 def punkte():
     if request.method == 'POST':
+        _rate_limit_or_abort(request.remote_addr or "anonymous")
         team_name = request.form["Team"]
         punkte = request.form["number"]
         if not team_name:
@@ -47,9 +94,7 @@ def punkte():
                 team_item.score += int(punkte)
                 db.session.commit()
                 session['message'] = f"{punkte} Punkte wurden zu {team_name} hinzugefügt."
-                
-                # WebSocket-Ereignis senden
-                socketio.emit('update_leaderboard', namespace='/', to=None)
+                _broadcast_leaderboard()
             else:
                 session['message'] = "Team nicht gefunden."
         return redirect(url_for('punkte'))
@@ -62,6 +107,34 @@ def punkte():
 def leaderboard():
     teams = teamliste.query.order_by(teamliste.score.desc()).all()
     return render_template('leaderboard.html', teams=teams)
+
+@app.route('/leaderboard/data')
+def leaderboard_data():
+    return jsonify(_leaderboard_payload())
+
+
+@app.route("/leaderboard/stream")
+def leaderboard_stream():
+    subscriber: queue.Queue = queue.Queue()
+    _sse_subscribers.add(subscriber)
+
+    def event_stream():
+        try:
+            # Initiale Daten sofort senden
+            yield f"data: {json.dumps(_leaderboard_payload())}\\n\\n"
+            while True:
+                try:
+                    data = subscriber.get(timeout=15)
+                    yield f"data: {json.dumps(data)}\\n\\n"
+                except queue.Empty:
+                    # Verhindert Timeouts bei Inaktivität
+                    yield ": keep-alive\\n\\n"
+        finally:
+            _sse_subscribers.discard(subscriber)
+
+    response = Response(stream_with_context(event_stream()), mimetype="text/event-stream")
+    response.headers["Cache-Control"] = "no-cache"
+    return response
 
 @app.route('/admin', methods=('GET', 'POST'))
 def admin():
@@ -131,7 +204,7 @@ def manage():
                     db.session.commit()
                     message = "Team wurde erfolgreich hinzugefügt."
                     # WebSocket-Ereignis senden
-                    socketio.emit('update_leaderboard')
+                    _broadcast_leaderboard()
         elif action == 'add_points':
             # Punkte zu einem Team hinzufügen
             team_name = request.form.get("Team")
@@ -141,13 +214,14 @@ def manage():
             elif not punkte or not punkte.isnumeric():
                 message = "Bitte eine gültige Zahl angeben."
             else:
+                _rate_limit_or_abort(request.remote_addr or "anonymous")
                 team_item = teamliste.query.filter_by(team=team_name).first()
                 if team_item:
                     team_item.score += int(punkte)
                     db.session.commit()
                     message = f"{punkte} Punkte wurden zu {team_name} hinzugefügt."
                     # WebSocket-Ereignis senden
-                    socketio.emit('update_leaderboard')
+                    _broadcast_leaderboard()
                 else:
                     message = "Team nicht gefunden."
         elif action == 'admin_update':
@@ -160,13 +234,14 @@ def manage():
             elif not score.isnumeric():
                 message = "Punkte müssen eine Zahl sein."
             else:
+                _rate_limit_or_abort(request.remote_addr or "anonymous")
                 team = teamliste.query.get(team_id)
                 if team:
                     team.team = teamname
                     team.score = int(score)
                     db.session.commit()
                     message = "Team wurde aktualisiert."
-                    socketio.emit('update_leaderboard')
+                    _broadcast_leaderboard()
                 else:
                     message = "Team nicht gefunden."
         elif action == 'admin_delete':
@@ -177,7 +252,7 @@ def manage():
                 db.session.delete(team)
                 db.session.commit()
                 message = "Team wurde gelöscht."
-                socketio.emit('update_leaderboard')
+                _broadcast_leaderboard()
             else:
                 message = "Team nicht gefunden."
         # Nachricht in der Session speichern und Weiterleitung zur Verhinderung von doppelten Aktionen

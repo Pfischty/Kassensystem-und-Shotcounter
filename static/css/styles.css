@@ -18,21 +18,30 @@ html, body {
     pointer-events: none;
   }
   
-  /* Titel */
-  h1 {
-    text-align: center;
-    color: #fa8806;       /* Orange */
-    font-size: 5em;
-    margin-top: 0.5em;
-    position: relative;
-    z-index: 2;           /* Damit er über dem Canvas liegt */
-  }
-  
-  /* Tabellenkopf etc. in Orange/Schwarz */
-  table {
-    margin: 0 auto;
-    margin-top: 20px;
-    background-color: #000;
+/* Titel */
+h1 {
+  text-align: center;
+  color: #fa8806;       /* Orange */
+  font-size: 5em;
+  margin-top: 0.5em;
+  position: relative;
+  z-index: 2;           /* Damit er über dem Canvas liegt */
+}
+
+#refresh-indicator {
+  text-align: center;
+  color: #fff;
+  font-size: 1.5em;
+  margin-top: 0.2em;
+  z-index: 2;
+  position: relative;
+}
+
+/* Tabellenkopf etc. in Orange/Schwarz */
+table {
+  margin: 0 auto;
+  margin-top: 20px;
+  background-color: #000;
     border-collapse: separate;
     border-spacing: 0;
     position: relative;
