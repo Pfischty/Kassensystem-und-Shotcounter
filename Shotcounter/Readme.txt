@@ -17,7 +17,12 @@ Routen-Überblick
 - `/admin`: Korrekturen (bearbeiten/löschen)
 - `/team/delete/<id>` und `/team/update/<id>`: Hilfsrouten für Admin
 - `/preisliste`: Preisliste (noch unfertig)
+- `/stats`: Kassenstatistik (Umsatz & verkaufte Getränke)
 
 Hinweis zur Live-Aktualisierung
 -------------------------------
 WebSocket-Events (`socketio.emit('update_leaderboard')`) werden gesendet, damit sich die Rangliste automatisch aktualisieren kann, wenn anderswo Punkte gepostet werden.
+
+Konfiguration & Kasse
+---------------------
+Die Kasse lädt Buttons/Preise aus `Shotcounter/kassensystem_config.json`. Falls diese Datei fehlt oder ungültig ist, wird automatisch `kassensystem_config.example.json` verwendet. Beim Abschluss einer Bestellung (`Neuer Kunde`) werden Umsatz und Stückzahlen in `instance/teamliste.db` protokolliert; die Kassenstatistik greift auf diese Daten zu.
