@@ -1,15 +1,20 @@
-from flask import Flask, redirect, render_template, request, session, url_for, abort, render_template_string
+from pathlib import Path
 from collections import Counter
+from flask import Flask, redirect, render_template, request, session, url_for, abort, render_template_string
 from flask_sqlalchemy import SQLAlchemy
 from flask_socketio import SocketIO, emit
 from flask_session import Session
 
+BASE_DIR = Path(__file__).resolve().parent
+INSTANCE_DIR = BASE_DIR / "instance"
+INSTANCE_DIR.mkdir(parents=True, exist_ok=True)
+
 app = Flask(__name__)
 app.secret_key = b'gskjd%hsgd82jsd'
-app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///teamliste.db'
+app.config['SQLALCHEMY_DATABASE_URI'] = f"sqlite:///{INSTANCE_DIR / 'teamliste.db'}"
+app.config['SESSION_TYPE'] = 'filesystem'  # Session-Daten auf dem Server speichern
 db = SQLAlchemy(app)
 socketio = SocketIO(app, manage_session=True)
-app.config['SESSION_TYPE'] = 'filesystem'  # Session-Daten auf dem Server speichern
 Session(app)
 
 class teamliste(db.Model):
@@ -389,5 +394,5 @@ def clear_order():
     session['items'] = []
     return redirect(url_for('index'))
 if __name__ == '__main__':
-    socketio.run(app, host='192.168.137.1', port=5000, debug=True)
+    socketio.run(app, host='0.0.0.0', port=5000, debug=True)
 
