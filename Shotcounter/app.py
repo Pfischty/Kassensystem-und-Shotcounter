@@ -1,21 +1,93 @@
-from flask import Flask, redirect, render_template, request, session, url_for, abort, render_template_string
+import json
+from pathlib import Path
 from collections import Counter
+from datetime import datetime
+from flask import Flask, redirect, render_template, request, session, url_for, abort
 from flask_sqlalchemy import SQLAlchemy
-from flask_socketio import SocketIO, emit
+from flask_socketio import SocketIO
 from flask_session import Session
+from sqlalchemy import func
+
+BASE_DIR = Path(__file__).resolve().parent
+INSTANCE_DIR = BASE_DIR / "instance"
+INSTANCE_DIR.mkdir(parents=True, exist_ok=True)
+
+CONFIG_PATH = BASE_DIR / "kassensystem_config.json"
+EXAMPLE_CONFIG_PATH = BASE_DIR / "kassensystem_config.example.json"
 
 app = Flask(__name__)
 app.secret_key = b'gskjd%hsgd82jsd'
-app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///teamliste.db'
+app.config['SQLALCHEMY_DATABASE_URI'] = f"sqlite:///{INSTANCE_DIR / 'teamliste.db'}"
+app.config['SESSION_TYPE'] = 'filesystem'  # Session-Daten auf dem Server speichern
 db = SQLAlchemy(app)
 socketio = SocketIO(app, manage_session=True)
-app.config['SESSION_TYPE'] = 'filesystem'  # Session-Daten auf dem Server speichern
 Session(app)
 
 class teamliste(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     score = db.Column(db.Integer, unique=False, nullable=False)
     team = db.Column(db.String(150), unique=True, nullable=False)
+
+class Order(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    timestamp = db.Column(db.DateTime, default=datetime.utcnow)
+    total = db.Column(db.Integer, nullable=False)
+
+class OrderItem(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    order_id = db.Column(db.Integer, db.ForeignKey("order.id"), nullable=False)
+    name = db.Column(db.String(100), nullable=False)
+    price = db.Column(db.Integer, nullable=False)
+
+    order = db.relationship("Order", backref=db.backref("items", lazy=True))
+
+class DrinkSale(db.Model):
+    """Aggregierte Stückzahlen pro Getränk und Bestellung"""
+
+    id = db.Column(db.Integer, primary_key=True)
+    order_id = db.Column(db.Integer, db.ForeignKey("order.id"), nullable=False)
+    name = db.Column(db.String(100), nullable=False)
+    quantity = db.Column(db.Integer, default=0, nullable=False)
+
+    order = db.relationship("Order", backref=db.backref("drink_sales", lazy=True))
+
+with app.app_context():
+    db.create_all()
+
+DEFAULT_CONFIG = {
+    "items": [
+        {"name": "Süssgetränke", "label": "Süssgetränke", "price": 6, "css_class": "suess"},
+        {
+            "name": "Bier",
+            "label": "Bier / Mate / Red Bull / Smirnoff",
+            "price": 7,
+            "css_class": "bier",
+        },
+        {"name": "Wein", "label": "Wein", "price": 7, "css_class": "wein"},
+        {"name": "Weinflasche 0.7", "label": "Weinflasche", "price": 22, "css_class": "flasche"},
+        {"name": "Drink 10", "label": "Drink 10", "price": 12, "css_class": "gross"},
+        {"name": "Depot rein", "label": "Depot rein", "price": -2, "css_class": "depot"},
+        {"name": "Weinglassdepot", "label": "Weinglas Depot", "price": 2, "css_class": "Weinglassdepot"},
+        {"name": "Kaffee", "label": "Kaffee", "price": 3, "css_class": "kaffee"},
+        {"name": "Shot", "label": "Shot", "price": 5, "css_class": "shot"},
+    ]
+}
+
+def load_button_config() -> dict:
+    """Load button and price configuration from JSON, fall back to defaults."""
+    for candidate in (CONFIG_PATH, EXAMPLE_CONFIG_PATH):
+        if candidate.exists():
+            try:
+                with candidate.open("r", encoding="utf-8") as config_file:
+                    return json.load(config_file)
+            except (OSError, json.JSONDecodeError):
+                continue
+    return DEFAULT_CONFIG.copy()
+
+
+button_config = load_button_config()
+ITEM_BUTTONS = button_config.get("items", DEFAULT_CONFIG["items"])
+PRICES = {item["name"]: item["price"] for item in ITEM_BUTTONS}
 
 @app.route('/registration', methods=('GET', 'POST'))
 def registration():
@@ -188,167 +260,6 @@ def manage():
     teams = teamliste.query.all()
     return render_template('manage.html', message=message, teams=teams)
 
-html_template = """
-<!DOCTYPE html>
-<html lang="de">
-<head>
-  <meta charset="UTF-8" />
-  <title>Kassensystem</title>
-  <style>
-    html, body {
-      margin: 0;
-      padding: 0;
-      width: 100%;
-      height: 100%;
-      font-family: Arial, sans-serif;
-      font-size: 18px;
-      overflow: hidden;
-    }
-
-    .wrapper {
-      display: flex;
-      flex-direction: column; 
-      height: 100vh;
-    }
-
-    .bestellung-container h3 {
-      margin: 5px 0;
-    }
-    .top-section {
-      flex: 0 0 33%;
-      border-bottom: 1px solid #999;
-      box-sizing: border-box;
-      padding: 10px 20px;
-      overflow-y: auto;
-    }
-    .top-section h1 {
-      margin-top: 0;
-    }
-
-    #total {
-      font-weight: bold;
-      margin-top: 10px;
-      font-size: 1.5em;
-      background-color: #ffe680;
-      border: 2px solid #ccc;
-      border-radius: 5px;
-      padding: 10px;
-      text-align: center;
-      width: fit-content;
-    }
-
-    .bottom-section {
-      flex: 1;
-      padding: 10px;
-      box-sizing: border-box;
-    }
-
-
-  .buttons-container {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(400px, 2fr)); /* Breite reduziert */
-    gap: 5px; /* Geringerer Abstand zwischen Buttons */
-    height: 200%;
-    box-sizing: border-box;
-    align-content: start;
-  }
-
-  .item-button {
-    display: flex;
-    justify-content: center;
-    align-items: center;
-    text-decoration: none;
-    color: white;
-    border: 1px solid #999;
-    border-radius: 4px;
-    font-size: 60px; /* Kleinere Schriftgröße */
-    padding: 10px; /* Geringeres Padding */
-    text-align: center;
-  }
-
-  .item-button:hover {
-    background-color: #bbb;
-  }
-
-
-  /* Anpassung für spezifische Farben bleibt gleich */
-  .item-button.suess {
-    background-color: #0099ff;
-  }
-  .item-button.bier {
-    background-color: #ffd900;
-  }
-  .item-button.wein {
-    background-color: #350097;
-  }
-  .item-button.shots {
-    background-color: #ffe4b5;
-  }
-  .item-button.gross {
-    background-color: #ff00c8;
-  }
-  .item-button.depot {
-    background-color: #000000;
-  }  
-  .item-button.clear {
-    background-color: #fc0303;
-  }
-  .item-button.Kunde {
-    background-color: #696969;
-  }
-</style>
-</head>
-<body>
-  <div class="wrapper">
-    <div class="top-section">
-      <h1>Kassensystem Demo</h1>
-      <div id="total">
-        Total: {{ total }} CHF
-      </div>
-      <div class="bestellung-container">
-        <h3>Bestellliste</h3>
-        {% if items %}
-            <ul>
-            {% for (item, count) in items %}
-                <li>{{ count }}x {{ item }}</li>
-            {% endfor %}
-            </ul>
-        {% else %}
-            <p>(Noch keine Artikel)</p>
-        {% endif %}
-      </div>
-    </div>
-
-    <div class="bottom-section">
-      <div class="buttons-container">
-        <a class="item-button suess" href="{{ url_for('add_item', name='Süssgetränke') }}">Süssgetränke</a>
-        <a class="item-button bier" href="{{ url_for('add_item', name='Bier') }}">Bier, Mate, Redbull, Smirnoff</a>
-        <a class="item-button wein" href="{{ url_for('add_item', name='Wein') }}">Weinflasche \n  </a>  
-        <a class="item-button gross" href="{{ url_for('add_item', name='Drink') }}">Drink 10</a>
-        <a class="item-button depot" href="{{ url_for('add_item', name='Depot rein') }}">Depot rein</a>
-        <a class="item-button depot" href="{{ url_for('add_item', name='Weinglassdepot') }}">Weinglassdepot</a>
-        <a class="item-button clear" href="{{ url_for('remove_last') }}">1 zurück</a>
-        <a class="item-button Kunde" href="{{ url_for('clear_order') }}">Neuer Kunde</a>
-      </div>
-    </div>
-  </div>
-</body>
-</html>
-"""
-
-PRICES = {
-    'Süssgetränke': 6,
-    'Bier': 7,
-    'Wein': 7,
-    'Drink 10': 12,
-    'Depot rein': -2,
-    'Weinflasche 0.7': 22,
-    'Weinglassdepot': 2,
-
-}
-
-
-
 @app.route("/")
 def index():
     """Startseite mit der Bestell-Liste (zusammengefasst) und Gesamtbetrag."""
@@ -358,10 +269,11 @@ def index():
     counts = Counter(items)
     grouped_items = list(counts.items())  # [(artikel, anzahl), ...]
 
-    return render_template_string(
-        html_template,
+    return render_template(
+        "Kasse.html",
         items=grouped_items,
-        total=total_price
+        total=total_price,
+        buttons=ITEM_BUTTONS,
     )
 
 @app.route("/add")
@@ -385,9 +297,42 @@ def remove_last():
 
 @app.route("/clear_order")
 def clear_order():
-    """Löscht die gesamte Bestellung."""
-    session['items'] = []
-    return redirect(url_for('index'))
-if __name__ == '__main__':
-    socketio.run(app, host='192.168.137.1', port=5000, debug=True)
+    """Bestellung abschliessen, in DB sichern, Zähler hochzählen"""
+    items = session.get("items", [])
+    if items:
+        total_price = sum(PRICES.get(item, 0) for item in items)
+        order = Order(total=total_price)
+        db.session.add(order)
+        db.session.commit()
 
+        for item_name in items:
+            db.session.add(
+                OrderItem(
+                    order_id=order.id,
+                    name=item_name,
+                    price=PRICES.get(item_name, 0),
+                )
+            )
+
+        for name, qty in Counter(items).items():
+            db.session.add(DrinkSale(order_id=order.id, name=name, quantity=qty))
+        db.session.commit()
+
+    session["items"] = []
+    return redirect(url_for("index"))
+
+
+@app.route("/stats")
+def stats():
+    revenue = db.session.query(func.coalesce(func.sum(Order.total), 0)).scalar() or 0
+    count = db.session.query(func.count(Order.id)).scalar() or 0
+    sales = (
+        db.session.query(DrinkSale.name, func.sum(DrinkSale.quantity))
+        .group_by(DrinkSale.name)
+        .all()
+    )
+    return render_template(
+        "kassen_stats.html", revenue=revenue, count=count, sales=sales
+    )
+if __name__ == '__main__':
+    socketio.run(app, host='0.0.0.0', port=5000, debug=True)

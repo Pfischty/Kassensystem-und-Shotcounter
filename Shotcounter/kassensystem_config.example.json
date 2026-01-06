@@ -1,0 +1,58 @@
+{
+  "items": [
+    {
+      "name": "Süssgetränke",
+      "label": "Süssgetränke",
+      "price": 6,
+      "css_class": "suess"
+    },
+    {
+      "name": "Bier",
+      "label": "Bier / Mate / Red Bull / Smirnoff",
+      "price": 7,
+      "css_class": "bier"
+    },
+    {
+      "name": "Wein",
+      "label": "Wein",
+      "price": 7,
+      "css_class": "wein"
+    },
+    {
+      "name": "Weinflasche 0.7",
+      "label": "Weinflasche",
+      "price": 22,
+      "css_class": "flasche"
+    },
+    {
+      "name": "Drink 10",
+      "label": "Drink 10",
+      "price": 12,
+      "css_class": "gross"
+    },
+    {
+      "name": "Depot rein",
+      "label": "Depot rein",
+      "price": -2,
+      "css_class": "depot"
+    },
+    {
+      "name": "Weinglassdepot",
+      "label": "Weinglas Depot",
+      "price": 2,
+      "css_class": "Weinglassdepot"
+    },
+    {
+      "name": "Kaffee",
+      "label": "Kaffee",
+      "price": 3,
+      "css_class": "kaffee"
+    },
+    {
+      "name": "Shot",
+      "label": "Shot",
+      "price": 5,
+      "css_class": "shot"
+    }
+  ]
+}
