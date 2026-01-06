@@ -1,0 +1,14 @@
+# Python caches
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Virtual environments
+.venv/
+
+# Test & tooling caches
+.pytest_cache/
+
+# Local data & instances
+instance/
+*.db
