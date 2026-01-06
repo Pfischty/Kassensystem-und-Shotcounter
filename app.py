@@ -389,5 +389,5 @@ def clear_order():
     session['items'] = []
     return redirect(url_for('index'))
 if __name__ == '__main__':
-    socketio.run(app, host='192.168.137.1', port=5000, debug=True)
+    socketio.run(app, host='0.0.0.0', port=5000, debug=True)
 
