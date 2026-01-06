@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <title>Statistik</title>
+  <style>
+    body{background:#121212;color:#e0e0e0;font-family:Arial,Helvetica,sans-serif;margin:0;padding:1.5rem;}
+    table{width:100%;border-collapse:collapse;margin-top:1rem;}
+    th,td{padding:.5rem;border-bottom:1px solid #444;text-align:left;}
+    th{background:#333;}
+    a{color:#90caf9;text-decoration:none;}
+  </style>
+</head>
+<body>
+  <h1>Statistik</h1>
+  <p><strong>Gesamtumsatz:</strong> {{ revenue }} CHF<br>
+     <strong>Anzahl Bestellungen:</strong> {{ count }}</p>
+
+  <h2>Verkaufte Getränke</h2>
+  <table>
+    <tr><th>Getränk</th><th>Menge</th></tr>
+    {% for name, qty in sales %}
+      <tr><td>{{ name }}</td><td>{{ qty }}</td></tr>
+    {% endfor %}
+  </table>
+  <p><a href="{{ url_for('index') }}">Zurück</a></p>
+</body>
+</html>
