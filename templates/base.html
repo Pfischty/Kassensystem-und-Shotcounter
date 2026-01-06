@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Event-System{% endblock %}</title>
+  <style>
+    :root {
+      --bg: #0f172a;
+      --card: #1e293b;
+      --border: #334155;
+      --text: #e2e8f0;
+      --accent: #38bdf8;
+      --danger: #f87171;
+      --success: #34d399;
+    }
+    body {
+      margin: 0;
+      font-family: "Inter", Arial, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+    }
+    a { color: var(--accent); text-decoration: none; }
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 1rem 1.5rem;
+      border-bottom: 1px solid var(--border);
+      background: rgba(255,255,255,0.02);
+    }
+    nav a { margin-right: 1rem; font-weight: 600; }
+    .container { padding: 1.5rem; }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 1rem 1.2rem;
+      margin-bottom: 1rem;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.2);
+    }
+    .badge { display: inline-block; padding: 0.25rem 0.6rem; border-radius: 999px; font-size: 0.85rem; }
+    .badge-green { background: rgba(52, 211, 153, 0.2); color: var(--success); border: 1px solid rgba(52,211,153,0.5); }
+    .badge-red { background: rgba(248, 113, 113, 0.2); color: var(--danger); border: 1px solid rgba(248,113,113,0.5); }
+    .badge-blue { background: rgba(56, 189, 248, 0.2); color: var(--accent); border: 1px solid rgba(56,189,248,0.5); }
+    form.inline { display: inline; }
+    input, textarea, button, select {
+      font: inherit;
+      background: #0b1222;
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 0.5rem 0.75rem;
+    }
+    textarea { width: 100%; box-sizing: border-box; min-height: 110px; }
+    button { cursor: pointer; background: var(--accent); color: #0b1222; font-weight: 700; border: none; }
+    button.secondary { background: #334155; color: var(--text); }
+    button.danger { background: var(--danger); color: #0b1222; }
+    .flash { padding: 0.85rem 1rem; border-radius: 10px; margin-bottom: 1rem; }
+    .flash.error { background: rgba(248, 113, 113, 0.12); border: 1px solid rgba(248,113,113,0.4); }
+    .flash.success { background: rgba(52, 211, 153, 0.12); border: 1px solid rgba(52,211,153,0.4); }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { border-bottom: 1px solid var(--border); padding: 0.6rem 0.4rem; text-align: left; }
+  </style>
+</head>
+<body>
+  <header>
+    <div><strong>Event-Steuerung</strong></div>
+    <nav>
+      <a href="{{ url_for('dashboard') }}">Übersicht</a>
+      <a href="{{ url_for('admin') }}">Admin</a>
+      <a href="{{ url_for('cashier') }}">Kasse</a>
+      <a href="{{ url_for('shotcounter') }}">Shotcounter</a>
+    </nav>
+  </header>
+  <div class="container">
+    {% for category, message in get_flashed_messages(with_categories=true) %}
+      <div class="flash {{ category }}">{{ message }}</div>
+    {% endfor %}
+    {% block content %}{% endblock %}
+  </div>
+</body>
+</html>

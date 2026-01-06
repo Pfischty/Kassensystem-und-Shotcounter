@@ -1,5 +1,8 @@
 ## Ziel
-Ein Programm entwickeln, das misst, welches Team bei einem Fest die meisten Shots konsumiert hat.
+Ein zentrales System verwaltet Events und schaltet zwei Funktionen einzeln frei:
+
+- **Kassensystem** mit Bestell-Tracking und Statistik
+- **Shotcounter** zum Erfassen, welches Team die meisten Shots konsumiert
 
 ## Setup
 1. **Abhängigkeiten installieren**
@@ -9,15 +12,12 @@ Ein Programm entwickeln, das misst, welches Team bei einem Fest die meisten Shot
    pip install -r requirements.txt
    ```
 
-2. **Datenbank initialisieren (SQLite)**
+2. **Datenbank initialisieren (SQLite)** – beim ersten Start automatisch via SQLAlchemy:
    ```bash
-   python - <<'PY'
-   from app import db
-   db.create_all()
-   PY
+   flask --app app shell -c "from app import db; db.create_all()"
    ```
 
-3. **Entwicklung starten (Socket.IO-Server)**
+3. **Entwicklung starten**
    ```bash
    flask --app app run --debug
    ```
@@ -26,8 +26,18 @@ Ein Programm entwickeln, das misst, welches Team bei einem Fest die meisten Shot
    make run
    ```
 
+## Nutzung
+1. **Event anlegen & aktivieren** im Adminbereich (`/admin`).
+   - Kassensystem und/oder Shotcounter separat aktivierbar.
+   - Gemeinsame und systemspezifische Einstellungen als JSON speicherbar (z. B. Button-Setup oder Shotcounter-Parameter).
+2. **Kasse** (`/cashier`): Artikel buchen, Warenkorb abschließen, Statistik unter `/cashier/stats` einsehen.
+3. **Shotcounter** (`/shotcounter`): Teams anlegen und Shots pro Team verbuchen.
+
+## Logging
+Sauberes, rotierendes Logging unter `instance/logs/app.log` für alle relevanten Admin-, Kassen- und Shotcounter-Aktionen.
+
 ## Tests
-Führt einen kleinen Pytest-Satz mit den wichtigsten Routen aus:
+Pytest deckt zentrale Routen ab:
 ```bash
 pytest
 ```
@@ -40,14 +50,3 @@ make test
 - `make install` – Abhängigkeiten installieren
 - `make run` – Entwicklungserver starten
 - `make test` – Pytest-Suite ausführen
-
-## Routenüberblick
-- `/registration`: Ermöglicht die Registrierung neuer Teams und sichert diese in der Datenbank.
-- `/punkte`: Hier können Punkte zu bereits registrierten Teams hinzugefügt werden.
-- `/leaderboard`: Zeigt eine Rangliste der aktuellen Ergebnisse an.
-- `/admin`: Ermöglicht die Korrektur von Fehlern.
-- `/team/delete/<id>` und `/team/update/<id>`: Verwaltungsaktionen für Teams.
-- `/preisliste`: Zeigt eine Preisliste an (noch unvollständig).
-
-## Hinweis zur Live-Aktualisierung
-Flask-SocketIO sendet beim Hinzufügen oder Anpassen von Teams ein `update_leaderboard`-Event, sodass verbundene Clients ohne Polling aktualisiert werden können.
