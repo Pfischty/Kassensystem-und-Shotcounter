@@ -1,0 +1,231 @@
+#!/usr/bin/env bash
+
+# Pi maintenance helper for Kassensystem und Shotcounter.
+# This script assumes it is stored inside the project repo.
+#
+# Highlights
+# - Create/refresh a virtualenv (supports offline installs via ./wheels/)
+# - Write & enable a systemd service for auto-start after reboot
+# - Update the app from Git and restart the service
+# - Minimal Wi‑Fi helpers for maintenance access
+#
+# Usage examples:
+#   ./scripts/pi_manage.sh create-venv
+#   ./scripts/pi_manage.sh install-deps [--offline]
+#   sudo ./scripts/pi_manage.sh write-service --port 8000
+#   sudo ./scripts/pi_manage.sh enable-service
+#   sudo ./scripts/pi_manage.sh update --branch main
+#   sudo ./scripts/pi_manage.sh wifi-add SSID PASS
+#   sudo ./scripts/pi_manage.sh wifi-up
+#   sudo ./scripts/pi_manage.sh wifi-down
+
+set -euo pipefail
+
+APP_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+SERVICE_NAME="kassensystem-shotcounter"
+ENV_FILE="/etc/kassensystem.env"
+WHEEL_DIR="${APP_ROOT}/wheels"
+DEFAULT_PORT="${PORT:-8000}"
+
+usage() {
+  cat <<'EOF'
+Pi maintenance helper
+
+Commands:
+  create-venv                 Create a Python virtualenv in .venv
+  install-deps [--offline]    Install requirements.txt (uses ./wheels if --offline)
+  write-service [--port N]    Write systemd unit to /etc/systemd/system/*.service
+  enable-service              systemctl daemon-reload + enable --now
+  disable-service             systemctl disable --now
+  update [--branch BR] [--offline]  Pull Git (unless --offline), install deps, restart service
+  wifi-add SSID PASS          Append Wi‑Fi network to wpa_supplicant and reconfigure
+  wifi-up                     Bring wlan0 up and reconfigure
+  wifi-down                   Bring wlan0 down
+  status                      Show service status
+EOF
+}
+
+require_root() {
+  if [[ "${EUID:-$(id -u)}" -ne 0 ]]; then
+    echo "Bitte als root (sudo) ausführen." >&2
+    exit 1
+  fi
+}
+
+ensure_venv() {
+  if [[ ! -x "${APP_ROOT}/.venv/bin/python" ]]; then
+    echo "Erzeuge virtuelles Environment unter ${APP_ROOT}/.venv ..."
+    python -m venv "${APP_ROOT}/.venv"
+  fi
+}
+
+install_deps() {
+  local offline=0
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --offline) offline=1; shift ;;
+      *) echo "Unbekannte Option: $1" >&2; exit 1 ;;
+    esac
+  done
+
+  ensure_venv
+  local pip="${APP_ROOT}/.venv/bin/pip"
+
+  if [[ $offline -eq 1 ]]; then
+    echo "Installiere Abhängigkeiten offline (verwende ${WHEEL_DIR}) ..."
+    "${pip}" install --no-index --find-links="${WHEEL_DIR}" -r "${APP_ROOT}/requirements.txt"
+  else
+    echo "Installiere Abhängigkeiten online ..."
+    "${pip}" install --upgrade pip
+    "${pip}" install -r "${APP_ROOT}/requirements.txt"
+  fi
+}
+
+write_env_file() {
+  require_root
+  if [[ ! -f "${ENV_FILE}" ]]; then
+    echo "Erzeuge ${ENV_FILE} (du kannst Werte später anpassen) ..."
+    cat > "${ENV_FILE}" <<EOF
+# Environment für Kassensystem/Shotcounter
+FLASK_ENV=production
+SECRET_KEY=$(openssl rand -hex 16)
+EOF
+    chmod 600 "${ENV_FILE}"
+  else
+    echo "${ENV_FILE} existiert bereits – unverändert gelassen."
+  fi
+}
+
+write_service() {
+  require_root
+  local port="${DEFAULT_PORT}"
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --port) port="$2"; shift 2 ;;
+      *) echo "Unbekannte Option: $1" >&2; exit 1 ;;
+    esac
+  done
+
+  write_env_file
+  cat > "/etc/systemd/system/${SERVICE_NAME}.service" <<EOF
+[Unit]
+Description=Kassensystem und Shotcounter
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=${ENV_FILE}
+WorkingDirectory=${APP_ROOT}
+ExecStart=${APP_ROOT}/.venv/bin/flask --app app run --host=0.0.0.0 --port=${port}
+Restart=always
+RestartSec=5
+TimeoutStartSec=30
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+  echo "Unit /etc/systemd/system/${SERVICE_NAME}.service geschrieben."
+}
+
+enable_service() {
+  require_root
+  systemctl daemon-reload
+  systemctl enable --now "${SERVICE_NAME}.service"
+  systemctl status --no-pager "${SERVICE_NAME}.service"
+}
+
+disable_service() {
+  require_root
+  systemctl disable --now "${SERVICE_NAME}.service"
+}
+
+update_app() {
+  local branch="main"
+  local offline=0
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --branch) branch="$2"; shift 2 ;;
+      --offline) offline=1; shift ;;
+      *) echo "Unbekannte Option: $1" >&2; exit 1 ;;
+    esac
+  done
+
+  ensure_venv
+  if [[ $offline -eq 0 ]]; then
+    echo "Hole Updates von Git (Branch ${branch}) ..."
+    git -C "${APP_ROOT}" fetch --all
+    git -C "${APP_ROOT}" reset --hard "origin/${branch}"
+  else
+    echo "Offline-Update: überspringe Git-Fetch."
+  fi
+
+  install_deps $([[ $offline -eq 1 ]] && echo --offline || true)
+  echo "Starte Dienst neu ..."
+  require_root
+  systemctl restart "${SERVICE_NAME}.service"
+  systemctl status --no-pager "${SERVICE_NAME}.service"
+}
+
+wifi_add() {
+  require_root
+  local ssid="$1"
+  local pass="$2"
+
+  if [[ -z "${ssid}" || -z "${pass}" ]]; then
+    echo "SSID und Passwort erforderlich." >&2
+    exit 1
+  fi
+
+  if [[ ! -f /etc/wpa_supplicant/wpa_supplicant.conf ]]; then
+    cat > /etc/wpa_supplicant/wpa_supplicant.conf <<'EOF'
+ctrl_interface=DIR=/var/run/wpa_supplicant GROUP=netdev
+update_config=1
+country=DE
+EOF
+  fi
+
+  echo "Füge WLAN ${ssid} hinzu ..."
+  wpa_passphrase "${ssid}" "${pass}" >> /etc/wpa_supplicant/wpa_supplicant.conf
+  wpa_cli -i wlan0 reconfigure || true
+}
+
+wifi_up() {
+  require_root
+  rfkill unblock wifi || true
+  ip link set wlan0 up
+  wpa_cli -i wlan0 reconfigure || true
+  echo "wlan0 aktiviert (sofern vorhanden)."
+}
+
+wifi_down() {
+  require_root
+  ip link set wlan0 down
+  echo "wlan0 deaktiviert."
+}
+
+show_status() {
+  require_root
+  systemctl status --no-pager "${SERVICE_NAME}.service"
+}
+
+main() {
+  local cmd="${1:-}"
+  case "${cmd}" in
+    create-venv) shift; ensure_venv ;;
+    install-deps) shift; install_deps "$@" ;;
+    write-service) shift; write_service "$@" ;;
+    enable-service) shift; enable_service ;;
+    disable-service) shift; disable_service ;;
+    update) shift; update_app "$@" ;;
+    wifi-add) shift; wifi_add "${1:-}" "${2:-}" ;;
+    wifi-up) shift; wifi_up ;;
+    wifi-down) shift; wifi_down ;;
+    status) shift; show_status ;;
+    -h|--help|"") usage ;;
+    *) echo "Unbekannter Befehl: ${cmd}" >&2; usage; exit 1 ;;
+  esac
+}
+
+main "$@"

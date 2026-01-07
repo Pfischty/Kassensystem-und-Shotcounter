@@ -46,6 +46,9 @@ oder
 make test
 ```
 
+## Raspberry Pi Deployment
+Ein Skript für Autostart, Offline/Online-Updates und optionale WLAN-Wartung liegt unter `scripts/pi_manage.sh`. Details und Schritte findest du in `docs/pi_deployment.md`.
+
 ## Makefile (Kurzbefehle)
 - `make install` – Abhängigkeiten installieren
 - `make run` – Entwicklungserver starten
