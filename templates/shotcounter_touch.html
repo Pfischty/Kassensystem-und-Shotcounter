@@ -55,17 +55,37 @@
   }
   .keypad {
     display: grid;
-    grid-template-columns: repeat(3, minmax(90px, 1fr));
-    gap: 0.6rem;
-    margin-top: 1rem;
+    grid-template-columns: repeat(3, minmax(140px, 1fr));
+    gap: 0.75rem;
+    margin-top: 1.1rem;
   }
   .keypad button {
-    padding: 1rem;
-    font-size: 1.3rem;
+    padding: 2.6rem 1.8rem;
+    min-height: 120px;
+    font-size: 2rem;
     font-weight: 800;
+    background: #1b243b;
+    color: #e2e8f0;
+    border: 1px solid #273555;
   }
   .keypad button.action {
-    background: #1f2a44;
+    background: #22345a;
+  }
+  #submit-btn {
+    background: linear-gradient(135deg, #34d399, #22c55e);
+    color: #0b1222;
+    border: none;
+    box-shadow: 0 10px 30px rgba(34,197,94,0.25);
+  }
+  #clear-btn {
+    background: #b91c1c;
+    border: none;
+    color: #fef2f2;
+  }
+  #back-btn {
+    background: #f59e0b;
+    border: none;
+    color: #0b1222;
   }
   .modal {
     position: fixed;
