@@ -14,7 +14,7 @@
       --danger: #f87171;
       --success: #34d399;
     }
-    body {
+body {
       margin: 0;
       font-family: "Inter", Arial, sans-serif;
       background: var(--bg);
@@ -64,16 +64,19 @@
   </style>
 </head>
 <body>
-  <header>
-    <div><strong>Event-Steuerung</strong></div>
-    <nav>
-      <a href="{{ url_for('dashboard') }}">Übersicht</a>
-      <a href="{{ url_for('admin') }}">Admin</a>
-      <a href="{{ url_for('cashier') }}">Kasse</a>
-      <a href="{{ url_for('shotcounter') }}">Shotcounter</a>
-      <a href="{{ url_for('shotcounter_leaderboard') }}">Shotcounter Vollbild</a>
-    </nav>
-  </header>
+  {% block header %}
+    <header>
+      <div><strong>Event-Steuerung</strong></div>
+      <nav>
+        <a href="{{ url_for('dashboard') }}">Übersicht</a>
+        <a href="{{ url_for('admin') }}">Admin</a>
+        <a href="{{ url_for('cashier') }}">Kasse</a>
+        <a href="{{ url_for('shotcounter') }}">Shotcounter</a>
+        <a href="{{ url_for('shotcounter_touch') }}">Shotcounter Touch</a>
+        <a href="{{ url_for('shotcounter_leaderboard') }}">Shotcounter Vollbild</a>
+      </nav>
+    </header>
+  {% endblock %}
   <div class="container">
     {% for category, message in get_flashed_messages(with_categories=true) %}
       <div class="flash {{ category }}">{{ message }}</div>

@@ -894,6 +894,20 @@ def update_team(team_id: int):
     return redirect(_redirect_target())
 
 
+@app.route("/shotcounter/teams/<int:team_id>/delete", methods=["POST"])
+def delete_team(team_id: int):
+    event = require_active_event(shotcounter=True)
+    team = Team.query.filter_by(id=team_id, event_id=event.id).first()
+    if not team:
+        flash("Team nicht gefunden.", "error")
+        return redirect(_redirect_target())
+
+    db.session.delete(team)
+    db.session.commit()
+    flash("Team gelöscht.", "success")
+    return redirect(_redirect_target())
+
+
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5001, debug=True)

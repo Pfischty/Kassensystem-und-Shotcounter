@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% block title %}Shotcounter{% endblock %}
+{% block header %}{% endblock %}
 {% block content %}
 <h1>Shotcounter – {{ event.name }}</h1>
 
@@ -30,7 +31,7 @@
     <p>Noch keine Teams vorhanden.</p>
   {% else %}
     <table>
-      <tr><th>Team</th><th>Shots</th><th>Aktion</th></tr>
+      <tr><th>Team</th><th>Shots</th><th>Aktion</th><th>Team löschen</th></tr>
       {% for team in teams %}
         <tr>
           <td>
@@ -68,6 +69,17 @@
               <input type="number" name="amount" min="1" value="1" style="width:70px;">
               <input type="hidden" name="next" value="{{ url_for('shotcounter') }}">
               <button type="submit">+ Shots</button>
+            </form>
+          </td>
+          <td>
+            <form
+              class="inline"
+              method="post"
+              action="{{ url_for('delete_team', team_id=team.id) }}"
+              onsubmit="return confirm('Team wirklich löschen?');"
+            >
+              <input type="hidden" name="next" value="{{ url_for('shotcounter') }}">
+              <button type="submit" class="danger">Löschen</button>
             </form>
           </td>
         </tr>
