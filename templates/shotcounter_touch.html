@@ -1,0 +1,228 @@
+{% extends "base.html" %}
+{% block title %}Shotcounter Touch{% endblock %}
+{% block content %}
+<style>
+  .touch-wrapper {
+    max-width: 960px;
+    margin: 0 auto;
+  }
+  .touch-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    flex-wrap: wrap;
+    margin-bottom: 1rem;
+  }
+  .touch-title {
+    margin: 0;
+  }
+  .touch-actions {
+    display: flex;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+  }
+  .touch-card {
+    background: #0f172a;
+    border: 1px solid #1f2a44;
+    border-radius: 14px;
+    padding: 1.4rem;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.25);
+  }
+  .form-row {
+    display: flex;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+    align-items: center;
+    margin-bottom: 1rem;
+  }
+  .touch-select {
+    min-width: 240px;
+    padding: 0.6rem 0.75rem;
+    font-size: 1.05rem;
+  }
+  .display {
+    font-size: 2.8rem;
+    font-weight: 800;
+    letter-spacing: 1px;
+    padding: 0.75rem 1rem;
+    border-radius: 12px;
+    background: #111827;
+    border: 1px solid #1f2a44;
+    text-align: right;
+    min-width: 140px;
+    flex: 1;
+  }
+  .keypad {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(90px, 1fr));
+    gap: 0.6rem;
+    margin-top: 1rem;
+  }
+  .keypad button {
+    padding: 1rem;
+    font-size: 1.3rem;
+    font-weight: 800;
+  }
+  .keypad button.action {
+    background: #1f2a44;
+  }
+  .modal {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.6);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    z-index: 50;
+  }
+  .modal.open {
+    display: flex;
+  }
+  .modal-content {
+    background: #0f172a;
+    border: 1px solid #1f2a44;
+    border-radius: 12px;
+    padding: 1.2rem;
+    width: min(420px, 90vw);
+  }
+  .modal-content h3 { margin-top: 0; }
+  .modal-actions {
+    display: flex;
+    gap: 0.5rem;
+    justify-content: flex-end;
+    margin-top: 0.75rem;
+  }
+  @media (max-width: 600px) {
+    .keypad { grid-template-columns: repeat(3, minmax(70px, 1fr)); }
+  }
+</style>
+
+<div class="touch-wrapper">
+  <div class="touch-header">
+    <h1 class="touch-title">Touch-Eingabe – {{ event.name }}</h1>
+    <div class="touch-actions">
+      <button type="button" id="new-team-btn">Neues Team</button>
+      <a class="button secondary" href="{{ url_for('shotcounter') }}">Zur Hauptansicht</a>
+    </div>
+  </div>
+
+  <div class="touch-card">
+    <div class="form-row">
+      <label for="team-select"><strong>Team wählen</strong></label>
+      <select id="team-select" class="touch-select">
+        <option value="">Team auswählen…</option>
+        {% for team in teams %}
+          <option value="{{ team.id }}">{{ team.name }} ({{ team.shots }} Shots)</option>
+        {% endfor %}
+      </select>
+      <div id="display" class="display">0</div>
+    </div>
+
+    <div class="keypad">
+      {% for digit in [1,2,3,4,5,6,7,8,9] %}
+        <button type="button" data-digit="{{ digit }}">{{ digit }}</button>
+      {% endfor %}
+      <button type="button" class="action" id="clear-btn">C</button>
+      <button type="button" data-digit="0">0</button>
+      <button type="button" class="action" id="back-btn">←</button>
+      <button type="button" class="action" id="submit-btn" style="grid-column: span 3;">Shots buchen</button>
+    </div>
+
+    <form id="shot-form" method="post" action="{{ url_for('add_shots') }}">
+      <input type="hidden" name="team_id" id="team-id-input">
+      <input type="hidden" name="amount" id="amount-input">
+      <input type="hidden" name="next" value="{{ url_for('shotcounter_touch') }}">
+    </form>
+  </div>
+</div>
+
+<div class="modal" id="team-modal">
+  <div class="modal-content">
+    <h3>Neues Team anlegen</h3>
+    <form method="post" action="{{ url_for('add_team') }}">
+      <input
+        type="text"
+        name="team_name"
+        placeholder="Teamname"
+        required
+        pattern="[A-Za-z0-9ÄÖÜäöüß .,'&()/\\-]+"
+        title="Erlaubt sind Buchstaben, Zahlen, Leerzeichen sowie . , - _ & / ( ) '"
+        style="width: 100%;"
+      >
+      <input type="hidden" name="next" value="{{ url_for('shotcounter_touch') }}">
+      <div class="modal-actions">
+        <button type="button" id="cancel-modal">Abbrechen</button>
+        <button type="submit">Speichern</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<script>
+  const displayEl = document.getElementById("display");
+  const teamSelect = document.getElementById("team-select");
+  const amountInput = document.getElementById("amount-input");
+  const teamIdInput = document.getElementById("team-id-input");
+  const form = document.getElementById("shot-form");
+  let buffer = "";
+
+  const updateDisplay = () => {
+    displayEl.textContent = buffer || "0";
+  };
+
+  const appendDigit = (digit) => {
+    if (buffer.length >= 6) return;
+    if (buffer === "0") {
+      buffer = digit;
+    } else {
+      buffer += digit;
+    }
+    updateDisplay();
+  };
+
+  document.querySelectorAll("[data-digit]").forEach((btn) => {
+    btn.addEventListener("click", () => appendDigit(btn.dataset.digit));
+  });
+
+  document.getElementById("clear-btn").addEventListener("click", () => {
+    buffer = "";
+    updateDisplay();
+  });
+
+  document.getElementById("back-btn").addEventListener("click", () => {
+    buffer = buffer.slice(0, -1);
+    updateDisplay();
+  });
+
+  document.getElementById("submit-btn").addEventListener("click", () => {
+    const teamId = teamSelect.value;
+    const amount = parseInt(buffer, 10);
+    if (!teamId) {
+      alert("Bitte ein Team auswählen.");
+      return;
+    }
+    if (!amount || amount <= 0) {
+      alert("Bitte eine gültige Shot-Anzahl wählen.");
+      return;
+    }
+    teamIdInput.value = teamId;
+    amountInput.value = amount;
+    form.submit();
+  });
+
+  // Modal handling
+  const modal = document.getElementById("team-modal");
+  document.getElementById("new-team-btn").addEventListener("click", () => {
+    modal.classList.add("open");
+  });
+  document.getElementById("cancel-modal").addEventListener("click", () => {
+    modal.classList.remove("open");
+  });
+  modal.addEventListener("click", (evt) => {
+    if (evt.target === modal) {
+      modal.classList.remove("open");
+    }
+  });
+</script>
+{% endblock %}

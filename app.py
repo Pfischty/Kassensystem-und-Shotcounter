@@ -13,6 +13,7 @@ import csv
 import json
 import logging
 import os
+import re
 from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime
@@ -723,6 +724,13 @@ def shotcounter():
     return render_template("shotcounter.html", teams=teams, event=event)
 
 
+@app.route("/shotcounter/touch")
+def shotcounter_touch():
+    event = require_active_event(shotcounter=True)
+    teams = Team.query.filter_by(event_id=event.id).order_by(Team.name.asc()).all()
+    return render_template("shotcounter_touch.html", teams=teams, event=event)
+
+
 def _leaderboard_limit(default: int = 10) -> int:
     """Sanitizes the requested leaderboard size."""
 
@@ -730,6 +738,18 @@ def _leaderboard_limit(default: int = 10) -> int:
     if not raw or raw < 1:
         return default
     return min(raw, 50)
+
+
+TEAM_NAME_PATTERN = re.compile(r"^[A-Za-z0-9ÄÖÜäöüß .,'&()/\\-]+$")
+
+
+def _validate_team_name(name: str) -> tuple[bool, str | None]:
+    """Validates the team name to avoid characters that fail to render."""
+
+    if not TEAM_NAME_PATTERN.match(name):
+        allowed = "Buchstaben, Zahlen, Leerzeichen sowie . , - _ & / ( ) '"
+        return False, f"Ungültige Zeichen im Teamnamen. Erlaubt sind: {allowed}."
+    return True, None
 
 
 def _top_teams(event: Event, limit: int) -> List[Team]:
@@ -743,6 +763,15 @@ def _top_teams(event: Event, limit: int) -> List[Team]:
 
 def _serialize_teams(teams: Iterable[Team]) -> List[Dict[str, int | str]]:
     return [{"id": team.id, "name": team.name, "shots": team.shots} for team in teams]
+
+
+def _redirect_target(default: str = "shotcounter") -> str:
+    """Returns a safe redirect target within the app."""
+
+    candidate = request.form.get("next") or request.args.get("next")
+    if candidate and isinstance(candidate, str) and candidate.startswith("/"):
+        return candidate
+    return url_for(default)
 
 
 @app.route("/shotcounter/leaderboard")
@@ -777,17 +806,22 @@ def add_team():
     name = (request.form.get("team_name") or "").strip()
     if not name:
         flash("Bitte einen Teamnamen angeben.", "error")
-        return redirect(url_for("shotcounter"))
+        return redirect(_redirect_target())
+
+    is_valid, error = _validate_team_name(name)
+    if not is_valid:
+        flash(error, "error")
+        return redirect(_redirect_target())
 
     if Team.query.filter_by(event_id=event.id, name=name).first():
         flash("Team existiert bereits.", "error")
-        return redirect(url_for("shotcounter"))
+        return redirect(_redirect_target())
 
     db.session.add(Team(event_id=event.id, name=name, shots=0))
     db.session.commit()
     app.logger.info("Team hinzugefügt: %s (Event %s)", name, event.name)
     flash("Team hinzugefügt.", "success")
-    return redirect(url_for("shotcounter"))
+    return redirect(_redirect_target())
 
 
 @app.route("/shotcounter/shots", methods=["POST"])
@@ -798,16 +832,16 @@ def add_shots():
 
     if not team_id:
         flash("Kein Team gewählt.", "error")
-        return redirect(url_for("shotcounter"))
+        return redirect(_redirect_target())
 
     team = Team.query.filter_by(id=team_id, event_id=event.id).first()
     if not team:
         flash("Team nicht gefunden.", "error")
-        return redirect(url_for("shotcounter"))
+        return redirect(_redirect_target())
 
     if amount is None or amount <= 0:
         flash("Bitte eine gültige Anzahl Shots angeben.", "error")
-        return redirect(url_for("shotcounter"))
+        return redirect(_redirect_target())
 
     team.shots += amount
     db.session.commit()
@@ -825,7 +859,39 @@ def add_shots():
     db.session.commit()
     app.logger.info("%s Shots zu Team %s hinzugefügt (Event %s)", amount, team.name, event.name)
     flash("Shots verbucht.", "success")
-    return redirect(url_for("shotcounter"))
+    return redirect(_redirect_target())
+
+
+@app.route("/shotcounter/teams/<int:team_id>/update", methods=["POST"])
+def update_team(team_id: int):
+    event = require_active_event(shotcounter=True)
+    team = Team.query.filter_by(id=team_id, event_id=event.id).first()
+    if not team:
+        flash("Team nicht gefunden.", "error")
+        return redirect(_redirect_target())
+
+    new_name = (request.form.get("team_name") or "").strip()
+    new_shots = request.form.get("shots", type=int)
+
+    if new_name:
+        is_valid, error = _validate_team_name(new_name)
+        if not is_valid:
+            flash(error, "error")
+            return redirect(_redirect_target())
+        if new_name != team.name and Team.query.filter_by(event_id=event.id, name=new_name).first():
+            flash("Teamname bereits vergeben.", "error")
+            return redirect(_redirect_target())
+        team.name = new_name
+
+    if new_shots is not None:
+        if new_shots < 0:
+            flash("Shots müssen 0 oder höher sein.", "error")
+            return redirect(_redirect_target())
+        team.shots = new_shots
+
+    db.session.commit()
+    flash("Team aktualisiert.", "success")
+    return redirect(_redirect_target())
 
 
 # ---------------------------------------------------------------------------

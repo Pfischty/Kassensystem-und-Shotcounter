@@ -3,10 +3,23 @@
 {% block content %}
 <h1>Shotcounter – {{ event.name }}</h1>
 
+<div style="margin-bottom: 1rem; display:flex; gap:0.75rem; flex-wrap:wrap;">
+  <a class="button" href="{{ url_for('shotcounter_touch') }}">Touch-Eingabe öffnen</a>
+  <a class="button secondary" href="{{ url_for('shotcounter_leaderboard') }}" target="_blank">Leaderboard anzeigen</a>
+</div>
+
 <div class="card">
   <h2>Team hinzufügen</h2>
   <form method="post" action="{{ url_for('add_team') }}">
-    <input name="team_name" placeholder="Teamname" required>
+    <input
+      name="team_name"
+      placeholder="Teamname"
+      required
+      pattern="[A-Za-z0-9ÄÖÜäöüß .,'&()/\\-]+"
+      title="Erlaubt sind Buchstaben, Zahlen, Leerzeichen sowie . , - _ & / ( ) '"
+      autocomplete="off"
+    >
+    <input type="hidden" name="next" value="{{ url_for('shotcounter') }}">
     <button type="submit">Anlegen</button>
   </form>
 </div>
@@ -20,12 +33,40 @@
       <tr><th>Team</th><th>Shots</th><th>Aktion</th></tr>
       {% for team in teams %}
         <tr>
-          <td>{{ team.name }}</td>
-          <td>{{ team.shots }}</td>
+          <td>
+            <form class="inline" method="post" action="{{ url_for('update_team', team_id=team.id) }}">
+              <input
+                type="text"
+                name="team_name"
+                value="{{ team.name }}"
+                required
+                pattern="[A-Za-z0-9ÄÖÜäöüß .,'&()/\\-]+"
+                title="Erlaubt sind Buchstaben, Zahlen, Leerzeichen sowie . , - _ & / ( ) '"
+                style="min-width: 200px;"
+              >
+              <input type="hidden" name="next" value="{{ url_for('shotcounter') }}">
+              <button type="submit">Name speichern</button>
+            </form>
+          </td>
+          <td>
+            <form class="inline" method="post" action="{{ url_for('update_team', team_id=team.id) }}">
+              <input
+                type="number"
+                name="shots"
+                min="0"
+                value="{{ team.shots }}"
+                style="width:80px;"
+                required
+              >
+              <input type="hidden" name="next" value="{{ url_for('shotcounter') }}">
+              <button type="submit">Shots setzen</button>
+            </form>
+          </td>
           <td>
             <form class="inline" method="post" action="{{ url_for('add_shots') }}">
               <input type="hidden" name="team_id" value="{{ team.id }}">
               <input type="number" name="amount" min="1" value="1" style="width:70px;">
+              <input type="hidden" name="next" value="{{ url_for('shotcounter') }}">
               <button type="submit">+ Shots</button>
             </form>
           </td>
