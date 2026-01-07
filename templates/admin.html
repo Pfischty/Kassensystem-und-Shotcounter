@@ -55,6 +55,10 @@
   .product-row .row-actions button { width:100%; }
   .color-input { width:100%; min-height:44px; padding: 0; }
   .pill { padding: 0.3rem 0.7rem; border-radius: 999px; background: rgba(255,255,255,0.06); border: 1px solid var(--border); font-size: 0.9rem; }
+  .shot-settings { margin: 0.8rem 0; }
+  .shot-settings__grid { display:grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap:0.6rem; margin-top: 0.4rem; }
+  .shot-settings__grid span { font-size: 0.9rem; color: #cbd5e1; }
+  .shot-settings__numbers { display:grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap:0.6rem; margin-top: 0.6rem; }
 </style>
 
 <div class="collapsible card" data-collapsible>
@@ -92,7 +96,49 @@
       {% endif %}
 
       <input type="hidden" name="shared_settings" value='{}'>
-      <input type="hidden" name="shotcounter_settings" value='{}'>
+
+      <div
+        class="shot-settings"
+        data-shot-settings
+        data-defaults='{{ shotcounter_defaults | tojson }}'
+        data-current='{{ shotcounter_defaults | tojson }}'
+      >
+        <strong>Shotcounter Styling</strong>
+        <div class="muted">Farben, Schriftgrößen und Anzahl Teams im Vollbild.</div>
+        <div class="shot-settings__grid">
+          <label class="stack">
+            <span>Hintergrund</span>
+            <input type="color" class="color-input" data-shot-field="background_color">
+          </label>
+          <label class="stack">
+            <span>Primärfarbe (Karten)</span>
+            <input type="color" class="color-input" data-shot-field="primary_color">
+          </label>
+          <label class="stack">
+            <span>Sekundärfarbe (Verlauf)</span>
+            <input type="color" class="color-input" data-shot-field="secondary_color">
+          </label>
+          <label class="stack">
+            <span>Terziärfarbe (Verlauf)</span>
+            <input type="color" class="color-input" data-shot-field="tertiary_color">
+          </label>
+        </div>
+        <div class="shot-settings__numbers">
+          <label class="stack">
+            <span>Schriftgröße Titel (rem)</span>
+            <input type="number" step="0.1" min="0.5" max="10" data-shot-field="title_size">
+          </label>
+          <label class="stack">
+            <span>Schriftgröße Teams (rem)</span>
+            <input type="number" step="0.1" min="0.5" max="10" data-shot-field="team_size">
+          </label>
+          <label class="stack">
+            <span>Teams im Leaderboard</span>
+            <input type="number" step="1" min="1" max="50" data-shot-field="leaderboard_limit">
+          </label>
+        </div>
+        <input type="hidden" name="shotcounter_settings" value='{{ shotcounter_defaults | tojson }}'>
+      </div>
 
       <input type="hidden" name="kassensystem_settings" value='{{ {"items": default_buttons} | tojson }}'>
       <p class="hint">Kassenartikel lassen sich nach dem Speichern oder per Vorlage übernehmen.</p>
@@ -156,7 +202,49 @@
           {% endif %}
 
           <input type="hidden" name="shared_settings" value='{{ (event.shared_settings or {}) | tojson }}'>
-          <input type="hidden" name="shotcounter_settings" value='{{ (event.shotcounter_settings or {}) | tojson }}'>
+
+          <div
+            class="shot-settings"
+            data-shot-settings
+            data-defaults='{{ shotcounter_defaults | tojson }}'
+            data-current='{{ (shot_settings_map.get(event.id) or shotcounter_defaults) | tojson }}'
+          >
+            <strong>Shotcounter Styling</strong>
+            <div class="muted">Steuert Vollbild/Touch: Farben, Schriftgrößen und Teamanzahl.</div>
+            <div class="shot-settings__grid">
+              <label class="stack">
+                <span>Hintergrund</span>
+                <input type="color" class="color-input" data-shot-field="background_color">
+              </label>
+              <label class="stack">
+                <span>Primärfarbe (Karten)</span>
+                <input type="color" class="color-input" data-shot-field="primary_color">
+              </label>
+              <label class="stack">
+                <span>Sekundärfarbe (Verlauf)</span>
+                <input type="color" class="color-input" data-shot-field="secondary_color">
+              </label>
+              <label class="stack">
+                <span>Terziärfarbe (Verlauf)</span>
+                <input type="color" class="color-input" data-shot-field="tertiary_color">
+              </label>
+            </div>
+            <div class="shot-settings__numbers">
+              <label class="stack">
+                <span>Schriftgröße Titel (rem)</span>
+                <input type="number" step="0.1" min="0.5" max="10" data-shot-field="title_size">
+              </label>
+              <label class="stack">
+                <span>Schriftgröße Teams (rem)</span>
+                <input type="number" step="0.1" min="0.5" max="10" data-shot-field="team_size">
+              </label>
+              <label class="stack">
+                <span>Teams im Leaderboard</span>
+                <input type="number" step="1" min="1" max="50" data-shot-field="leaderboard_limit">
+              </label>
+            </div>
+            <input type="hidden" name="shotcounter_settings" value='{{ (shot_settings_map.get(event.id) or shotcounter_defaults) | tojson }}'>
+          </div>
 
           <div class="product-editor" data-product-editor data-items='{{ event_buttons.get(event.id, default_buttons) | tojson }}'>
             <div class="product-editor__top">
@@ -199,6 +287,9 @@
 <script id="default-buttons-data" type="application/json">
   {{ default_buttons | tojson }}
 </script>
+<script id="shotcounter-defaults-data" type="application/json">
+  {{ shotcounter_defaults | tojson }}
+</script>
 
 <script>
   (function () {
@@ -217,6 +308,18 @@
 
     const eventData = parseJson(getTextContent("event-settings-data"), {});
     const defaultButtons = parseJson(getTextContent("default-buttons-data"), []);
+    const shotDefaults = parseJson(
+      getTextContent("shotcounter-defaults-data"),
+      {
+        background_color: "#0b1222",
+        primary_color: "#1e293b",
+        secondary_color: "#38bdf8",
+        tertiary_color: "#34d399",
+        title_size: 3.2,
+        team_size: 1.6,
+        leaderboard_limit: 10,
+      }
+    );
 
     document.querySelectorAll("[data-collapsible]").forEach((wrap) => {
       const content = wrap.querySelector(".collapsible__content");
@@ -235,6 +338,12 @@
       return /^#([0-9a-fA-F]{6}|[0-9a-fA-F]{3})$/.test(hex) ? hex : fallbackColor;
     };
 
+    const clampNumber = (value, fallback, min, max) => {
+      const parsed = Number(value);
+      if (!Number.isFinite(parsed)) return fallback;
+      return Math.min(max, Math.max(min, parsed));
+    };
+
     const normalizeItem = (item, index) => {
       const safeItem = item || {};
       const label = (safeItem.label || safeItem.name || "").trim() || "Produkt " + (index + 1);
@@ -248,6 +357,57 @@
         color: sanitizeColor(safeItem.color || ""),
       };
     };
+
+    // Shotcounter-Settings
+    document.querySelectorAll("[data-shot-settings]").forEach((wrapper) => {
+      const hidden = wrapper.querySelector('input[name="shotcounter_settings"]');
+      const defaults = { ...shotDefaults, ...parseJson(wrapper.dataset.defaults, shotDefaults) };
+      const current = parseJson(wrapper.dataset.current, {});
+      let settings = { ...defaults, ...current };
+
+      const syncInputs = () => {
+        wrapper.querySelectorAll("[data-shot-field]").forEach((input) => {
+          const key = input.dataset.shotField;
+          if (!key) return;
+          if (input.type === "color") {
+            input.value = sanitizeColor(settings[key] || defaults[key] || fallbackColor);
+          } else if (input.type === "number") {
+            input.value = settings[key] ?? defaults[key] ?? "";
+          }
+        });
+      };
+
+      const syncHidden = () => {
+        if (hidden) hidden.value = JSON.stringify(settings);
+      };
+
+      wrapper.querySelectorAll("[data-shot-field]").forEach((input) => {
+        const key = input.dataset.shotField;
+        if (!key) return;
+        input.addEventListener("input", () => {
+          if (input.type === "color") {
+            settings[key] = sanitizeColor(input.value || defaults[key] || fallbackColor);
+          } else {
+            const min = key === "leaderboard_limit" ? 1 : 0.5;
+            const max = key === "leaderboard_limit" ? 50 : 10;
+            settings[key] = clampNumber(input.value, defaults[key], min, max);
+          }
+          syncHidden();
+        });
+      });
+
+      wrapper.shotSettingsApi = {
+        getSettings: () => ({ ...settings }),
+        setSettings: (data) => {
+          settings = { ...defaults, ...(data || {}) };
+          syncInputs();
+          syncHidden();
+        },
+      };
+
+      syncInputs();
+      syncHidden();
+    });
 
     // Produkt-Editor
     document.querySelectorAll("[data-product-editor]").forEach((wrapper) => {
@@ -475,11 +635,14 @@
       const sharedInput = form.querySelector('input[name="shared_settings"]');
       const shotInput = form.querySelector('input[name="shotcounter_settings"]');
       const productEditor = form.querySelector("[data-product-editor]");
+      const shotSettingsWrapper = form.querySelector("[data-shot-settings]");
       return {
         kassensystem_enabled: Boolean((form.querySelector('[name="kassensystem_enabled"]') || {}).checked),
         shotcounter_enabled: Boolean((form.querySelector('[name="shotcounter_enabled"]') || {}).checked),
         shared_settings: parseJson(sharedInput ? sharedInput.value : "", {}),
-        shotcounter_settings: parseJson(shotInput ? shotInput.value : "", {}),
+        shotcounter_settings:
+          (shotSettingsWrapper && shotSettingsWrapper.shotSettingsApi && shotSettingsWrapper.shotSettingsApi.getSettings()) ||
+          parseJson(shotInput ? shotInput.value : "", {}),
         kassensystem_settings:
           (productEditor && productEditor.productApi && productEditor.productApi.getSettings()) ||
           parseJson((form.querySelector('input[name="kassensystem_settings"]') || {}).value, {}),
@@ -499,6 +662,10 @@
 
       const productEditor = form.querySelector("[data-product-editor]");
       const kassInput = form.querySelector('input[name="kassensystem_settings"]');
+      const shotSettingsWrapper = form.querySelector("[data-shot-settings]");
+      if (shotSettingsWrapper && shotSettingsWrapper.shotSettingsApi) {
+        shotSettingsWrapper.shotSettingsApi.setSettings(snapshot.shotcounter_settings || {});
+      }
       if (productEditor && productEditor.productApi) {
         productEditor.productApi.setSettings(snapshot.kassensystem_settings || { items: defaultButtons });
       } else if (kassInput) {

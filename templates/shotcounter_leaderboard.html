@@ -8,14 +8,22 @@
   body, html { height: 100%; }
   .container { padding: 0; }
   .leaderboard-hero {
-    --cards-visible: 10;
+    --cards-visible: {{ limit }};
+    --lb-background: {{ shot_settings.background_color }};
+    --lb-card: {{ shot_settings.primary_color }};
+    --lb-secondary: {{ shot_settings.secondary_color }};
+    --lb-tertiary: {{ shot_settings.tertiary_color }};
+    --lb-title-size: {{ shot_settings.title_size }}rem;
+    --lb-team-size: {{ shot_settings.team_size }}rem;
     --header-space: 140px;
     min-height: 100vh;
     display: flex;
     flex-direction: column;
-    background: radial-gradient(circle at 20% 20%, rgba(56,189,248,0.12), transparent 25%),
-                radial-gradient(circle at 80% 0%, rgba(52,211,153,0.16), transparent 25%),
-                linear-gradient(135deg, #0b1222 0%, #0f172a 60%, #0b1222 100%);
+    background: var(--lb-background);
+    background:
+      radial-gradient(circle at 20% 20%, color-mix(in srgb, var(--lb-secondary) 20%, transparent), transparent 28%),
+      radial-gradient(circle at 80% 0%, color-mix(in srgb, var(--lb-tertiary) 20%, transparent), transparent 25%),
+      linear-gradient(135deg, var(--lb-background) 0%, #0f172a 60%, var(--lb-background) 100%);
     padding: 2rem 2.5rem 2.5rem;
     box-sizing: border-box;
   }
@@ -27,7 +35,7 @@
     text-align: center;
   }
   .leaderboard-event {
-    font-size: clamp(2.8rem, 5vw, 3.4rem);
+    font-size: clamp(calc(var(--lb-title-size) * 0.85), calc(var(--lb-title-size) + 0.6vw), calc(var(--lb-title-size) * 1.1));
     font-weight: 800;
   }
   .leaderboard-grid {
@@ -37,8 +45,9 @@
     flex: 1;
   }
   .lb-card {
-    background: rgba(30,41,59,0.75);
-    border: 1px solid rgba(51,65,85,0.7);
+    background: var(--lb-card);
+    border: 1px solid rgba(255,255,255,0.08);
+    border: 1px solid color-mix(in srgb, var(--lb-card) 70%, #ffffff 12%);
     border-radius: 16px;
     padding: 0.75rem 1rem;
     display: grid;
@@ -57,9 +66,9 @@
     align-items: center;
     justify-content: center;
     font-weight: 900;
-    font-size: clamp(1.6rem, 2.5vh, 2rem);
+    font-size: clamp(calc(var(--lb-team-size) * 0.9), calc(var(--lb-team-size) * 0.35vw + 1.2rem), calc(var(--lb-team-size) * 1.15));
     color: #0b1222;
-    background: linear-gradient(135deg, #38bdf8, #34d399);
+    background: linear-gradient(135deg, var(--lb-secondary), var(--lb-tertiary));
   }
   .lb-info {
     flex: 1;
@@ -68,13 +77,13 @@
   }
   .lb-name {
     margin: 0;
-    font-size: clamp(1.4rem, 2.6vh, 1.8rem);
+    font-size: clamp(calc(var(--lb-team-size) * 0.9), calc(var(--lb-team-size) * 0.25vw + 1rem), calc(var(--lb-team-size) * 1.05));
     font-weight: 900;
     letter-spacing: 0.2px;
   }
   .lb-shots {
     margin: 0.2rem 0 0;
-    font-size: clamp(1rem, 2vh, 1.2rem);
+    font-size: clamp(calc(var(--lb-team-size) * 0.6), calc(var(--lb-team-size) * 0.18vw + 0.8rem), calc(var(--lb-team-size) * 0.8));
     color: rgba(226,232,240,0.75);
     font-weight: 600;
   }
@@ -112,7 +121,10 @@
         <div class="lb-card">
           <div class="lb-rank">#${idx + 1}</div>
           <div class="lb-info">
-            <p class="lb-name">${team.name} - ${team.shots} Shots</p>
+            <div>
+              <p class="lb-name">${team.name}</p>
+              <p class="lb-shots">${team.shots} Shots</p>
+            </div>
           </div>
         </div>
       `;

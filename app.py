@@ -226,6 +226,18 @@ DEFAULT_BUTTONS: List[ButtonConfig] = [
     ButtonConfig(name="Shot", label="Shot", price=5, css_class="shot", color="#7a1f2a"),
 ]
 
+DEFAULT_SHOTCOUNTER_SETTINGS: Dict[str, int | float | str] = {
+    "background_color": "#0b1222",
+    "primary_color": "#1e293b",
+    "secondary_color": "#38bdf8",
+    "tertiary_color": "#34d399",
+    "title_size": 3.2,  # rem
+    "team_size": 1.6,  # rem
+    "leaderboard_limit": 10,
+}
+
+HEX_COLOR_PATTERN = re.compile(r"^#([0-9a-fA-F]{6}|[0-9a-fA-F]{3})$")
+
 
 def parse_json_field(raw_value: str | None) -> Dict:
     if not raw_value:
@@ -238,6 +250,64 @@ def parse_json_field(raw_value: str | None) -> Dict:
 
 def get_active_event() -> Event | None:
     return Event.query.filter_by(is_active=True, is_archived=False).first()
+
+
+def _sanitize_hex_color(value: str | None, fallback: str) -> str:
+    if isinstance(value, str) and HEX_COLOR_PATTERN.match(value.strip()):
+        return value.strip()
+    return fallback
+
+
+def _sanitize_font_size(value: float | int | str | None, fallback: float) -> float:
+    if value is None:
+        return fallback
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return fallback
+    return max(0.5, min(parsed, 10.0))
+
+
+def _sanitize_leaderboard_limit(value: int | str | None, fallback: int) -> int:
+    try:
+        parsed = int(value) if value is not None else fallback
+    except (TypeError, ValueError):
+        return fallback
+    if parsed < 1:
+        return fallback
+    return min(parsed, 50)
+
+
+def validate_shotcounter_settings(raw: dict | None) -> Dict[str, int | float | str]:
+    settings = {**DEFAULT_SHOTCOUNTER_SETTINGS}
+    incoming = raw if isinstance(raw, dict) else {}
+    settings["background_color"] = _sanitize_hex_color(
+        incoming.get("background_color"), DEFAULT_SHOTCOUNTER_SETTINGS["background_color"]
+    )
+    settings["primary_color"] = _sanitize_hex_color(
+        incoming.get("primary_color"), DEFAULT_SHOTCOUNTER_SETTINGS["primary_color"]
+    )
+    settings["secondary_color"] = _sanitize_hex_color(
+        incoming.get("secondary_color"), DEFAULT_SHOTCOUNTER_SETTINGS["secondary_color"]
+    )
+    settings["tertiary_color"] = _sanitize_hex_color(
+        incoming.get("tertiary_color"), DEFAULT_SHOTCOUNTER_SETTINGS["tertiary_color"]
+    )
+    settings["title_size"] = _sanitize_font_size(
+        incoming.get("title_size"), float(DEFAULT_SHOTCOUNTER_SETTINGS["title_size"])
+    )
+    settings["team_size"] = _sanitize_font_size(
+        incoming.get("team_size"), float(DEFAULT_SHOTCOUNTER_SETTINGS["team_size"])
+    )
+    settings["leaderboard_limit"] = _sanitize_leaderboard_limit(
+        incoming.get("leaderboard_limit"), int(DEFAULT_SHOTCOUNTER_SETTINGS["leaderboard_limit"])
+    )
+    return settings
+
+
+def resolve_shotcounter_settings(event: Event | None) -> Dict[str, int | float | str]:
+    raw_settings = event.shotcounter_settings if event and isinstance(event.shotcounter_settings, dict) else {}
+    return validate_shotcounter_settings(raw_settings)
 
 
 def require_active_event(*, kassensystem: bool = False, shotcounter: bool = False) -> Event:
@@ -510,13 +580,14 @@ def admin():
     default_button_presets = [button.__dict__ for button in DEFAULT_BUTTONS]
     button_map = {event.id: [btn.__dict__ for btn in resolve_button_config(event)] for event in events}
     kass_settings = {event.id: {**(event.kassensystem_settings or {}), "items": button_map[event.id]} for event in events}
+    shot_settings_map = {event.id: resolve_shotcounter_settings(event) for event in events}
     event_payloads = {
         event.id: {
             "name": event.name,
             "kassensystem_enabled": event.kassensystem_enabled,
             "shotcounter_enabled": event.shotcounter_enabled,
             "shared_settings": event.shared_settings or {},
-            "shotcounter_settings": event.shotcounter_settings or {},
+            "shotcounter_settings": shot_settings_map[event.id],
             "kassensystem_settings": kass_settings[event.id],
         }
         for event in events
@@ -529,6 +600,8 @@ def admin():
         event_buttons=button_map,
         kass_settings=kass_settings,
         event_payloads=event_payloads,
+        shotcounter_defaults=DEFAULT_SHOTCOUNTER_SETTINGS,
+        shot_settings_map=shot_settings_map,
     )
 
 
@@ -545,7 +618,7 @@ def create_event():
     try:
         shared_settings = parse_json_field(request.form.get("shared_settings"))
         kass_settings = validate_and_normalize_buttons(parse_json_field(request.form.get("kassensystem_settings")))
-        shot_settings = parse_json_field(request.form.get("shotcounter_settings"))
+        shot_settings = validate_shotcounter_settings(parse_json_field(request.form.get("shotcounter_settings")))
     except ValueError as exc:
         flash(str(exc), "error")
         return redirect(url_for("admin"))
@@ -576,7 +649,7 @@ def update_event(event_id: int):
         event.kassensystem_settings = validate_and_normalize_buttons(
             parse_json_field(request.form.get("kassensystem_settings"))
         )
-        event.shotcounter_settings = parse_json_field(request.form.get("shotcounter_settings"))
+        event.shotcounter_settings = validate_shotcounter_settings(parse_json_field(request.form.get("shotcounter_settings")))
     except ValueError as exc:
         flash(str(exc), "error")
         return redirect(url_for("admin"))
@@ -731,13 +804,11 @@ def shotcounter_touch():
     return render_template("shotcounter_touch.html", teams=teams, event=event)
 
 
-def _leaderboard_limit(default: int = 10) -> int:
+def _leaderboard_limit(default: int) -> int:
     """Sanitizes the requested leaderboard size."""
 
-    raw = request.args.get("limit", default=default, type=int)
-    if not raw or raw < 1:
-        return default
-    return min(raw, 50)
+    raw = request.args.get("limit", type=int)
+    return _sanitize_leaderboard_limit(raw, default)
 
 
 TEAM_NAME_PATTERN = re.compile(r"^[A-Za-z0-9ÄÖÜäöüß .,'&()/\\-]+$")
@@ -777,20 +848,23 @@ def _redirect_target(default: str = "shotcounter") -> str:
 @app.route("/shotcounter/leaderboard")
 def shotcounter_leaderboard():
     event = require_active_event(shotcounter=True)
-    limit = _leaderboard_limit()
+    shot_settings = resolve_shotcounter_settings(event)
+    limit = _leaderboard_limit(int(shot_settings["leaderboard_limit"]))
     teams = _top_teams(event, limit)
     return render_template(
         "shotcounter_leaderboard.html",
         teams=_serialize_teams(teams),
         event=event,
         limit=limit,
+        shot_settings=shot_settings,
     )
 
 
 @app.route("/shotcounter/leaderboard/data")
 def shotcounter_leaderboard_data():
     event = require_active_event(shotcounter=True)
-    limit = _leaderboard_limit()
+    shot_settings = resolve_shotcounter_settings(event)
+    limit = _leaderboard_limit(int(shot_settings["leaderboard_limit"]))
     teams = _top_teams(event, limit)
     payload = {
         "event": {"id": event.id, "name": event.name},
