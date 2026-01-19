@@ -28,6 +28,7 @@ KIOSK_SERVICE_NAME="kassensystem-kiosk"
 ENV_FILE="/etc/kassensystem.env"
 WHEEL_DIR="${APP_ROOT}/wheels"
 DEFAULT_PORT="${PORT:-8000}"
+SERVICE_USER="${SERVICE_USER:-kassensystem}"
 
 usage() {
   cat <<'EOF'
@@ -35,7 +36,7 @@ Pi maintenance helper
 
 Commands:
   create-venv                 Create a Python virtualenv in .venv
-  install-deps [--offline]    Install requirements.txt (uses ./wheels if --offline)
+  install-deps [--offline] [--dev]  Install requirements.txt (uses ./wheels if --offline)
   write-service [--port N]    Write systemd unit to /etc/systemd/system/*.service
   enable-service              systemctl daemon-reload + enable --now
   disable-service             systemctl disable --now
@@ -67,25 +68,41 @@ ensure_venv() {
   fi
 }
 
+ensure_service_user() {
+  require_root
+  if ! id -u "${SERVICE_USER}" >/dev/null 2>&1; then
+    echo "Erstelle System-User ${SERVICE_USER} ..."
+    useradd --system --home "${APP_ROOT}" --shell /usr/sbin/nologin "${SERVICE_USER}"
+  fi
+  mkdir -p "${APP_ROOT}/instance/logs" "${APP_ROOT}/instance/backups"
+  chown -R "${SERVICE_USER}:${SERVICE_USER}" "${APP_ROOT}/instance"
+}
+
 install_deps() {
   local offline=0
+  local dev=0
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --offline) offline=1; shift ;;
+      --dev) dev=1; shift ;;
       *) echo "Unbekannte Option: $1" >&2; exit 1 ;;
     esac
   done
 
   ensure_venv
   local pip="${APP_ROOT}/.venv/bin/pip"
+  local req_file="${APP_ROOT}/requirements.txt"
+  if [[ $dev -eq 1 ]]; then
+    req_file="${APP_ROOT}/requirements-dev.txt"
+  fi
 
   if [[ $offline -eq 1 ]]; then
     echo "Installiere Abhängigkeiten offline (verwende ${WHEEL_DIR}) ..."
-    "${pip}" install --no-index --find-links="${WHEEL_DIR}" -r "${APP_ROOT}/requirements.txt"
+    "${pip}" install --no-index --find-links="${WHEEL_DIR}" -r "${req_file}"
   else
     echo "Installiere Abhängigkeiten online ..."
     "${pip}" install --upgrade pip
-    "${pip}" install -r "${APP_ROOT}/requirements.txt"
+    "${pip}" install -r "${req_file}"
   fi
 }
 
@@ -100,7 +117,7 @@ APP_ENV=production
 SECRET_KEY=$(openssl rand -hex 16)
 ADMIN_USERNAME=admin
 ADMIN_PASSWORD=$(openssl rand -hex 8)
-BACKUP_DIR=/var/backups/kassensystem
+BACKUP_DIR=${APP_ROOT}/instance/backups
 BACKUP_RETENTION=14
 GUNICORN_WORKERS=2
 EOF
@@ -112,6 +129,7 @@ EOF
 
 write_service() {
   require_root
+  ensure_service_user
   local port="${DEFAULT_PORT}"
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -131,10 +149,18 @@ Wants=network-online.target
 Type=simple
 EnvironmentFile=${ENV_FILE}
 WorkingDirectory=${APP_ROOT}
+User=${SERVICE_USER}
+Group=${SERVICE_USER}
 ExecStart=${APP_ROOT}/.venv/bin/gunicorn -w \${GUNICORN_WORKERS:-2} -b 0.0.0.0:${port} "app:app"
 Restart=always
 RestartSec=5
 TimeoutStartSec=30
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=${APP_ROOT}/instance
+UMask=0077
 
 [Install]
 WantedBy=multi-user.target
@@ -170,7 +196,12 @@ update_app() {
   if [[ $offline -eq 0 ]]; then
     echo "Hole Updates von Git (Branch ${branch}) ..."
     git -C "${APP_ROOT}" fetch --all
-    git -C "${APP_ROOT}" reset --hard "origin/${branch}"
+    if [[ -n "$(git -C "${APP_ROOT}" status --porcelain)" ]]; then
+      echo "Arbeitsverzeichnis ist nicht sauber. Bitte committen oder stashen." >&2
+      exit 1
+    fi
+    git -C "${APP_ROOT}" checkout "${branch}"
+    git -C "${APP_ROOT}" pull --ff-only
   else
     echo "Offline-Update: überspringe Git-Fetch."
   fi
@@ -178,7 +209,7 @@ update_app() {
   install_deps $([[ $offline -eq 1 ]] && echo --offline || true)
   if [[ -d "${APP_ROOT}/migrations" ]]; then
     echo "Führe Datenbank-Migrationen aus ..."
-    "${APP_ROOT}/.venv/bin/flask" --app app db upgrade || true
+    FLASK_APP=app "${APP_ROOT}/.venv/bin/flask" db upgrade || true
   fi
   echo "Starte Dienst neu ..."
   require_root
@@ -188,6 +219,7 @@ update_app() {
 
 write_backup() {
   require_root
+  ensure_service_user
   write_env_file
   cat > "/etc/systemd/system/${BACKUP_SERVICE_NAME}.service" <<EOF
 [Unit]
@@ -197,6 +229,8 @@ Description=Kassensystem DB Backup
 Type=oneshot
 EnvironmentFile=${ENV_FILE}
 WorkingDirectory=${APP_ROOT}
+User=${SERVICE_USER}
+Group=${SERVICE_USER}
 ExecStart=${APP_ROOT}/scripts/backup_db.sh
 EOF
 

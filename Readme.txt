@@ -11,6 +11,10 @@ Ein zentrales System verwaltet Events und schaltet zwei Funktionen einzeln frei:
    source .venv/bin/activate
    pip install -r requirements.txt
    ```
+   Für Entwicklung/Tests:
+   ```bash
+   pip install -r requirements-dev.txt
+   ```
 
 2. **Datenbank initialisieren (SQLite)** – beim ersten Start automatisch via SQLAlchemy:
    ```bash
@@ -48,6 +52,43 @@ make test
 
 ## Raspberry Pi Deployment
 Ein Skript für Autostart, Offline/Online-Updates, Backups und optionalen Kiosk-Modus liegt unter `scripts/pi_manage.sh`. Details und Schritte findest du in `docs/pi_deployment.md`.
+
+Kurzüberblick:
+- **Service & Autostart** (systemd):
+  ```bash
+  sudo ./scripts/pi_manage.sh write-service --port 8000
+  sudo ./scripts/pi_manage.sh enable-service
+  ```
+  Der Dienst läuft als System-User `kassensystem` mit grundlegenden Hardening-Optionen. Das Env-File liegt unter `/etc/kassensystem.env`.
+- **Env-Config**:
+  - `SECRET_KEY`, `ADMIN_USERNAME`, `ADMIN_PASSWORD` werden beim ersten Schreiben gesetzt.
+  - `BACKUP_DIR` ist standardmäßig `instance/backups` im Repo (anpassbar).
+  - `GUNICORN_WORKERS` steuert die Worker-Anzahl (Default 2).
+- **Backups** (täglich per systemd timer):
+  ```bash
+  sudo ./scripts/pi_manage.sh write-backup
+  sudo ./scripts/pi_manage.sh enable-backup
+  ```
+- **Updates**:
+  ```bash
+  sudo ./scripts/pi_manage.sh update --branch main
+  ```
+  Offline:
+  ```bash
+  sudo ./scripts/pi_manage.sh update --offline
+  ```
+- **Kiosk** (Chromium):
+  ```bash
+  sudo ./scripts/pi_manage.sh write-kiosk
+  sudo ./scripts/pi_manage.sh enable-kiosk
+  ```
+  Optional `KIOSK_URL` in `/etc/kassensystem.env` setzen.
+
+Offline-Wheels vorbereiten (einmalig mit Internet):
+```bash
+pip download -r requirements.txt -d wheels/
+pip download -r requirements-dev.txt -d wheels/
+```
 
 ## Makefile (Kurzbefehle)
 - `make install` – Abhängigkeiten installieren

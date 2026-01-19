@@ -11,11 +11,19 @@ Dieses Projekt kann auf einem Raspberry Pi im Offline-LAN (Ethernet) betrieben w
    pip install --upgrade pip
    pip download -r requirements.txt -d wheels/
    ```
+   Für Entwicklung/Tests:
+   ```bash
+   pip download -r requirements-dev.txt -d wheels/
+   ```
 3. Virtuelle Umgebung anlegen und Abhängigkeiten installieren (online oder offline):
    ```bash
    ./scripts/pi_manage.sh create-venv
    ./scripts/pi_manage.sh install-deps            # online
    ./scripts/pi_manage.sh install-deps --offline  # nutzt ./wheels
+   ```
+   Für Entwicklung/Tests:
+   ```bash
+   ./scripts/pi_manage.sh install-deps --dev
    ```
 
 ## Dienst einrichten (Autostart & Robustheit)
@@ -24,6 +32,7 @@ Dieses Projekt kann auf einem Raspberry Pi im Offline-LAN (Ethernet) betrieben w
    sudo ./scripts/pi_manage.sh write-service --port 8000
    ```
    Dabei wird automatisch `/etc/kassensystem.env` mit `SECRET_KEY`, Admin-Zugang und Backup-Parametern erstellt. Passe die Datei bei Bedarf an.
+   Der Dienst läuft als dedizierter System-User `kassensystem` und ist mit basic Hardening-Optionen abgesichert.
 2. Dienst aktivieren und starten:
    ```bash
    sudo ./scripts/pi_manage.sh enable-service
@@ -43,7 +52,7 @@ Sobald `ADMIN_PASSWORD` gesetzt ist (Standard im `/etc/kassensystem.env`), sind 
 sudo ./scripts/pi_manage.sh write-backup
 sudo ./scripts/pi_manage.sh enable-backup
 ```
-Die Backups landen in `BACKUP_DIR` (Standard `/var/backups/kassensystem`), die Aufbewahrung wird über `BACKUP_RETENTION` (Tage) gesteuert.
+Die Backups landen in `BACKUP_DIR` (Standard `instance/backups` im Repo), die Aufbewahrung wird über `BACKUP_RETENTION` (Tage) gesteuert.
 
 ## Kiosk-Modus (Touchscreen)
 1. URL optional setzen (z. B. `http://localhost:8000/shotcounter/touch`) in `/etc/kassensystem.env`:
@@ -67,7 +76,7 @@ Voraussetzung: `chromium` oder `chromium-browser` ist installiert.
   sudo ./scripts/pi_manage.sh update --offline
   ```
 
-Der Befehl installiert Abhängigkeiten, schreibt keine Git-Daten wenn `--offline` gesetzt ist, und startet den Dienst neu.
+  Der Befehl installiert Abhängigkeiten, schreibt keine Git-Daten wenn `--offline` gesetzt ist, und startet den Dienst neu.
 
 ## WLAN-Helfer (optional für Wartung)
 - Netzwerk hinzufügen und direkt re-konfigurieren:

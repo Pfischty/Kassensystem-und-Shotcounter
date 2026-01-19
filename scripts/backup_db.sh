@@ -5,7 +5,7 @@ set -euo pipefail
 APP_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 INSTANCE_DIR="${APP_ROOT}/instance"
 DB_PATH="${INSTANCE_DIR}/app.db"
-BACKUP_DIR="${BACKUP_DIR:-/var/backups/kassensystem}"
+BACKUP_DIR="${BACKUP_DIR:-${APP_ROOT}/instance/backups}"
 RETENTION_DAYS="${BACKUP_RETENTION:-14}"
 STAMP="$(date +%F_%H%M%S)"
 
