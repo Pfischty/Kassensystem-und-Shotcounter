@@ -14,6 +14,7 @@ import json
 import logging
 import os
 import re
+import sqlite3
 from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime
@@ -33,8 +34,11 @@ from flask import (
     session,
     url_for,
 )
+from flask_migrate import Migrate
+from flask_session import Session
 from flask_sqlalchemy import SQLAlchemy
-from sqlalchemy import func
+from sqlalchemy import event, func, text
+from sqlalchemy.engine import Engine
 
 
 # ---------------------------------------------------------------------------
@@ -42,15 +46,25 @@ from sqlalchemy import func
 # ---------------------------------------------------------------------------
 app = Flask(__name__, instance_relative_config=True)
 
-# Ensure a usable secret key even when Flask's default (None) is present.
-secret_key = os.environ.get("SECRET_KEY") or app.config.get("SECRET_KEY") or "dev-secret-key"
+is_production = os.environ.get("FLASK_ENV") == "production" or os.environ.get("APP_ENV") == "production"
+secret_key = os.environ.get("SECRET_KEY") or app.config.get("SECRET_KEY")
+if not secret_key:
+    if is_production and not app.config.get("TESTING"):
+        raise RuntimeError("SECRET_KEY muss in Produktion gesetzt sein.")
+    secret_key = "dev-secret-key"
+
 app.config["SECRET_KEY"] = secret_key
 app.config.setdefault("SQLALCHEMY_DATABASE_URI", f"sqlite:///{Path(app.instance_path) / 'app.db'}")
 app.config.setdefault("SQLALCHEMY_TRACK_MODIFICATIONS", False)
 app.config.setdefault("SESSION_TYPE", "filesystem")
 
 Path(app.instance_path).mkdir(parents=True, exist_ok=True)
+session_dir = Path(app.instance_path) / "sessions"
+session_dir.mkdir(parents=True, exist_ok=True)
+app.config.setdefault("SESSION_FILE_DIR", str(session_dir))
 db = SQLAlchemy(app)
+Session(app)
+Migrate(app, db)
 
 
 def configure_logging(flask_app: Flask) -> None:
@@ -71,6 +85,19 @@ def configure_logging(flask_app: Flask) -> None:
 
 
 configure_logging(app)
+
+@event.listens_for(Engine, "connect")
+def set_sqlite_pragmas(dbapi_connection, _connection_record) -> None:
+    if not isinstance(dbapi_connection, sqlite3.Connection):
+        return
+    cursor = dbapi_connection.cursor()
+    try:
+        cursor.execute("PRAGMA journal_mode=WAL;")
+        cursor.execute("PRAGMA synchronous=NORMAL;")
+        cursor.execute("PRAGMA busy_timeout=5000;")
+        cursor.execute("PRAGMA foreign_keys=ON;")
+    finally:
+        cursor.close()
 
 
 # ---------------------------------------------------------------------------
@@ -153,10 +180,6 @@ class ShotLog(db.Model):
 
     event = db.relationship("Event", backref=db.backref("shot_logs", cascade="all, delete-orphan"))
     team = db.relationship("Team")
-
-
-with app.app_context():
-    db.create_all()
 
 
 # ---------------------------------------------------------------------------
@@ -411,6 +434,36 @@ def resolve_actor() -> tuple[str, str]:
     return actor, ua
 
 
+def _admin_credentials() -> tuple[str, str] | None:
+    password = os.environ.get("ADMIN_PASSWORD")
+    if not password:
+        return None
+    username = os.environ.get("ADMIN_USERNAME") or "admin"
+    return username, password
+
+
+def _admin_auth_required() -> Response:
+    return Response(
+        "Admin-Authentifizierung erforderlich.",
+        401,
+        {"WWW-Authenticate": 'Basic realm="Admin"'},
+    )
+
+
+@app.before_request
+def enforce_admin_auth():
+    if not request.path.startswith("/admin"):
+        return None
+    credentials = _admin_credentials()
+    if not credentials:
+        return None
+    username, password = credentials
+    auth = request.authorization
+    if not auth or auth.username != username or auth.password != password:
+        return _admin_auth_required()
+    return None
+
+
 def cart_key(event: Event) -> str:
     return f"cart_{event.id}"
 
@@ -465,6 +518,14 @@ def dashboard():
     events = Event.query.order_by(Event.created_at.desc()).all()
     stats_map = {event.id: event_statistics(event) for event in events}
     return render_template("dashboard.html", active_event=active_event, events=events, stats_map=stats_map)
+
+@app.route("/health")
+def health():
+    try:
+        db.session.execute(text("SELECT 1"))
+    except Exception:
+        return {"status": "error", "db": "unavailable"}, 500
+    return {"status": "ok"}
 
 
 @app.route("/events/<int:event_id>")

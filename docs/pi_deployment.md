@@ -23,7 +23,7 @@ Dieses Projekt kann auf einem Raspberry Pi im Offline-LAN (Ethernet) betrieben w
    ```bash
    sudo ./scripts/pi_manage.sh write-service --port 8000
    ```
-   Dabei wird automatisch `/etc/kassensystem.env` mit einem SECRET_KEY erstellt. Passe die Datei bei Bedarf an.
+   Dabei wird automatisch `/etc/kassensystem.env` mit `SECRET_KEY`, Admin-Zugang und Backup-Parametern erstellt. Passe die Datei bei Bedarf an.
 2. Dienst aktivieren und starten:
    ```bash
    sudo ./scripts/pi_manage.sh enable-service
@@ -33,7 +33,29 @@ Dieses Projekt kann auf einem Raspberry Pi im Offline-LAN (Ethernet) betrieben w
    sudo ./scripts/pi_manage.sh status
    ```
 
-Der Dienst startet nach Stromausfall/Neustart automatisch und nutzt die rotierenden Logs unter `instance/logs/app.log` (Standard des Projekts).
+Der Dienst startet nach Stromausfall/Neustart automatisch und nutzt die rotierenden Logs unter `instance/logs/app.log`.
+
+## Admin-Zugang
+Sobald `ADMIN_PASSWORD` gesetzt ist (Standard im `/etc/kassensystem.env`), sind alle `/admin`-Routen per Basic Auth geschützt.
+
+## Datenbank-Backups (täglich)
+```bash
+sudo ./scripts/pi_manage.sh write-backup
+sudo ./scripts/pi_manage.sh enable-backup
+```
+Die Backups landen in `BACKUP_DIR` (Standard `/var/backups/kassensystem`), die Aufbewahrung wird über `BACKUP_RETENTION` (Tage) gesteuert.
+
+## Kiosk-Modus (Touchscreen)
+1. URL optional setzen (z. B. `http://localhost:8000/shotcounter/touch`) in `/etc/kassensystem.env`:
+   ```bash
+   KIOSK_URL=http://localhost:8000/cashier
+   ```
+2. Service schreiben und aktivieren:
+   ```bash
+   sudo ./scripts/pi_manage.sh write-kiosk
+   sudo ./scripts/pi_manage.sh enable-kiosk
+   ```
+Voraussetzung: `chromium` oder `chromium-browser` ist installiert.
 
 ## Updates einspielen
 - Online (z. B. temporär über WLAN mit Internetzugang):

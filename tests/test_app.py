@@ -81,3 +81,9 @@ def test_shotcounter_tracks_shots(client):
         team = Team.query.get(team_id)
         assert team.shots == 3
 
+
+def test_health_endpoint(client):
+    response = client.get("/health")
+    assert response.status_code == 200
+    data = response.get_json()
+    assert data["status"] == "ok"

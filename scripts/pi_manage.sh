@@ -23,6 +23,8 @@ set -euo pipefail
 
 APP_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SERVICE_NAME="kassensystem-shotcounter"
+BACKUP_SERVICE_NAME="kassensystem-backup"
+KIOSK_SERVICE_NAME="kassensystem-kiosk"
 ENV_FILE="/etc/kassensystem.env"
 WHEEL_DIR="${APP_ROOT}/wheels"
 DEFAULT_PORT="${PORT:-8000}"
@@ -38,6 +40,12 @@ Commands:
   enable-service              systemctl daemon-reload + enable --now
   disable-service             systemctl disable --now
   update [--branch BR] [--offline]  Pull Git (unless --offline), install deps, restart service
+  write-backup                Write systemd service + timer for DB backups
+  enable-backup               Enable and start the backup timer
+  disable-backup              Disable the backup timer
+  write-kiosk                 Write systemd service for Chromium kiosk
+  enable-kiosk                Enable and start the kiosk service
+  disable-kiosk               Disable the kiosk service
   wifi-add SSID PASS          Append Wi‑Fi network to wpa_supplicant and reconfigure
   wifi-up                     Bring wlan0 up and reconfigure
   wifi-down                   Bring wlan0 down
@@ -88,7 +96,13 @@ write_env_file() {
     cat > "${ENV_FILE}" <<EOF
 # Environment für Kassensystem/Shotcounter
 FLASK_ENV=production
+APP_ENV=production
 SECRET_KEY=$(openssl rand -hex 16)
+ADMIN_USERNAME=admin
+ADMIN_PASSWORD=$(openssl rand -hex 8)
+BACKUP_DIR=/var/backups/kassensystem
+BACKUP_RETENTION=14
+GUNICORN_WORKERS=2
 EOF
     chmod 600 "${ENV_FILE}"
   else
@@ -117,7 +131,7 @@ Wants=network-online.target
 Type=simple
 EnvironmentFile=${ENV_FILE}
 WorkingDirectory=${APP_ROOT}
-ExecStart=${APP_ROOT}/.venv/bin/flask --app app run --host=0.0.0.0 --port=${port}
+ExecStart=${APP_ROOT}/.venv/bin/gunicorn -w \${GUNICORN_WORKERS:-2} -b 0.0.0.0:${port} "app:app"
 Restart=always
 RestartSec=5
 TimeoutStartSec=30
@@ -162,10 +176,90 @@ update_app() {
   fi
 
   install_deps $([[ $offline -eq 1 ]] && echo --offline || true)
+  if [[ -d "${APP_ROOT}/migrations" ]]; then
+    echo "Führe Datenbank-Migrationen aus ..."
+    "${APP_ROOT}/.venv/bin/flask" --app app db upgrade || true
+  fi
   echo "Starte Dienst neu ..."
   require_root
   systemctl restart "${SERVICE_NAME}.service"
   systemctl status --no-pager "${SERVICE_NAME}.service"
+}
+
+write_backup() {
+  require_root
+  write_env_file
+  cat > "/etc/systemd/system/${BACKUP_SERVICE_NAME}.service" <<EOF
+[Unit]
+Description=Kassensystem DB Backup
+
+[Service]
+Type=oneshot
+EnvironmentFile=${ENV_FILE}
+WorkingDirectory=${APP_ROOT}
+ExecStart=${APP_ROOT}/scripts/backup_db.sh
+EOF
+
+  cat > "/etc/systemd/system/${BACKUP_SERVICE_NAME}.timer" <<EOF
+[Unit]
+Description=Daily Kassensystem DB Backup
+
+[Timer]
+OnCalendar=daily
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+EOF
+
+  echo "Backup-Unit /etc/systemd/system/${BACKUP_SERVICE_NAME}.service und Timer geschrieben."
+}
+
+enable_backup() {
+  require_root
+  systemctl daemon-reload
+  systemctl enable --now "${BACKUP_SERVICE_NAME}.timer"
+  systemctl status --no-pager "${BACKUP_SERVICE_NAME}.timer"
+}
+
+disable_backup() {
+  require_root
+  systemctl disable --now "${BACKUP_SERVICE_NAME}.timer"
+}
+
+write_kiosk() {
+  require_root
+  write_env_file
+  cat > "/etc/systemd/system/${KIOSK_SERVICE_NAME}.service" <<EOF
+[Unit]
+Description=Kassensystem Kiosk Mode
+After=graphical.target
+
+[Service]
+EnvironmentFile=${ENV_FILE}
+Environment=DISPLAY=:0
+WorkingDirectory=${APP_ROOT}
+User=${SUDO_USER:-pi}
+ExecStart=${APP_ROOT}/scripts/kiosk_start.sh
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=graphical.target
+EOF
+  echo "Kiosk-Unit /etc/systemd/system/${KIOSK_SERVICE_NAME}.service geschrieben."
+}
+
+enable_kiosk() {
+  require_root
+  systemctl daemon-reload
+  systemctl enable --now "${KIOSK_SERVICE_NAME}.service"
+  systemctl status --no-pager "${KIOSK_SERVICE_NAME}.service"
+}
+
+disable_kiosk() {
+  require_root
+  systemctl disable --now "${KIOSK_SERVICE_NAME}.service"
 }
 
 wifi_add() {
@@ -212,13 +306,19 @@ show_status() {
 
 main() {
   local cmd="${1:-}"
-  case "${cmd}" in
+case "${cmd}" in
     create-venv) shift; ensure_venv ;;
     install-deps) shift; install_deps "$@" ;;
     write-service) shift; write_service "$@" ;;
     enable-service) shift; enable_service ;;
     disable-service) shift; disable_service ;;
-    update) shift; update_app "$@" ;;
+  update) shift; update_app "$@" ;;
+  write-backup) shift; write_backup "$@" ;;
+  enable-backup) shift; enable_backup "$@" ;;
+  disable-backup) shift; disable_backup "$@" ;;
+  write-kiosk) shift; write_kiosk "$@" ;;
+  enable-kiosk) shift; enable_kiosk "$@" ;;
+  disable-kiosk) shift; disable_kiosk "$@" ;;
     wifi-add) shift; wifi_add "${1:-}" "${2:-}" ;;
     wifi-up) shift; wifi_up ;;
     wifi-down) shift; wifi_down ;;
