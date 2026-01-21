@@ -40,6 +40,8 @@ from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy import event, func, text
 from sqlalchemy.engine import Engine
 
+from credentials_manager import credentials_manager
+
 
 # ---------------------------------------------------------------------------
 # App- und DB-Konfiguration
@@ -47,7 +49,10 @@ from sqlalchemy.engine import Engine
 app = Flask(__name__, instance_relative_config=True)
 
 is_production = os.environ.get("FLASK_ENV") == "production" or os.environ.get("APP_ENV") == "production"
-secret_key = os.environ.get("SECRET_KEY") or app.config.get("SECRET_KEY")
+
+# Load credentials from file or environment
+creds = credentials_manager.get_credentials()
+secret_key = creds.get("secret_key") or os.environ.get("SECRET_KEY") or app.config.get("SECRET_KEY")
 if not secret_key:
     if is_production and not app.config.get("TESTING"):
         raise RuntimeError("SECRET_KEY muss in Produktion gesetzt sein.")
@@ -414,8 +419,18 @@ def validate_and_normalize_buttons(settings: Dict | None) -> Dict:
         dup_list = ", ".join(sorted(set(duplicates)))
         raise ValueError(f"Doppelte Produktnamen gefunden: {dup_list}")
 
+    # If no items provided, use DEFAULT_BUTTONS
     if not normalized:
-        raise ValueError("Mindestens ein Produkt erforderlich.")
+        normalized = [
+            {
+                "name": btn.name,
+                "label": btn.label,
+                "price": btn.price,
+                "css_class": btn.css_class,
+                "color": btn.color,
+            }
+            for btn in DEFAULT_BUTTONS
+        ]
 
     sanitized = {k: v for k, v in settings.items() if k != "items"}
     sanitized["items"] = normalized
@@ -435,10 +450,19 @@ def resolve_actor() -> tuple[str, str]:
 
 
 def _admin_credentials() -> tuple[str, str] | None:
-    password = os.environ.get("ADMIN_PASSWORD")
+    """Get admin credentials from credentials manager.
+    
+    Returns:
+        Tuple of (username, password) or None if no password is set (unlocked)
+    """
+    creds = credentials_manager.get_credentials()
+    password = creds.get("admin_password")
+    
     if not password:
+        # No password set - system is unlocked, no auth required
         return None
-    username = os.environ.get("ADMIN_USERNAME") or "admin"
+    
+    username = creds.get("admin_username") or "admin"
     return username, password
 
 
@@ -653,6 +677,12 @@ def admin():
         }
         for event in events
     }
+    
+    # Get current credentials for display in template
+    current_creds = credentials_manager.get_credentials()
+    admin_username = current_creds.get("admin_username", "")
+    has_password = bool(current_creds.get("admin_password"))
+    
     return render_template(
         "admin.html",
         events=events,
@@ -663,6 +693,8 @@ def admin():
         event_payloads=event_payloads,
         shotcounter_defaults=DEFAULT_SHOTCOUNTER_SETTINGS,
         shot_settings_map=shot_settings_map,
+        admin_username=admin_username,
+        has_password=has_password,
     )
 
 
@@ -741,6 +773,38 @@ def archive_event(event_id: int):
     db.session.commit()
     app.logger.info("Event archiviert: %s", event.name)
     flash(f"Event '{event.name}' wurde archiviert.", "success")
+    return redirect(url_for("admin"))
+
+
+@app.route("/admin/credentials", methods=["POST"])
+def update_credentials():
+    """Route zum Aktualisieren der Admin-Credentials über das Webinterface.
+    
+    If credentials are already set (locked state), this route requires authentication
+    through the before_request handler. If unlocked (no password set), anyone can
+    set the initial credentials.
+    """
+    username = request.form.get("admin_username", "").strip()
+    password = request.form.get("admin_password", "").strip()
+    
+    # Validate inputs
+    if not username:
+        flash("Benutzername darf nicht leer sein.", "error")
+        return redirect(url_for("admin"))
+    
+    # Update credentials
+    success = credentials_manager.update_credentials(
+        admin_username=username,
+        admin_password=password if password else None
+    )
+    
+    if success:
+        app.logger.info("Admin-Credentials aktualisiert: Benutzer=%s", username)
+        flash("Credentials wurden erfolgreich aktualisiert.", "success")
+    else:
+        app.logger.error("Fehler beim Aktualisieren der Credentials")
+        flash("Fehler beim Speichern der Credentials.", "error")
+    
     return redirect(url_for("admin"))
 
 

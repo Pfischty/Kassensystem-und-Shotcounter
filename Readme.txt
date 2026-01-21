@@ -41,6 +41,33 @@ Ein zentrales System verwaltet Events und schaltet zwei Funktionen einzeln frei:
 2. **Kasse** (`/cashier`): Artikel buchen, Warenkorb abschließen, Statistik unter `/cashier/stats` einsehen.
 3. **Shotcounter** (`/shotcounter`): Teams anlegen und Shots pro Team verbuchen.
 
+## Credentials Management
+Die Admin-Zugangsdaten werden in einer separaten Datei `credentials.json` gespeichert, die **nicht ins Git-Repository** übernommen wird.
+
+### Initiale Konfiguration
+Beim ersten Start ist das System **unlocked** (ohne Passwortschutz). Du kannst im Adminbereich (`/admin`) unter "Admin-Zugangsdaten" einen Benutzernamen und ein Passwort setzen. Sobald ein Passwort gesetzt ist, wird der Adminbereich geschützt.
+
+### Credentials verwalten
+- **Im Webinterface**: Unter `/admin` → "Admin-Zugangsdaten" → "Details einblenden"
+  - Benutzername anpassen
+  - Passwort ändern (leer lassen, um bestehendes zu behalten)
+- **Per Datei**: `credentials.json` im Hauptverzeichnis
+  ```json
+  {
+    "admin_username": "admin",
+    "admin_password": "dein-sicheres-passwort",
+    "secret_key": "generierter-secret-key"
+  }
+  ```
+
+### Fallback auf Umgebungsvariablen
+Falls keine `credentials.json` existiert, werden die Credentials aus Umgebungsvariablen geladen:
+- `ADMIN_USERNAME` (default: "admin")
+- `ADMIN_PASSWORD`
+- `SECRET_KEY`
+
+**Hinweis**: Die Datei `credentials.example.json` enthält eine Vorlage und kann als Ausgangspunkt verwendet werden.
+
 ## Logging
 Sauberes, rotierendes Logging unter `instance/logs/app.log` für alle relevanten Admin-, Kassen- und Shotcounter-Aktionen.
 
@@ -98,3 +125,28 @@ pip download -r requirements-dev.txt -d wheels/
 - `make install` – Abhängigkeiten installieren
 - `make run` – Entwicklungserver starten
 - `make test` – Pytest-Suite ausführen
+
+## Migration für bestehende Deployments
+Wenn du bereits ein Deployment mit Umgebungsvariablen (`ADMIN_USERNAME`, `ADMIN_PASSWORD`) hast:
+
+1. **Option A - Credentials automatisch migrieren:**
+   - Starte die Anwendung normal - sie liest die Credentials aus den Umgebungsvariablen
+   - Rufe `/admin` auf und logge dich mit den Env-Credentials ein
+   - Unter "Admin-Zugangsdaten" kannst du die Credentials in die Datei übernehmen (optional neue Werte setzen)
+   - Nach dem Speichern werden die Credentials in `credentials.json` gespeichert
+
+2. **Option B - Manuell migrieren:**
+   - Erstelle `credentials.json` im Hauptverzeichnis:
+     ```bash
+     cat > credentials.json << EOF
+     {
+       "admin_username": "dein-username",
+       "admin_password": "dein-passwort",
+       "secret_key": "$(openssl rand -hex 16)"
+     }
+     EOF
+     chmod 600 credentials.json
+     ```
+   - Optional: Entferne `ADMIN_USERNAME` und `ADMIN_PASSWORD` aus den Umgebungsvariablen
+
+**Hinweis**: Beide Systeme funktionieren parallel - Umgebungsvariablen werden als Fallback verwendet, wenn `credentials.json` nicht existiert.
