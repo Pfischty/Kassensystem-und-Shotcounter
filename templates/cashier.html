@@ -84,6 +84,52 @@
   }
   .products-card { flex:0 0 auto; display:flex; flex-direction:column; justify-content:flex-end; }
   .products-card h2 { margin-top:0; }
+  
+  /* Category separator styles */
+  .category-section {
+    margin-bottom: 1.5rem;
+  }
+  .category-section:last-child {
+    margin-bottom: 0;
+  }
+  .category-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.75rem 1rem;
+    background: rgba(255,255,255,0.05);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    cursor: pointer;
+    transition: background 0.2s ease;
+    margin-bottom: 0.75rem;
+    user-select: none;
+  }
+  .category-header:hover {
+    background: rgba(255,255,255,0.08);
+  }
+  .category-header h3 {
+    margin: 0;
+    font-size: 1.1rem;
+    font-weight: 600;
+  }
+  .category-toggle {
+    font-size: 1.3rem;
+    transition: transform 0.2s ease;
+    color: #94a3b8;
+  }
+  .category-section.collapsed .category-toggle {
+    transform: rotate(-90deg);
+  }
+  .category-content {
+    overflow: hidden;
+    transition: max-height 0.3s ease, opacity 0.3s ease;
+  }
+  .category-section.collapsed .category-content {
+    max-height: 0 !important;
+    opacity: 0;
+  }
+  
   @media (orientation: portrait) {
     .cashier-grid { grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); }
     .action-buttons { flex-direction:column; align-items:stretch; }
@@ -131,16 +177,39 @@
 
   <div class="card products-card">
     <h2>Artikel</h2>
-    <div class="cashier-grid">
-      {% for button in buttons %}
-        <a href="{{ url_for('add_item') }}?name={{ button.name }}" style="text-decoration:none;">
-          <div class="cashier-tile" style="background: {{ button.color or '#1f2a44' }};">
-            <div style="font-weight:700;">{{ button.label }}</div>
-            <div style="opacity:0.8;">{{ button.price }} CHF</div>
+    {% if buttons_by_category %}
+      {% for category, category_buttons in buttons_by_category.items() %}
+        <div class="category-section" data-category="{{ category }}">
+          <div class="category-header" onclick="toggleCategory(this)">
+            <h3>{{ category }}</h3>
+            <span class="category-toggle">▼</span>
           </div>
-        </a>
+          <div class="category-content">
+            <div class="cashier-grid">
+              {% for button in category_buttons %}
+                <a href="{{ url_for('add_item') }}?name={{ button.name }}" style="text-decoration:none;">
+                  <div class="cashier-tile" style="background: {{ button.color or '#1f2a44' }};">
+                    <div style="font-weight:700;">{{ button.label }}</div>
+                    <div style="opacity:0.8;">{{ button.price }} CHF</div>
+                  </div>
+                </a>
+              {% endfor %}
+            </div>
+          </div>
+        </div>
       {% endfor %}
-    </div>
+    {% else %}
+      <div class="cashier-grid">
+        {% for button in buttons %}
+          <a href="{{ url_for('add_item') }}?name={{ button.name }}" style="text-decoration:none;">
+            <div class="cashier-tile" style="background: {{ button.color or '#1f2a44' }};">
+              <div style="font-weight:700;">{{ button.label }}</div>
+              <div style="opacity:0.8;">{{ button.price }} CHF</div>
+            </div>
+          </a>
+        {% endfor %}
+      </div>
+    {% endif %}
   </div>
 </div>
 <script>
@@ -149,6 +218,38 @@
     if (wrap) {
       wrap.scrollTop = wrap.scrollHeight;
     }
+    
+    // Initialize category states from localStorage
+    document.querySelectorAll('.category-section').forEach(section => {
+      const category = section.dataset.category;
+      const collapsed = localStorage.getItem('category_' + category) === 'collapsed';
+      if (collapsed) {
+        section.classList.add('collapsed');
+      }
+      // Set initial max-height for smooth transitions
+      const content = section.querySelector('.category-content');
+      if (content && !collapsed) {
+        content.style.maxHeight = content.scrollHeight + 'px';
+      }
+    });
   })();
+  
+  function toggleCategory(header) {
+    const section = header.parentElement;
+    const content = section.querySelector('.category-content');
+    const category = section.dataset.category;
+    
+    if (section.classList.contains('collapsed')) {
+      section.classList.remove('collapsed');
+      content.style.maxHeight = content.scrollHeight + 'px';
+      localStorage.setItem('category_' + category, 'expanded');
+    } else {
+      content.style.maxHeight = content.scrollHeight + 'px';
+      // Trigger reflow
+      content.offsetHeight;
+      section.classList.add('collapsed');
+      localStorage.setItem('category_' + category, 'collapsed');
+    }
+  }
 </script>
 {% endblock %}

@@ -43,7 +43,7 @@
   .product-editor__list { margin-top: 1rem; display:flex; flex-direction:column; gap:0.75rem; }
   .product-row {
     display:grid;
-    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
     gap:0.6rem;
     background:#0c1324;
     border:1px solid var(--border);
@@ -410,6 +410,7 @@
         price,
         css_class: safeItem.css_class || "custom",
         color: sanitizeColor(safeItem.color || ""),
+        category: safeItem.category || "Standard",
       };
     };
 
@@ -597,6 +598,19 @@
           });
           colorContainer.append(colorLabel, colorInput);
 
+          const categoryContainer = document.createElement("div");
+          categoryContainer.className = "stack";
+          const categoryLabel = document.createElement("label");
+          categoryLabel.textContent = "Kategorie";
+          const categoryInput = document.createElement("input");
+          categoryInput.value = item.category || "Standard";
+          categoryInput.placeholder = "z.B. Getränke, Alkohol";
+          categoryInput.addEventListener("input", () => {
+            item.category = categoryInput.value.trim() || "Standard";
+            syncHidden();
+          });
+          categoryContainer.append(categoryLabel, categoryInput);
+
           const actions = document.createElement("div");
           actions.className = "row-actions";
           const removeBtn = document.createElement("button");
@@ -614,7 +628,7 @@
           });
           actions.appendChild(removeBtn);
 
-          row.append(labelContainer, nameContainer, priceContainer, colorContainer, actions);
+          row.append(labelContainer, nameContainer, priceContainer, colorContainer, categoryContainer, actions);
           list.appendChild(row);
         });
       };

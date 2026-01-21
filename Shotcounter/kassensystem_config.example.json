@@ -4,55 +4,64 @@
       "name": "Süssgetränke",
       "label": "Süssgetränke",
       "price": 6,
-      "css_class": "suess"
+      "css_class": "suess",
+      "category": "Getränke"
     },
     {
       "name": "Bier",
       "label": "Bier / Mate / Red Bull / Smirnoff",
       "price": 7,
-      "css_class": "bier"
+      "css_class": "bier",
+      "category": "Alkohol"
     },
     {
       "name": "Wein",
       "label": "Wein",
       "price": 7,
-      "css_class": "wein"
+      "css_class": "wein",
+      "category": "Alkohol"
     },
     {
       "name": "Weinflasche 0.7",
       "label": "Weinflasche",
       "price": 22,
-      "css_class": "flasche"
+      "css_class": "flasche",
+      "category": "Alkohol"
     },
     {
       "name": "Drink 10",
       "label": "Drink 10",
       "price": 12,
-      "css_class": "gross"
+      "css_class": "gross",
+      "category": "Alkohol"
     },
     {
       "name": "Depot rein",
       "label": "Depot rein",
       "price": -2,
-      "css_class": "depot"
+      "css_class": "depot",
+      "category": "Diverses"
     },
     {
       "name": "Weinglassdepot",
       "label": "Weinglas Depot",
       "price": 2,
-      "css_class": "Weinglassdepot"
+      "css_class": "Weinglassdepot",
+      "category": "Diverses"
     },
     {
       "name": "Kaffee",
       "label": "Kaffee",
       "price": 3,
-      "css_class": "kaffee"
+      "css_class": "kaffee",
+      "category": "Getränke"
     },
     {
       "name": "Shot",
       "label": "Shot",
       "price": 5,
-      "css_class": "shot"
+      "css_class": "shot",
+      "category": "Alkohol"
     }
   ]
 }
