@@ -131,6 +131,7 @@ write_service() {
   require_root
   ensure_service_user
   local port="${DEFAULT_PORT}"
+  local gunicorn_workers="${GUNICORN_WORKERS:-2}"
   local protect_home="true"
   if [[ "${APP_ROOT}" == /home/* || "${APP_ROOT}" == /root/* ]]; then
     protect_home="false"
@@ -155,7 +156,7 @@ EnvironmentFile=${ENV_FILE}
 WorkingDirectory=${APP_ROOT}
 User=${SERVICE_USER}
 Group=${SERVICE_USER}
-ExecStart=${APP_ROOT}/.venv/bin/gunicorn -w ${GUNICORN_WORKERS} -b 0.0.0.0:${port} "app:app"
+ExecStart=${APP_ROOT}/.venv/bin/gunicorn -w ${gunicorn_workers} -b 0.0.0.0:${port} "app:app"
 Restart=always
 RestartSec=5
 TimeoutStartSec=30
