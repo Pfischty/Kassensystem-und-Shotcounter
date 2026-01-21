@@ -6,10 +6,13 @@ Sperrung nach der ersten Konfiguration.
 """
 
 import json
+import logging
 import os
 import secrets
 from pathlib import Path
 from typing import Dict, Optional
+
+logger = logging.getLogger(__name__)
 
 
 class CredentialsManager:
@@ -50,7 +53,7 @@ class CredentialsManager:
             return data
         except (json.JSONDecodeError, IOError) as e:
             # Log error but continue with fallback
-            print(f"Warning: Could not load credentials file: {e}")
+            logger.warning("Could not load credentials file: %s", e)
             return None
 
     def _save_to_file(self, data: Dict[str, str]) -> bool:
@@ -85,7 +88,7 @@ class CredentialsManager:
             
             return True
         except IOError as e:
-            print(f"Error: Could not save credentials file: {e}")
+            logger.error("Could not save credentials file: %s", e)
             return False
 
     def get_credentials(self) -> Dict[str, str]:
@@ -197,6 +200,7 @@ class CredentialsManager:
         """Initialisiert Credentials mit generierten Werten.
         
         Erstellt credentials.json mit generierten Werten für initiales Setup.
+        Generates a 16-character hex password (128 bits of entropy) for initial setup.
         
         Returns:
             True wenn erfolgreich initialisiert
@@ -206,7 +210,7 @@ class CredentialsManager:
         
         default_creds = {
             "admin_username": "admin",
-            "admin_password": secrets.token_hex(8),  # Generate random password
+            "admin_password": secrets.token_hex(8),  # 16 chars, 128 bits entropy
             "secret_key": self.generate_secret_key(),
         }
         

@@ -778,7 +778,12 @@ def archive_event(event_id: int):
 
 @app.route("/admin/credentials", methods=["POST"])
 def update_credentials():
-    """Route zum Aktualisieren der Admin-Credentials über das Webinterface."""
+    """Route zum Aktualisieren der Admin-Credentials über das Webinterface.
+    
+    If credentials are already set (locked state), this route requires authentication
+    through the before_request handler. If unlocked (no password set), anyone can
+    set the initial credentials.
+    """
     username = request.form.get("admin_username", "").strip()
     password = request.form.get("admin_password", "").strip()
     
