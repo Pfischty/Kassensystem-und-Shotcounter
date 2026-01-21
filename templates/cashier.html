@@ -169,7 +169,7 @@
         {% endif %}
       </div>
       <div class="summary-actions">
-        <a href="{{ url_for('remove_last') }}"><button class="secondary">Letzter Artikel löschen</button></a>
+        <a href="{{ url_for('remove_last') }}" id="remove-last-link"><button class="secondary">Letzter Artikel löschen</button></a>
         <a href="{{ url_for('checkout') }}"><button class="checkout-btn">Bestellung abschliessen</button></a>
       </div>
     </div>
@@ -187,7 +187,7 @@
           <div class="category-content">
             <div class="cashier-grid">
               {% for button in category_buttons %}
-                <a href="{{ url_for('add_item') }}?name={{ button.name }}" style="text-decoration:none;">
+                <a href="{{ url_for('add_item') }}?name={{ button.name }}" class="cashier-add-link" data-item-name="{{ button.name }}" style="text-decoration:none;">
                   <div class="cashier-tile" style="background: {{ button.color or '#1f2a44' }};">
                     <div style="font-weight:700;">{{ button.label }}</div>
                     <div style="opacity:0.8;">{{ button.price }} CHF</div>
@@ -201,7 +201,7 @@
     {% else %}
       <div class="cashier-grid">
         {% for button in buttons %}
-          <a href="{{ url_for('add_item') }}?name={{ button.name }}" style="text-decoration:none;">
+          <a href="{{ url_for('add_item') }}?name={{ button.name }}" class="cashier-add-link" data-item-name="{{ button.name }}" style="text-decoration:none;">
             <div class="cashier-tile" style="background: {{ button.color or '#1f2a44' }};">
               <div style="font-weight:700;">{{ button.label }}</div>
               <div style="opacity:0.8;">{{ button.price }} CHF</div>
@@ -213,6 +213,9 @@
   </div>
 </div>
 <script>
+  // Auto-reload mode setting from server
+  const AUTO_RELOAD = {{ 'true' if auto_reload else 'false' }};
+  
   (function() {
     const wrap = document.querySelector(".order-list-wrap");
     if (wrap) {
@@ -232,6 +235,11 @@
         content.style.maxHeight = content.scrollHeight + 'px';
       }
     });
+    
+    // Setup AJAX mode if auto_reload is disabled
+    if (!AUTO_RELOAD) {
+      setupAjaxMode();
+    }
   })();
   
   function toggleCategory(header) {
@@ -250,6 +258,106 @@
         section.classList.add('collapsed');
       });
       localStorage.setItem('category_' + category, 'collapsed');
+    }
+  }
+  
+  function setupAjaxMode() {
+    // Handle add item clicks
+    document.querySelectorAll('.cashier-add-link').forEach(link => {
+      link.addEventListener('click', function(e) {
+        e.preventDefault();
+        const url = this.href + '&ajax=1';
+        fetch(url)
+          .then(response => response.json())
+          .then(data => {
+            if (data.success) {
+              updateCart(data.cart);
+            }
+          })
+          .catch(error => {
+            console.error('Error adding item:', error);
+            // Fallback to regular redirect on error
+            window.location.href = this.href;
+          });
+      });
+    });
+    
+    // Handle remove last item click
+    const removeLink = document.getElementById('remove-last-link');
+    if (removeLink) {
+      removeLink.addEventListener('click', function(e) {
+        e.preventDefault();
+        const url = this.href + '?ajax=1';
+        fetch(url)
+          .then(response => response.json())
+          .then(data => {
+            if (data.success) {
+              updateCart(data.cart);
+            }
+          })
+          .catch(error => {
+            console.error('Error removing item:', error);
+            // Fallback to regular redirect on error
+            window.location.href = this.href;
+          });
+      });
+    }
+  }
+  
+  function updateCart(cartData) {
+    // Update total
+    const totalElement = document.querySelector('.summary-meta strong');
+    if (totalElement && totalElement.previousSibling && totalElement.previousSibling.textContent.includes('Total:')) {
+      totalElement.textContent = cartData.total;
+    }
+    
+    // Update item count badge
+    const badgeContainer = document.querySelector('.order-list-wrap h3').parentElement;
+    let badge = badgeContainer.querySelector('.badge');
+    if (cartData.item_count > 0) {
+      if (!badge) {
+        badge = document.createElement('span');
+        badge.className = 'badge badge-blue';
+        badgeContainer.appendChild(badge);
+      }
+      badge.textContent = cartData.items.length + ' Positionen';
+    } else if (badge) {
+      badge.remove();
+    }
+    
+    // Update order list
+    const orderListWrap = document.querySelector('.order-list-wrap');
+    const existingList = orderListWrap.querySelector('.order-list');
+    const existingMessage = orderListWrap.querySelector('p');
+    
+    if (cartData.items.length > 0) {
+      if (existingMessage) {
+        existingMessage.remove();
+      }
+      
+      let list = existingList;
+      if (!list) {
+        list = document.createElement('ul');
+        list.className = 'order-list';
+        orderListWrap.appendChild(list);
+      }
+      
+      list.innerHTML = cartData.items.map(item => 
+        `<li>${item.qty}× ${item.name} — ${item.price} CHF (${item.line_total} CHF)</li>`
+      ).join('');
+      
+      // Scroll to bottom
+      orderListWrap.scrollTop = orderListWrap.scrollHeight;
+    } else {
+      if (existingList) {
+        existingList.remove();
+      }
+      if (!existingMessage) {
+        const message = document.createElement('p');
+        message.style.margin = '0';
+        message.textContent = 'Noch keine Artikel im Warenkorb.';
+        orderListWrap.appendChild(message);
+      }
     }
   }
 </script>
