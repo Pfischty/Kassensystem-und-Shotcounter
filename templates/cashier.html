@@ -148,7 +148,7 @@
     <div class="summary-top">
       <div class="summary-meta">
         <div class="badge badge-blue">Aktives Event</div>
-        <div style="font-size:1.3rem;">Total: <strong>{{ total }}</strong> CHF</div>
+        <div style="font-size:1.3rem;">Total: <strong data-cart-total>{{ total }}</strong> CHF</div>
       </div>
     </div>
 
@@ -266,7 +266,8 @@
     document.querySelectorAll('.cashier-add-link').forEach(link => {
       link.addEventListener('click', function(e) {
         e.preventDefault();
-        const url = this.href + '&ajax=1';
+        const url = new URL(this.href, window.location.origin);
+        url.searchParams.set('ajax', '1');
         fetch(url)
           .then(response => response.json())
           .then(data => {
@@ -287,7 +288,8 @@
     if (removeLink) {
       removeLink.addEventListener('click', function(e) {
         e.preventDefault();
-        const url = this.href + '?ajax=1';
+        const url = new URL(this.href, window.location.origin);
+        url.searchParams.set('ajax', '1');
         fetch(url)
           .then(response => response.json())
           .then(data => {
@@ -306,8 +308,8 @@
   
   function updateCart(cartData) {
     // Update total
-    const totalElement = document.querySelector('.summary-meta strong');
-    if (totalElement && totalElement.previousSibling && totalElement.previousSibling.textContent.includes('Total:')) {
+    const totalElement = document.querySelector('[data-cart-total]');
+    if (totalElement) {
       totalElement.textContent = cartData.total;
     }
     

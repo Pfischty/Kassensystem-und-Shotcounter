@@ -139,21 +139,39 @@ def test_auto_reload_setting_defaults_to_true(client):
 
 def test_auto_reload_setting_can_be_disabled(client):
     """Test that auto_reload_on_add can be set to false via admin."""
-    # Create event with auto_reload disabled
+    # First create an event with it enabled
     client.post(
         "/admin/events",
         data={
             "name": "No Reload Event",
             "kassensystem_enabled": "on",
             "shotcounter_enabled": "on",
-            "auto_reload_on_add": "",  # Unchecked checkbox sends empty string
+            "auto_reload_on_add": "on",  # Initially enabled
         },
     )
     
     with app.app_context():
         event = Event.query.filter_by(name="No Reload Event").first()
         assert event is not None
-        assert event.shared_settings is not None
+        event_id = event.id
+        assert event.shared_settings.get("auto_reload_on_add") is True
+    
+    # Now update it to disable auto_reload (checkbox not sent = unchecked)
+    client.post(
+        f"/admin/events/{event_id}/update",
+        data={
+            "kassensystem_enabled": "on",
+            "shotcounter_enabled": "on",
+            # auto_reload_on_add checkbox is not included (unchecked)
+        },
+    )
+    
+    with app.app_context():
+        event = Event.query.get(event_id)
+        assert event is not None
+        # When checkbox is not in form during update, it should be set to False
+        # But our current logic preserves it or defaults to True
+        # We need to update the logic to handle this case
         assert event.shared_settings.get("auto_reload_on_add") is False
 def test_event_category_saving(client):
     """Test that categories are correctly saved and retrieved for event products."""

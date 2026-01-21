@@ -757,15 +757,10 @@ def update_event(event_id: int):
 
     try:
         event.shared_settings = parse_json_field(request.form.get("shared_settings"))
-        # Add auto_reload_on_add from checkbox
-        # If checkbox is present (checked), it will be "on", if unchecked it won't be in form
-        # Default to True if not in form
-        if "auto_reload_on_add" in request.form:
-            event.shared_settings["auto_reload_on_add"] = bool(request.form.get("auto_reload_on_add"))
-        else:
-            # Preserve existing setting or default to True
-            if "auto_reload_on_add" not in event.shared_settings:
-                event.shared_settings["auto_reload_on_add"] = True
+        # Handle auto_reload_on_add checkbox
+        # When updating an event, if checkbox is not in form, it means it was unchecked (set to False)
+        # If checkbox is in form with value "on", it's checked (set to True)
+        event.shared_settings["auto_reload_on_add"] = bool(request.form.get("auto_reload_on_add"))
         
         event.kassensystem_settings = validate_and_normalize_buttons(
             parse_json_field(request.form.get("kassensystem_settings"))
