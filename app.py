@@ -40,6 +40,7 @@ from flask_session import Session
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy import event, func, text
 from sqlalchemy.engine import Engine
+from sqlalchemy.orm import attributes
 
 from credentials_manager import credentials_manager
 
@@ -1195,6 +1196,7 @@ def upload_background(event_id: int):
             delete_background_image(old_image)
             shot_settings.pop("background_image", None)
             event.shotcounter_settings = shot_settings
+            attributes.flag_modified(event, "shotcounter_settings")
             db.session.commit()
             flash("Hintergrundbild wurde entfernt.", "success")
         return redirect(url_for("admin"))
@@ -1227,6 +1229,7 @@ def upload_background(event_id: int):
     if filename:
         shot_settings["background_image"] = filename
         event.shotcounter_settings = shot_settings
+        attributes.flag_modified(event, "shotcounter_settings")
         db.session.commit()
         app.logger.info("Hintergrundbild hochgeladen für Event %s: %s", event.name, filename)
         flash("Hintergrundbild wurde hochgeladen.", "success")
