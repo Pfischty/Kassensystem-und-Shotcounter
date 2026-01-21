@@ -1,3 +1,5 @@
+import json
+
 import pytest
 
 from app import Event, Order, Team, app, db
@@ -91,7 +93,6 @@ def test_health_endpoint(client):
 
 def test_event_category_saving(client):
     """Test that categories are correctly saved and retrieved for event products."""
-    import json
     
     # Create event with custom categories
     kassensystem_settings = {
@@ -143,7 +144,6 @@ def test_event_category_saving(client):
 
 def test_event_category_update(client):
     """Test that categories are preserved when updating an event."""
-    import json
     
     # Create an event
     event = _create_and_activate_event(client)
