@@ -12,3 +12,6 @@ __pycache__/
 # Local data & instances
 instance/
 *.db
+
+# Credentials (not to be committed)
+credentials.json

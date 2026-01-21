@@ -154,6 +154,61 @@
   </div>
 </div>
 
+<!-- Credentials Management Section -->
+<div class="collapsible card" data-collapsible>
+  <div class="collapsible__header">
+    <div>
+      <h2 style="margin:0;">Admin-Zugangsdaten</h2>
+      <div class="muted">Benutzername und Passwort für den Admin-Bereich verwalten.</div>
+    </div>
+    <button type="button" class="secondary" data-toggle>Details einblenden</button>
+  </div>
+  <div class="collapsible__content" hidden>
+    <form method="post" action="{{ url_for('update_credentials') }}">
+      <div class="stack">
+        <label for="admin_username">Benutzername</label>
+        <input 
+          id="admin_username" 
+          name="admin_username" 
+          type="text"
+          value="{% if admin_username %}{{ admin_username }}{% endif %}" 
+          placeholder="admin" 
+          required
+        >
+        <div class="hint">Der Benutzername für die Admin-Authentifizierung.</div>
+      </div>
+      
+      <div class="stack" style="margin-top: 1rem;">
+        <label for="admin_password">Passwort</label>
+        <input 
+          id="admin_password" 
+          name="admin_password" 
+          type="password"
+          placeholder="Neues Passwort eingeben"
+        >
+        <div class="hint">
+          {% if has_password %}
+            Leer lassen, um das aktuelle Passwort beizubehalten.
+          {% else %}
+            Setzen Sie ein Passwort, um den Admin-Bereich zu schützen.
+          {% endif %}
+        </div>
+      </div>
+
+      <div class="field-inline" style="margin-top: 1rem;">
+        <button type="submit">Zugangsdaten speichern</button>
+      </div>
+      
+      <div class="muted" style="margin-top: 1rem;">
+        <strong>Hinweis:</strong> Die Zugangsdaten werden in der Datei <code>credentials.json</code> gespeichert, 
+        die nicht ins Git-Repository übernommen wird. {% if not has_password %}
+        Solange kein Passwort gesetzt ist, ist der Admin-Bereich ohne Authentifizierung zugänglich.
+        {% endif %}
+      </div>
+    </form>
+  </div>
+</div>
+
 <div class="card">
   <h2>Events</h2>
   {% if not events %}
