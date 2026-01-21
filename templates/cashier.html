@@ -245,9 +245,10 @@
       localStorage.setItem('category_' + category, 'expanded');
     } else {
       content.style.maxHeight = content.scrollHeight + 'px';
-      // Trigger reflow
-      content.offsetHeight;
-      section.classList.add('collapsed');
+      // Use requestAnimationFrame for better performance
+      requestAnimationFrame(() => {
+        section.classList.add('collapsed');
+      });
       localStorage.setItem('category_' + category, 'collapsed');
     }
   }

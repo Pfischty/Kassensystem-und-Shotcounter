@@ -350,6 +350,7 @@
   (function () {
     try {
     const fallbackColor = "#1f2a44";
+    const defaultCategory = "Standard";
 
     const getTextContent = (id) => {
       const el = document.getElementById(id);
@@ -410,7 +411,7 @@
         price,
         css_class: safeItem.css_class || "custom",
         color: sanitizeColor(safeItem.color || ""),
-        category: safeItem.category || "Standard",
+        category: safeItem.category || defaultCategory,
       };
     };
 
@@ -603,10 +604,10 @@
           const categoryLabel = document.createElement("label");
           categoryLabel.textContent = "Kategorie";
           const categoryInput = document.createElement("input");
-          categoryInput.value = item.category || "Standard";
+          categoryInput.value = item.category || defaultCategory;
           categoryInput.placeholder = "z.B. Getränke, Alkohol";
           categoryInput.addEventListener("input", () => {
-            item.category = categoryInput.value.trim() || "Standard";
+            item.category = categoryInput.value.trim() || defaultCategory;
             syncHidden();
           });
           categoryContainer.append(categoryLabel, categoryInput);
