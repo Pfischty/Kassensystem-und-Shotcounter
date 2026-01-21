@@ -87,3 +87,70 @@ def test_health_endpoint(client):
     assert response.status_code == 200
     data = response.get_json()
     assert data["status"] == "ok"
+
+
+def test_cashier_add_item_ajax_mode(client):
+    """Test that add_item endpoint returns JSON when ajax=1 is passed."""
+    event = _create_and_activate_event(client)
+    
+    # Add item via AJAX
+    response = client.get("/cashier/add?name=Bier&ajax=1")
+    assert response.status_code == 200
+    data = response.get_json()
+    
+    assert data["success"] is True
+    assert "cart" in data
+    assert data["cart"]["total"] == 7
+    assert data["cart"]["item_count"] == 1
+    assert len(data["cart"]["items"]) == 1
+    assert data["cart"]["items"][0]["name"] == "Bier"
+
+
+def test_cashier_remove_last_ajax_mode(client):
+    """Test that remove_last endpoint returns JSON when ajax=1 is passed."""
+    event = _create_and_activate_event(client)
+    
+    # Add items first
+    client.get("/cashier/add?name=Bier")
+    client.get("/cashier/add?name=Süssgetränke")
+    
+    # Remove last item via AJAX
+    response = client.get("/cashier/remove_last?ajax=1")
+    assert response.status_code == 200
+    data = response.get_json()
+    
+    assert data["success"] is True
+    assert "cart" in data
+    assert data["cart"]["total"] == 7  # Only Bier remains
+    assert data["cart"]["item_count"] == 1
+
+
+def test_auto_reload_setting_defaults_to_true(client):
+    """Test that auto_reload_on_add defaults to true for backward compatibility."""
+    event = _create_and_activate_event(client)
+    
+    with app.app_context():
+        event = Event.query.filter_by(name="Test Event").first()
+        # If shared_settings is None or doesn't have the key, it should default to True
+        assert event.shared_settings is None or event.shared_settings.get("auto_reload_on_add", True) is True
+
+
+def test_auto_reload_setting_can_be_disabled(client):
+    """Test that auto_reload_on_add can be set to false via admin."""
+    # Create event with auto_reload disabled
+    client.post(
+        "/admin/events",
+        data={
+            "name": "No Reload Event",
+            "kassensystem_enabled": "on",
+            "shotcounter_enabled": "on",
+            "auto_reload_on_add": "",  # Unchecked checkbox sends empty string
+        },
+    )
+    
+    with app.app_context():
+        event = Event.query.filter_by(name="No Reload Event").first()
+        assert event is not None
+        assert event.shared_settings is not None
+        assert event.shared_settings.get("auto_reload_on_add") is False
+
