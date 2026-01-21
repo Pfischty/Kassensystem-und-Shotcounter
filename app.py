@@ -14,6 +14,7 @@ import json
 import logging
 import os
 import re
+import secrets
 import sqlite3
 from collections import Counter
 from dataclasses import dataclass
@@ -41,6 +42,7 @@ from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy import event, func, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import attributes
+from werkzeug.datastructures import FileStorage
 
 from credentials_manager import credentials_manager
 
@@ -326,10 +328,9 @@ def allowed_file(filename: str) -> bool:
     return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_EXTENSIONS
 
 
-def save_background_image(file, event_id: int) -> str | None:
+def save_background_image(file: FileStorage | None, event_id: int) -> str | None:
     """Save uploaded background image and return the filename."""
-    import secrets
-    if not file or file.filename == "":
+    if not file or not file.filename:
         return None
     
     if not allowed_file(file.filename):
@@ -384,9 +385,12 @@ def validate_shotcounter_settings(raw: dict | None) -> Dict[str, int | float | s
     settings["leaderboard_limit"] = _sanitize_leaderboard_limit(
         incoming.get("leaderboard_limit"), int(DEFAULT_SHOTCOUNTER_SETTINGS["leaderboard_limit"])
     )
-    # Preserve background_image if it exists
+    # Preserve background_image only if it's a valid string and file exists
     if incoming.get("background_image"):
-        settings["background_image"] = str(incoming["background_image"])
+        bg_img = str(incoming["background_image"])
+        filepath = Path(app.config["UPLOAD_FOLDER"]) / bg_img
+        if filepath.exists() and filepath.is_file():
+            settings["background_image"] = bg_img
     return settings
 
 

@@ -20,7 +20,7 @@
     display: flex;
     flex-direction: column;
     {% if shot_settings.background_image %}
-    background: var(--lb-background) url('{{ url_for('uploaded_file', filename=shot_settings.background_image) }}') center/cover no-repeat;
+    background: var(--lb-background) url('{{ url_for('uploaded_file', filename=shot_settings.background_image|e) }}') center/cover no-repeat;
     position: relative;
     {% else %}
     background: var(--lb-background);
