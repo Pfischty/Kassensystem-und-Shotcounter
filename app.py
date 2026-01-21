@@ -418,6 +418,7 @@ def validate_and_normalize_buttons(settings: Dict | None) -> Dict:
                 "price": price,
                 "css_class": item.get("css_class") or "custom",
                 "color": item.get("color"),
+                "category": item.get("category") or "Standard",
             }
         )
 
@@ -434,6 +435,7 @@ def validate_and_normalize_buttons(settings: Dict | None) -> Dict:
                 "price": btn.price,
                 "css_class": btn.css_class,
                 "color": btn.color,
+                "category": btn.category,
             }
             for btn in DEFAULT_BUTTONS
         ]
