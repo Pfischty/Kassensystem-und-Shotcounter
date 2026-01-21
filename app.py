@@ -31,6 +31,7 @@ from flask import (
     redirect,
     render_template,
     request,
+    send_from_directory,
     session,
     url_for,
 )
@@ -67,6 +68,14 @@ Path(app.instance_path).mkdir(parents=True, exist_ok=True)
 session_dir = Path(app.instance_path) / "sessions"
 session_dir.mkdir(parents=True, exist_ok=True)
 app.config.setdefault("SESSION_FILE_DIR", str(session_dir))
+
+# Upload configuration
+UPLOAD_FOLDER = Path(app.instance_path) / "uploads"
+UPLOAD_FOLDER.mkdir(parents=True, exist_ok=True)
+app.config["UPLOAD_FOLDER"] = str(UPLOAD_FOLDER)
+app.config["MAX_CONTENT_LENGTH"] = 5 * 1024 * 1024  # 5MB max file size
+ALLOWED_EXTENSIONS = {"png", "jpg", "jpeg", "gif", "webp"}
+
 db = SQLAlchemy(app)
 Session(app)
 Migrate(app, db)
@@ -311,6 +320,45 @@ def _sanitize_leaderboard_limit(value: int | str | None, fallback: int) -> int:
     return min(parsed, 50)
 
 
+def allowed_file(filename: str) -> bool:
+    """Check if file extension is allowed."""
+    return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_EXTENSIONS
+
+
+def save_background_image(file, event_id: int) -> str | None:
+    """Save uploaded background image and return the filename."""
+    import secrets
+    if not file or file.filename == "":
+        return None
+    
+    if not allowed_file(file.filename):
+        return None
+    
+    # Generate unique filename
+    ext = file.filename.rsplit(".", 1)[1].lower()
+    filename = f"bg_{event_id}_{secrets.token_hex(8)}.{ext}"
+    filepath = Path(app.config["UPLOAD_FOLDER"]) / filename
+    
+    try:
+        file.save(str(filepath))
+        return filename
+    except Exception as exc:
+        app.logger.error("Fehler beim Speichern des Hintergrundbildes: %s", exc)
+        return None
+
+
+def delete_background_image(filename: str | None) -> None:
+    """Delete a background image file if it exists."""
+    if not filename:
+        return
+    filepath = Path(app.config["UPLOAD_FOLDER"]) / filename
+    try:
+        if filepath.exists():
+            filepath.unlink()
+    except Exception as exc:
+        app.logger.error("Fehler beim Löschen des Hintergrundbildes: %s", exc)
+
+
 def validate_shotcounter_settings(raw: dict | None) -> Dict[str, int | float | str]:
     settings = {**DEFAULT_SHOTCOUNTER_SETTINGS}
     incoming = raw if isinstance(raw, dict) else {}
@@ -335,6 +383,9 @@ def validate_shotcounter_settings(raw: dict | None) -> Dict[str, int | float | s
     settings["leaderboard_limit"] = _sanitize_leaderboard_limit(
         incoming.get("leaderboard_limit"), int(DEFAULT_SHOTCOUNTER_SETTINGS["leaderboard_limit"])
     )
+    # Preserve background_image if it exists
+    if incoming.get("background_image"):
+        settings["background_image"] = str(incoming["background_image"])
     return settings
 
 
@@ -1120,6 +1171,70 @@ def delete_team(team_id: int):
     db.session.commit()
     flash("Team gelöscht.", "success")
     return redirect(_redirect_target())
+
+
+# ---------------------------------------------------------------------------
+# File Upload Routes
+# ---------------------------------------------------------------------------
+@app.route("/uploads/<filename>")
+def uploaded_file(filename: str):
+    """Serve uploaded files."""
+    return send_from_directory(app.config["UPLOAD_FOLDER"], filename)
+
+
+@app.route("/admin/events/<int:event_id>/background", methods=["POST"])
+def upload_background(event_id: int):
+    """Upload or delete background image for an event."""
+    event = Event.query.get_or_404(event_id)
+    
+    # Check if user wants to delete the background
+    if request.form.get("delete_background"):
+        shot_settings = event.shotcounter_settings or {}
+        old_image = shot_settings.get("background_image")
+        if old_image:
+            delete_background_image(old_image)
+            shot_settings.pop("background_image", None)
+            event.shotcounter_settings = shot_settings
+            db.session.commit()
+            flash("Hintergrundbild wurde entfernt.", "success")
+        return redirect(url_for("admin"))
+    
+    # Handle file upload
+    if "background_image" not in request.files:
+        flash("Keine Datei ausgewählt.", "error")
+        return redirect(url_for("admin"))
+    
+    file = request.files["background_image"]
+    if file.filename == "":
+        flash("Keine Datei ausgewählt.", "error")
+        return redirect(url_for("admin"))
+    
+    if not allowed_file(file.filename):
+        flash(
+            f"Ungültiger Dateityp. Erlaubt sind: {', '.join(ALLOWED_EXTENSIONS)}",
+            "error"
+        )
+        return redirect(url_for("admin"))
+    
+    # Delete old background image if exists
+    shot_settings = event.shotcounter_settings or {}
+    old_image = shot_settings.get("background_image")
+    if old_image:
+        delete_background_image(old_image)
+    
+    # Save new image
+    filename = save_background_image(file, event_id)
+    if filename:
+        shot_settings["background_image"] = filename
+        event.shotcounter_settings = shot_settings
+        db.session.commit()
+        app.logger.info("Hintergrundbild hochgeladen für Event %s: %s", event.name, filename)
+        flash("Hintergrundbild wurde hochgeladen.", "success")
+    else:
+        flash("Fehler beim Hochladen des Bildes.", "error")
+    
+    return redirect(url_for("admin"))
+
 
 
 # ---------------------------------------------------------------------------

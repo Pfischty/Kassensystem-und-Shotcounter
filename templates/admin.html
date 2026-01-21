@@ -298,6 +298,30 @@
                 <input type="number" step="1" min="1" max="50" data-shot-field="leaderboard_limit">
               </label>
             </div>
+            
+            <!-- Background Image Upload -->
+            <div style="margin-top: 1rem; padding-top: 1rem; border-top: 1px solid var(--border);">
+              <strong>Hintergrundbild</strong>
+              <div class="muted">Optional: Bild als Hintergrund für die Leaderboard-Anzeige hochladen.</div>
+              {% set current_bg = shot_settings_map.get(event.id, {}).get('background_image') %}
+              {% if current_bg %}
+                <div style="margin-top: 0.6rem; display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap;">
+                  <img src="{{ url_for('uploaded_file', filename=current_bg) }}" alt="Aktuelles Hintergrundbild" style="max-width: 200px; max-height: 120px; border-radius: 8px; border: 1px solid var(--border);">
+                  <form method="post" action="{{ url_for('upload_background', event_id=event.id) }}" style="display: inline;">
+                    <input type="hidden" name="delete_background" value="1">
+                    <button type="submit" class="danger" onclick="return confirm('Hintergrundbild wirklich entfernen?');">Bild entfernen</button>
+                  </form>
+                </div>
+              {% endif %}
+              <form method="post" action="{{ url_for('upload_background', event_id=event.id) }}" enctype="multipart/form-data" style="margin-top: 0.6rem;">
+                <div class="field-inline">
+                  <input type="file" name="background_image" accept="image/png,image/jpeg,image/gif,image/webp" style="max-width: 300px;">
+                  <button type="submit">Hochladen</button>
+                </div>
+                <div class="muted" style="margin-top: 0.3rem;">Erlaubte Formate: PNG, JPG, GIF, WebP. Max. 5 MB.</div>
+              </form>
+            </div>
+            
             <input type="hidden" name="shotcounter_settings" value='{{ (shot_settings_map.get(event.id) or shotcounter_defaults) | tojson }}'>
           </div>
 
