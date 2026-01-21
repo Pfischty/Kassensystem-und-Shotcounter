@@ -131,6 +131,10 @@ write_service() {
   require_root
   ensure_service_user
   local port="${DEFAULT_PORT}"
+  local protect_home="true"
+  if [[ "${APP_ROOT}" == /home/* || "${APP_ROOT}" == /root/* ]]; then
+    protect_home="false"
+  fi
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --port) port="$2"; shift 2 ;;
@@ -151,14 +155,14 @@ EnvironmentFile=${ENV_FILE}
 WorkingDirectory=${APP_ROOT}
 User=${SERVICE_USER}
 Group=${SERVICE_USER}
-ExecStart=${APP_ROOT}/.venv/bin/gunicorn -w \${GUNICORN_WORKERS:-2} -b 0.0.0.0:${port} "app:app"
+ExecStart=${APP_ROOT}/.venv/bin/gunicorn -w ${GUNICORN_WORKERS} -b 0.0.0.0:${port} "app:app"
 Restart=always
 RestartSec=5
 TimeoutStartSec=30
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
-ProtectHome=true
+ProtectHome=${protect_home}
 ReadWritePaths=${APP_ROOT}/instance
 UMask=0077
 

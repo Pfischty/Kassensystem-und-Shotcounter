@@ -32,7 +32,7 @@ Dieses Projekt kann auf einem Raspberry Pi im Offline-LAN (Ethernet) betrieben w
    sudo ./scripts/pi_manage.sh write-service --port 8000
    ```
    Dabei wird automatisch `/etc/kassensystem.env` mit `SECRET_KEY`, Admin-Zugang und Backup-Parametern erstellt. Passe die Datei bei Bedarf an.
-   Der Dienst läuft als dedizierter System-User `kassensystem` und ist mit basic Hardening-Optionen abgesichert.
+   Der Dienst läuft als dedizierter System-User `kassensystem` und ist mit basic Hardening-Optionen abgesichert. Wenn das Repo unter `/home` oder `/root` liegt, deaktiviert das Skript `ProtectHome`, damit der Dienst auf das Projekt zugreifen kann.
 2. Dienst aktivieren und starten:
    ```bash
    sudo ./scripts/pi_manage.sh enable-service

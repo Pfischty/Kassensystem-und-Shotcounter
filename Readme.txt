@@ -18,12 +18,16 @@ Ein zentrales System verwaltet Events und schaltet zwei Funktionen einzeln frei:
 
 2. **Datenbank initialisieren (SQLite)** – beim ersten Start automatisch via SQLAlchemy:
    ```bash
-   flask --app app shell -c "from app import db; db.create_all()"
+   python -c "from app import app, db; app.app_context().push(); db.create_all()"
    ```
 
 3. **Entwicklung starten**
    ```bash
    flask --app app run --debug
+   ```
+   Zugriff von anderen Geräten im LAN:
+   ```bash
+   flask --app app run --host 0.0.0.0 --port 8000
    ```
    oder mit Makefile:
    ```bash
