@@ -831,10 +831,12 @@ def cashier():
     ]
     
     # Group buttons by category
-    from itertools import groupby
     buttons_by_category = {}
-    for category, group in groupby(buttons, key=lambda b: b.category):
-        buttons_by_category[category] = list(group)
+    for button in buttons:
+        category = button.category
+        if category not in buttons_by_category:
+            buttons_by_category[category] = []
+        buttons_by_category[category].append(button)
     
     return render_template(
         "cashier.html", buttons=buttons, buttons_by_category=buttons_by_category, items=detailed_items, total=total, event=event
