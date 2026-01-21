@@ -87,3 +87,109 @@ def test_health_endpoint(client):
     assert response.status_code == 200
     data = response.get_json()
     assert data["status"] == "ok"
+
+
+def test_event_category_saving(client):
+    """Test that categories are correctly saved and retrieved for event products."""
+    import json
+    
+    # Create event with custom categories
+    kassensystem_settings = {
+        "items": [
+            {
+                "name": "Bier",
+                "label": "Bier",
+                "price": 7,
+                "css_class": "bier",
+                "color": "#193f8a",
+                "category": "Alkohol"
+            },
+            {
+                "name": "Cola",
+                "label": "Cola",
+                "price": 5,
+                "css_class": "cola",
+                "color": "#1f2a44",
+                "category": "Getränke"
+            }
+        ]
+    }
+    
+    client.post(
+        "/admin/events",
+        data={
+            "name": "Category Test Event",
+            "kassensystem_enabled": "on",
+            "shotcounter_enabled": "on",
+            "kassensystem_settings": json.dumps(kassensystem_settings),
+        },
+    )
+    
+    # Verify categories are saved
+    with app.app_context():
+        event = Event.query.filter_by(name="Category Test Event").first()
+        assert event is not None
+        items = event.kassensystem_settings.get("items", [])
+        assert len(items) == 2
+        
+        bier = next((item for item in items if item["name"] == "Bier"), None)
+        assert bier is not None
+        assert bier["category"] == "Alkohol"
+        
+        cola = next((item for item in items if item["name"] == "Cola"), None)
+        assert cola is not None
+        assert cola["category"] == "Getränke"
+
+
+def test_event_category_update(client):
+    """Test that categories are preserved when updating an event."""
+    import json
+    
+    # Create an event
+    event = _create_and_activate_event(client)
+    
+    # Update with custom categories
+    kassensystem_settings = {
+        "items": [
+            {
+                "name": "Pizza",
+                "label": "Pizza",
+                "price": 12,
+                "css_class": "pizza",
+                "color": "#ff6600",
+                "category": "Essen"
+            },
+            {
+                "name": "Wasser",
+                "label": "Wasser",
+                "price": 3,
+                "css_class": "wasser",
+                "color": "#0066cc",
+                "category": "Getränke"
+            }
+        ]
+    }
+    
+    client.post(
+        f"/admin/events/{event.id}/update",
+        data={
+            "kassensystem_enabled": "on",
+            "shotcounter_enabled": "on",
+            "kassensystem_settings": json.dumps(kassensystem_settings),
+        },
+    )
+    
+    # Verify categories are saved
+    with app.app_context():
+        updated_event = Event.query.get(event.id)
+        items = updated_event.kassensystem_settings.get("items", [])
+        assert len(items) == 2
+        
+        pizza = next((item for item in items if item["name"] == "Pizza"), None)
+        assert pizza is not None
+        assert pizza["category"] == "Essen"
+        
+        wasser = next((item for item in items if item["name"] == "Wasser"), None)
+        assert wasser is not None
+        assert wasser["category"] == "Getränke"
+
