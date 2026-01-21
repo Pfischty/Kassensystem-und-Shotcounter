@@ -216,6 +216,7 @@ class ButtonConfig:
     price: int
     css_class: str
     color: str | None = None
+    category: str = "Standard"
 
 
 DEFAULT_BUTTONS: List[ButtonConfig] = [
@@ -225,6 +226,7 @@ DEFAULT_BUTTONS: List[ButtonConfig] = [
         price=6,
         css_class="suess",
         color="#1f2a44",
+        category="Getränke",
     ),
     ButtonConfig(
         name="Bier",
@@ -232,26 +234,29 @@ DEFAULT_BUTTONS: List[ButtonConfig] = [
         price=7,
         css_class="bier",
         color="#193f8a",
+        category="Alkohol",
     ),
-    ButtonConfig(name="Wein", label="Wein", price=7, css_class="wein", color="#8a1f6f"),
+    ButtonConfig(name="Wein", label="Wein", price=7, css_class="wein", color="#8a1f6f", category="Alkohol"),
     ButtonConfig(
         name="Weinflasche 0.7",
         label="Weinflasche",
         price=22,
         css_class="flasche",
         color="#5b2d30",
+        category="Alkohol",
     ),
-    ButtonConfig(name="Drink 10", label="Drink 10", price=12, css_class="gross", color="#2e4c3d"),
-    ButtonConfig(name="Depot rein", label="Depot rein", price=-2, css_class="depot", color="#374151"),
+    ButtonConfig(name="Drink 10", label="Drink 10", price=12, css_class="gross", color="#2e4c3d", category="Alkohol"),
+    ButtonConfig(name="Depot rein", label="Depot rein", price=-2, css_class="depot", color="#374151", category="Diverses"),
     ButtonConfig(
         name="Weinglassdepot",
         label="Weinglas Depot",
         price=2,
         css_class="Weinglassdepot",
         color="#3f2d67",
+        category="Diverses",
     ),
-    ButtonConfig(name="Kaffee", label="Kaffee", price=3, css_class="kaffee", color="#4b3322"),
-    ButtonConfig(name="Shot", label="Shot", price=5, css_class="shot", color="#7a1f2a"),
+    ButtonConfig(name="Kaffee", label="Kaffee", price=3, css_class="kaffee", color="#4b3322", category="Getränke"),
+    ButtonConfig(name="Shot", label="Shot", price=5, css_class="shot", color="#7a1f2a", category="Alkohol"),
 ]
 
 DEFAULT_SHOTCOUNTER_SETTINGS: Dict[str, int | float | str] = {
@@ -367,6 +372,7 @@ def resolve_button_config(event: Event | None) -> List[ButtonConfig]:
                     color=item.get("color")
                     or default_color_lookup.get(item.get("css_class", ""))
                     or "#1f2a44",
+                    category=item.get("category", "Standard"),
                 )
             )
         except (KeyError, TypeError, ValueError):
@@ -823,8 +829,17 @@ def cashier():
         {"name": name, "qty": qty, "price": prices.get(name, 0), "line_total": prices.get(name, 0) * qty}
         for name, qty in grouped
     ]
+    
+    # Group buttons by category
+    buttons_by_category = {}
+    for button in buttons:
+        category = button.category
+        if category not in buttons_by_category:
+            buttons_by_category[category] = []
+        buttons_by_category[category].append(button)
+    
     return render_template(
-        "cashier.html", buttons=buttons, items=detailed_items, total=total, event=event
+        "cashier.html", buttons=buttons, buttons_by_category=buttons_by_category, items=detailed_items, total=total, event=event
     )
 
 
