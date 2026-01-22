@@ -59,6 +59,7 @@
   .shot-settings__grid { display:grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap:0.6rem; margin-top: 0.4rem; }
   .shot-settings__grid span { font-size: 0.9rem; color: #cbd5e1; }
   .shot-settings__numbers { display:grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap:0.6rem; margin-top: 0.6rem; }
+  .badge-yellow { background: rgba(245, 158, 11, 0.2); color: #f59e0b; border: 1px solid rgba(245,158,11,0.5); }
 </style>
 
 <div class="collapsible card" data-collapsible>
@@ -210,6 +211,38 @@
         {% endif %}
       </div>
     </form>
+  </div>
+</div>
+
+<!-- Network Management Section -->
+<div class="collapsible card" data-collapsible>
+  <div class="collapsible__header">
+    <div>
+      <h2 style="margin:0;">Netzwerkeinstellungen</h2>
+      <div class="muted">LAN (eth0) und WLAN (wlan0) Schnittstellen verwalten.</div>
+    </div>
+    <button type="button" class="secondary" data-toggle>Details einblenden</button>
+  </div>
+  <div class="collapsible__content" hidden>
+    <div id="network-status">
+      <p class="muted">Lade Netzwerkinformationen...</p>
+    </div>
+  </div>
+</div>
+
+<!-- System Update Section -->
+<div class="collapsible card" data-collapsible>
+  <div class="collapsible__header">
+    <div>
+      <h2 style="margin:0;">System-Update</h2>
+      <div class="muted">Git-Repository aktualisieren und Service neu starten.</div>
+    </div>
+    <button type="button" class="secondary" data-toggle>Details einblenden</button>
+  </div>
+  <div class="collapsible__content" hidden>
+    <div id="git-status">
+      <p class="muted">Lade Git-Informationen...</p>
+    </div>
   </div>
 </div>
 
@@ -854,6 +887,250 @@
         content.hidden = false;
       });
     }
+
+    // Network Management UI
+    const loadNetworkStatus = async () => {
+      const container = document.getElementById('network-status');
+      if (!container) return;
+
+      try {
+        const response = await fetch('/admin/network');
+        const data = await response.json();
+        
+        let html = '<div style="display: grid; gap: 1.5rem;">';
+        
+        // LAN (eth0) Section
+        html += '<div class="stack">';
+        html += '<h3 style="margin: 0; color: #cbd5e1;">LAN Interface (eth0)</h3>';
+        if (data.eth0.exists) {
+          html += '<div style="background: rgba(255,255,255,0.04); padding: 1rem; border-radius: 8px; border: 1px solid var(--border);">';
+          html += `<div class="field-inline" style="margin-bottom: 0.5rem;"><strong>IP-Adresse:</strong> <span>${data.eth0.ip || 'N/A'}</span></div>`;
+          html += `<div class="field-inline" style="margin-bottom: 0.5rem;"><strong>Subnetzmaske:</strong> <span>${data.eth0.netmask || 'N/A'}</span></div>`;
+          html += `<div class="field-inline"><strong>Status:</strong> <span class="badge ${data.eth0.status === 'up' ? 'badge-green' : 'badge-red'}">${data.eth0.status}</span></div>`;
+          html += '</div>';
+        } else {
+          html += '<p class="muted">Interface nicht gefunden</p>';
+        }
+        html += '</div>';
+        
+        // WLAN (wlan0) Section
+        html += '<div class="stack">';
+        html += '<h3 style="margin: 0; color: #cbd5e1;">WLAN Interface (wlan0)</h3>';
+        if (data.wlan0.exists) {
+          html += '<div style="background: rgba(255,255,255,0.04); padding: 1rem; border-radius: 8px; border: 1px solid var(--border);">';
+          html += `<div class="field-inline" style="margin-bottom: 0.5rem;"><strong>IP-Adresse:</strong> <span>${data.wlan0.ip || 'Nicht verbunden'}</span></div>`;
+          html += `<div class="field-inline" style="margin-bottom: 0.5rem;"><strong>SSID:</strong> <span>${data.wlan0.ssid || 'Nicht verbunden'}</span></div>`;
+          if (data.wlan0.signal_level) {
+            html += `<div class="field-inline" style="margin-bottom: 0.5rem;"><strong>Signalstärke:</strong> <span>${data.wlan0.signal_level}</span></div>`;
+          }
+          html += `<div class="field-inline"><strong>Status:</strong> <span class="badge ${data.wlan0.status === 'up' ? 'badge-green' : 'badge-red'}">${data.wlan0.status}</span></div>`;
+          html += '</div>';
+          
+          // WiFi Connect Form
+          html += '<div style="margin-top: 1rem; padding: 1rem; background: rgba(255,255,255,0.02); border: 1px dashed var(--border); border-radius: 8px;">';
+          html += '<h4 style="margin: 0 0 0.8rem 0;">Neues WLAN verbinden</h4>';
+          html += '<form id="wifi-connect-form">';
+          html += '<div class="stack" style="margin-bottom: 0.8rem;">';
+          html += '<label>SSID (Netzwerkname)</label>';
+          html += '<input type="text" name="ssid" required placeholder="Netzwerkname eingeben">';
+          html += '</div>';
+          html += '<div class="stack" style="margin-bottom: 0.8rem;">';
+          html += '<label>Passwort</label>';
+          html += '<input type="password" name="password" placeholder="Passwort (min. 8 Zeichen)">';
+          html += '</div>';
+          html += '<div class="field-inline">';
+          html += '<button type="submit">Verbinden</button>';
+          html += '<button type="button" onclick="scanWifi()" class="secondary">Netzwerke scannen</button>';
+          html += '</div>';
+          html += '<div id="wifi-connect-message" style="margin-top: 0.8rem;"></div>';
+          html += '</form>';
+          html += '<div id="wifi-scan-results" style="margin-top: 1rem;"></div>';
+          html += '</div>';
+        } else {
+          html += '<p class="muted">Interface nicht gefunden</p>';
+        }
+        html += '</div>';
+        
+        // DHCP Leases Section
+        html += '<div class="stack">';
+        html += '<h3 style="margin: 0; color: #cbd5e1;">Verbundene Clients (DHCP)</h3>';
+        if (data.dhcp_leases && data.dhcp_leases.length > 0) {
+          html += '<div style="background: rgba(255,255,255,0.04); padding: 1rem; border-radius: 8px; border: 1px solid var(--border);">';
+          html += '<table style="width: 100%; border-collapse: collapse;">';
+          html += '<thead><tr style="border-bottom: 1px solid var(--border);"><th style="text-align: left; padding: 0.5rem;">IP</th><th style="text-align: left; padding: 0.5rem;">MAC</th><th style="text-align: left; padding: 0.5rem;">Hostname</th></tr></thead>';
+          html += '<tbody>';
+          data.dhcp_leases.forEach(lease => {
+            html += `<tr style="border-bottom: 1px solid rgba(255,255,255,0.05);"><td style="padding: 0.5rem;">${lease.ip}</td><td style="padding: 0.5rem; font-family: monospace;">${lease.mac}</td><td style="padding: 0.5rem;">${lease.hostname}</td></tr>`;
+          });
+          html += '</tbody></table>';
+          html += '</div>';
+        } else {
+          html += '<p class="muted">Keine verbundenen Clients</p>';
+        }
+        html += '</div>';
+        
+        html += '</div>';
+        
+        container.innerHTML = html;
+        
+        // Attach WiFi connect handler
+        const wifiForm = document.getElementById('wifi-connect-form');
+        if (wifiForm) {
+          wifiForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const formData = new FormData(e.target);
+            const messageDiv = document.getElementById('wifi-connect-message');
+            messageDiv.innerHTML = '<p class="muted">Verbinde...</p>';
+            
+            try {
+              const response = await fetch('/admin/network/wifi/connect', {
+                method: 'POST',
+                body: formData
+              });
+              const result = await response.json();
+              
+              if (result.success) {
+                messageDiv.innerHTML = `<p style="color: #10b981;">${result.message}</p>`;
+                setTimeout(() => loadNetworkStatus(), 5000);
+              } else {
+                messageDiv.innerHTML = `<p style="color: #ef4444;">Fehler: ${result.error}</p>`;
+              }
+            } catch (error) {
+              messageDiv.innerHTML = `<p style="color: #ef4444;">Fehler: ${error.message}</p>`;
+            }
+          });
+        }
+      } catch (error) {
+        container.innerHTML = `<p style="color: #ef4444;">Fehler beim Laden: ${error.message}</p>`;
+      }
+    };
+
+    window.scanWifi = async () => {
+      const resultsDiv = document.getElementById('wifi-scan-results');
+      if (!resultsDiv) return;
+      
+      resultsDiv.innerHTML = '<p class="muted">Scanne nach Netzwerken...</p>';
+      
+      try {
+        const response = await fetch('/admin/network/wifi/scan');
+        const data = await response.json();
+        
+        if (data.success && data.networks.length > 0) {
+          let html = '<h4 style="margin: 0.8rem 0;">Verfügbare Netzwerke</h4>';
+          html += '<div style="display: flex; flex-direction: column; gap: 0.5rem;">';
+          data.networks.forEach(network => {
+            const escapedSsid = network.ssid.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+            const ssidForJs = network.ssid.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/"/g, '\\"');
+            html += `<div style="padding: 0.6rem; background: rgba(255,255,255,0.04); border: 1px solid var(--border); border-radius: 6px; cursor: pointer;" onclick="document.querySelector('input[name=ssid]').value='${ssidForJs}'"}>`;
+            html += `<div style="display: flex; justify-content: space-between; align-items: center;">`;
+            html += `<strong>${escapedSsid}</strong>`;
+            html += `<div style="display: flex; gap: 0.5rem; align-items: center;">`;
+            html += `<span class="pill">${network.encryption}</span>`;
+            html += `<span class="muted" style="font-size: 0.85rem;">${network.quality}%</span>`;
+            html += `</div></div></div>`;
+          });
+          html += '</div>';
+          resultsDiv.innerHTML = html;
+        } else {
+          resultsDiv.innerHTML = '<p class="muted">Keine Netzwerke gefunden</p>';
+        }
+      } catch (error) {
+        resultsDiv.innerHTML = `<p style="color: #ef4444;">Fehler: ${error.message}</p>`;
+      }
+    };
+
+    // Git Status UI
+    const loadGitStatus = async () => {
+      const container = document.getElementById('git-status');
+      if (!container) return;
+
+      try {
+        const response = await fetch('/admin/system/git-status');
+        const data = await response.json();
+        
+        let html = '<div class="stack">';
+        html += '<div style="background: rgba(255,255,255,0.04); padding: 1rem; border-radius: 8px; border: 1px solid var(--border);">';
+        html += `<div class="field-inline" style="margin-bottom: 0.5rem;"><strong>Branch:</strong> <span>${data.branch || 'N/A'}</span></div>`;
+        html += `<div class="field-inline" style="margin-bottom: 0.5rem;"><strong>Commit:</strong> <span style="font-family: monospace;">${data.commit_short || 'N/A'}</span></div>`;
+        html += `<div class="field-inline" style="margin-bottom: 0.5rem;"><strong>Nicht committete Änderungen:</strong> <span class="badge ${data.has_changes ? 'badge-red' : 'badge-green'}">${data.has_changes ? 'Ja' : 'Nein'}</span></div>`;
+        
+        if (data.behind > 0) {
+          html += `<div class="field-inline"><strong>Status:</strong> <span class="badge badge-yellow">${data.behind} Commit(s) hinter Remote</span></div>`;
+        } else {
+          html += `<div class="field-inline"><strong>Status:</strong> <span class="badge badge-green">Aktuell</span></div>`;
+        }
+        html += '</div>';
+        
+        html += '<div style="margin-top: 1rem; padding: 1rem; background: rgba(255,255,255,0.02); border: 1px dashed var(--border); border-radius: 8px;">';
+        html += '<h4 style="margin: 0 0 0.8rem 0;">Repository aktualisieren</h4>';
+        html += '<p class="muted" style="margin-bottom: 0.8rem;">Lädt die neueste Version vom Git-Repository und startet den Service neu.</p>';
+        
+        if (data.has_changes) {
+          html += '<p style="color: #f59e0b; margin-bottom: 0.8rem;"><strong>⚠️ Warnung:</strong> Es gibt nicht committete Änderungen. Update ist nicht möglich.</p>';
+          html += '<button type="button" class="secondary" disabled>Update nicht möglich</button>';
+        } else {
+          html += '<button type="button" onclick="performGitUpdate()" class="primary">Jetzt aktualisieren</button>';
+        }
+        html += '<div id="git-update-message" style="margin-top: 0.8rem;"></div>';
+        html += '</div>';
+        
+        html += '</div>';
+        
+        container.innerHTML = html;
+      } catch (error) {
+        container.innerHTML = `<p style="color: #ef4444;">Fehler beim Laden: ${error.message}</p>`;
+      }
+    };
+
+    window.performGitUpdate = async () => {
+      const messageDiv = document.getElementById('git-update-message');
+      if (!messageDiv) return;
+      
+      if (!confirm('Möchten Sie wirklich das System aktualisieren? Der Service wird dabei neu gestartet.')) {
+        return;
+      }
+      
+      messageDiv.innerHTML = '<p class="muted">Update wird durchgeführt...</p>';
+      
+      try {
+        const response = await fetch('/admin/system/git-update', {
+          method: 'POST'
+        });
+        const result = await response.json();
+        
+        if (result.success) {
+          messageDiv.innerHTML = `<p style="color: #10b981;">${result.message}</p>`;
+          setTimeout(() => {
+            messageDiv.innerHTML += '<p class="muted">Seite wird in 5 Sekunden neu geladen...</p>';
+            setTimeout(() => location.reload(), 5000);
+          }, 2000);
+        } else {
+          messageDiv.innerHTML = `<p style="color: #ef4444;">Fehler: ${result.error}</p>`;
+        }
+      } catch (error) {
+        messageDiv.innerHTML = `<p style="color: #ef4444;">Fehler: ${error.message}</p>`;
+      }
+    };
+
+    // Load network and git status when sections are opened
+    document.querySelectorAll('[data-collapsible]').forEach(collapsible => {
+      const toggle = collapsible.querySelector('[data-toggle]');
+      const content = collapsible.querySelector('.collapsible__content');
+      
+      if (toggle && content) {
+        const originalClickHandler = toggle.onclick;
+        toggle.addEventListener('click', () => {
+          // Load data when section is opened
+          if (content.hidden === false) {
+            if (collapsible.querySelector('#network-status')) {
+              loadNetworkStatus();
+            } else if (collapsible.querySelector('#git-status')) {
+              loadGitStatus();
+            }
+          }
+        });
+      }
+    });
   })();
 </script>
 

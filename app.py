@@ -16,6 +16,7 @@ import os
 import re
 import secrets
 import sqlite3
+import subprocess
 from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime
@@ -885,6 +886,339 @@ def update_credentials():
         flash("Fehler beim Speichern der Credentials.", "error")
     
     return redirect(url_for("admin"))
+
+
+# ---------------------------------------------------------------------------
+# Network Management & System Update
+# ---------------------------------------------------------------------------
+
+def _run_safe_command(cmd: list[str], timeout: int = 10) -> dict:
+    """
+    Safely execute a whitelisted command with timeout.
+    Returns dict with 'success', 'output', 'error' keys.
+    """
+    try:
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=False
+        )
+        return {
+            "success": result.returncode == 0,
+            "output": result.stdout.strip(),
+            "error": result.stderr.strip()
+        }
+    except subprocess.TimeoutExpired:
+        return {
+            "success": False,
+            "output": "",
+            "error": f"Command timed out after {timeout} seconds"
+        }
+    except Exception as e:
+        return {
+            "success": False,
+            "output": "",
+            "error": str(e)
+        }
+
+
+def _get_network_interface_info(interface: str) -> dict:
+    """Get information about a network interface."""
+    info = {
+        "interface": interface,
+        "exists": False,
+        "ip": None,
+        "netmask": None,
+        "status": "down"
+    }
+    
+    # Check if interface exists and get IP
+    result = _run_safe_command(["ip", "-4", "addr", "show", interface])
+    if result["success"] and result["output"]:
+        info["exists"] = True
+        # Parse IP address
+        for line in result["output"].split("\n"):
+            if "inet " in line:
+                parts = line.strip().split()
+                if len(parts) >= 2:
+                    ip_cidr = parts[1]
+                    if "/" in ip_cidr:
+                        ip, cidr = ip_cidr.split("/")
+                        info["ip"] = ip
+                        # Convert CIDR to netmask
+                        cidr_int = int(cidr)
+                        mask_int = (0xffffffff >> (32 - cidr_int)) << (32 - cidr_int)
+                        info["netmask"] = f"{(mask_int >> 24) & 0xff}.{(mask_int >> 16) & 0xff}.{(mask_int >> 8) & 0xff}.{mask_int & 0xff}"
+            if "state UP" in line:
+                info["status"] = "up"
+    
+    return info
+
+
+def _get_wlan_info() -> dict:
+    """Get WLAN interface status."""
+    wlan_info = _get_network_interface_info("wlan0")
+    
+    # Check if connected to a network
+    result = _run_safe_command(["iwgetid", "-r"])
+    if result["success"] and result["output"]:
+        wlan_info["ssid"] = result["output"]
+    else:
+        wlan_info["ssid"] = None
+    
+    # Get signal strength if connected
+    if wlan_info.get("ssid"):
+        result = _run_safe_command(["iwconfig", "wlan0"])
+        if result["success"]:
+            for line in result["output"].split("\n"):
+                if "Signal level" in line:
+                    # Extract signal level (e.g., "-50 dBm")
+                    match = re.search(r'Signal level[=:](-?\d+)', line)
+                    if match:
+                        wlan_info["signal_level"] = match.group(1) + " dBm"
+    
+    return wlan_info
+
+
+def _get_dhcp_leases() -> list:
+    """Get active DHCP leases from dnsmasq."""
+    leases = []
+    # Try common locations for DHCP lease files
+    lease_files = [
+        "/var/lib/misc/dnsmasq.leases",  # Common on Debian/Ubuntu/Raspbian
+        "/var/lib/dhcp/dnsmasq.leases",  # Alternative location
+        "/var/lib/dnsmasq/dnsmasq.leases",  # Another alternative
+    ]
+    
+    lease_file = None
+    for path in lease_files:
+        if os.path.exists(path):
+            lease_file = path
+            break
+    
+    if not lease_file:
+        return leases
+    
+    try:
+        with open(lease_file, "r") as f:
+            for line in f:
+                parts = line.strip().split()
+                if len(parts) >= 5:
+                    # Format: timestamp mac ip hostname client-id
+                    timestamp, mac, ip, hostname, *rest = parts
+                    leases.append({
+                        "mac": mac,
+                        "ip": ip,
+                        "hostname": hostname if hostname != "*" else "Unknown",
+                    })
+    except Exception as e:
+        app.logger.error(f"Error reading DHCP leases: {e}")
+    
+    return leases
+
+
+def _get_git_status() -> dict:
+    """Get current git repository status."""
+    git_info = {
+        "branch": None,
+        "commit": None,
+        "commit_short": None,
+        "has_changes": False,
+        "behind": 0,
+        "error": None
+    }
+    
+    # Get current branch
+    result = _run_safe_command(["git", "-C", app.root_path, "rev-parse", "--abbrev-ref", "HEAD"])
+    if result["success"]:
+        git_info["branch"] = result["output"]
+    
+    # Get current commit
+    result = _run_safe_command(["git", "-C", app.root_path, "rev-parse", "HEAD"])
+    if result["success"]:
+        git_info["commit"] = result["output"]
+        git_info["commit_short"] = result["output"][:7]
+    
+    # Check for uncommitted changes
+    result = _run_safe_command(["git", "-C", app.root_path, "status", "--porcelain"])
+    if result["success"]:
+        git_info["has_changes"] = bool(result["output"])
+    
+    # Check if behind remote
+    result = _run_safe_command(["git", "-C", app.root_path, "fetch", "--dry-run"], timeout=30)
+    result = _run_safe_command(["git", "-C", app.root_path, "rev-list", "--count", "HEAD..@{upstream}"])
+    if result["success"] and result["output"].isdigit():
+        git_info["behind"] = int(result["output"])
+    
+    return git_info
+
+
+@app.route("/admin/network")
+def admin_network():
+    """Get network status information."""
+    eth0_info = _get_network_interface_info("eth0")
+    wlan0_info = _get_wlan_info()
+    dhcp_leases = _get_dhcp_leases()
+    
+    return jsonify({
+        "eth0": eth0_info,
+        "wlan0": wlan0_info,
+        "dhcp_leases": dhcp_leases
+    })
+
+
+@app.route("/admin/network/wifi/scan")
+def admin_wifi_scan():
+    """Scan for available WiFi networks."""
+    networks = []
+    
+    # Scan for networks
+    result = _run_safe_command(["iwlist", "wlan0", "scan"], timeout=15)
+    if not result["success"]:
+        return jsonify({"success": False, "error": result["error"]})
+    
+    # Parse scan results
+    current_ssid = None
+    current_quality = None
+    current_encryption = "Open"
+    
+    for line in result["output"].split("\n"):
+        line = line.strip()
+        if "ESSID:" in line:
+            match = re.search(r'ESSID:"([^"]+)"', line)
+            if match:
+                current_ssid = match.group(1)
+        elif "Quality=" in line:
+            match = re.search(r'Quality=(\d+)/(\d+)', line)
+            if match:
+                quality = int(match.group(1))
+                max_quality = int(match.group(2))
+                current_quality = int((quality / max_quality) * 100)
+        elif "Encryption key:" in line:
+            if "on" in line:
+                current_encryption = "Encrypted"
+            else:
+                current_encryption = "Open"
+        
+        # When we have collected info for a network, add it
+        if current_ssid and "IE: IEEE 802.11i/WPA2" in line:
+            current_encryption = "WPA2"
+        
+        # Cell separator or end - save current network
+        if current_ssid and ("Cell" in line or line == ""):
+            networks.append({
+                "ssid": current_ssid,
+                "quality": current_quality or 0,
+                "encryption": current_encryption
+            })
+            current_ssid = None
+            current_quality = None
+            current_encryption = "Open"
+    
+    # Add last network if exists
+    if current_ssid:
+        networks.append({
+            "ssid": current_ssid,
+            "quality": current_quality or 0,
+            "encryption": current_encryption
+        })
+    
+    # Remove duplicates and sort by quality
+    seen_ssids = set()
+    unique_networks = []
+    for network in sorted(networks, key=lambda x: x["quality"], reverse=True):
+        if network["ssid"] not in seen_ssids:
+            seen_ssids.add(network["ssid"])
+            unique_networks.append(network)
+    
+    return jsonify({"success": True, "networks": unique_networks})
+
+
+@app.route("/admin/network/wifi/connect", methods=["POST"])
+def admin_wifi_connect():
+    """Connect to a WiFi network."""
+    ssid = request.form.get("ssid", "").strip()
+    password = request.form.get("password", "").strip()
+    
+    if not ssid:
+        return jsonify({"success": False, "error": "SSID ist erforderlich"})
+    
+    if len(ssid) > 32:
+        return jsonify({"success": False, "error": "SSID zu lang (max 32 Zeichen)"})
+    
+    # Validate SSID contains only safe characters (printable ASCII)
+    if not all(32 <= ord(c) <= 126 for c in ssid):
+        return jsonify({"success": False, "error": "SSID enthält ungültige Zeichen"})
+    
+    if password and len(password) < 8:
+        return jsonify({"success": False, "error": "Passwort muss mindestens 8 Zeichen haben"})
+    
+    # Use the pi_manage.sh script if available
+    script_path = Path(app.root_path) / "scripts" / "pi_manage.sh"
+    if script_path.exists() and password:
+        result = _run_safe_command(["sudo", str(script_path), "wifi-add", ssid, password], timeout=30)
+        if result["success"]:
+            # Try to bring up the interface
+            _run_safe_command(["sudo", str(script_path), "wifi-up"], timeout=10)
+            app.logger.info(f"WLAN verbunden: {ssid}")
+            return jsonify({"success": True, "message": f"Verbindung zu '{ssid}' wird hergestellt..."})
+        else:
+            return jsonify({"success": False, "error": result["error"] or "Fehler beim Verbinden"})
+    else:
+        return jsonify({"success": False, "error": "WiFi-Verwaltung nicht verfügbar"})
+
+
+@app.route("/admin/system/git-status")
+def admin_git_status():
+    """Get git repository status."""
+    git_info = _get_git_status()
+    return jsonify(git_info)
+
+
+@app.route("/admin/system/git-update", methods=["POST"])
+def admin_git_update():
+    """Pull latest changes from git and restart service."""
+    # Check if there are uncommitted changes
+    git_info = _get_git_status()
+    if git_info.get("has_changes"):
+        return jsonify({
+            "success": False,
+            "error": "Es gibt nicht committete Änderungen. Bitte zuerst committen oder verwerfen."
+        })
+    
+    # Use the pi_manage.sh script if available
+    script_path = Path(app.root_path) / "scripts" / "pi_manage.sh"
+    if not script_path.exists():
+        return jsonify({"success": False, "error": "Update-Script nicht gefunden"})
+    
+    # Validate branch name contains only safe characters
+    branch = git_info.get("branch", "main")
+    if not re.match(r'^[a-zA-Z0-9/_.-]+$', branch):
+        return jsonify({
+            "success": False,
+            "error": "Ungültiger Branch-Name"
+        })
+    
+    # Pull changes
+    result = _run_safe_command(
+        ["sudo", str(script_path), "update", "--branch", branch],
+        timeout=120
+    )
+    
+    if result["success"]:
+        app.logger.info("Git Update erfolgreich durchgeführt")
+        return jsonify({
+            "success": True,
+            "message": "Update erfolgreich. Service wird neu gestartet..."
+        })
+    else:
+        app.logger.error(f"Git Update fehlgeschlagen: {result['error']}")
+        return jsonify({
+            "success": False,
+            "error": result["error"] or "Update fehlgeschlagen"
+        })
 
 
 # ---------------------------------------------------------------------------
