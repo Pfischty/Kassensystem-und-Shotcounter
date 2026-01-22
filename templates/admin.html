@@ -79,6 +79,10 @@
         <label><input type="checkbox" name="kassensystem_enabled" checked> Kassensystem aktiv</label>
         <label><input type="checkbox" name="shotcounter_enabled" checked> Shotcounter aktiv</label>
       </div>
+      <div class="field-inline" style="margin: 0.6rem 0;">
+        <label><input type="checkbox" name="auto_reload_on_add" checked data-shared-setting> Auto-Reload beim Hinzufügen (Kasse)</label>
+      </div>
+      <div class="muted" style="margin-bottom: 0.6rem;">Wenn deaktiviert, wird die Kasse nicht neu geladen beim Hinzufügen von Artikeln (performanter).</div>
       {% if events %}
       <div class="stack" style="margin: 0.6rem 0;">
         <label>Vorlage kopieren</label>
@@ -239,6 +243,10 @@
             <label><input type="checkbox" name="kassensystem_enabled" {% if event.kassensystem_enabled %}checked{% endif %}> Kassensystem aktiv</label>
             <label><input type="checkbox" name="shotcounter_enabled" {% if event.shotcounter_enabled %}checked{% endif %}> Shotcounter aktiv</label>
           </div>
+          <div class="field-inline" style="margin: 0.6rem 0;">
+            <label><input type="checkbox" name="auto_reload_on_add" {% if event.shared_settings and event.shared_settings.get('auto_reload_on_add', True) %}checked{% endif %} data-shared-setting> Auto-Reload beim Hinzufügen (Kasse)</label>
+          </div>
+          <div class="muted" style="margin-bottom: 0.6rem;">Wenn deaktiviert, wird die Kasse nicht neu geladen beim Hinzufügen von Artikeln (performanter).</div>
 
           {% if events|length > 1 %}
           <div class="stack" style="margin:0.6rem 0;">
@@ -753,6 +761,12 @@
       const shotHidden = form.querySelector('input[name="shotcounter_settings"]');
       if (sharedHidden) sharedHidden.value = JSON.stringify(snapshot.shared_settings || {});
       if (shotHidden) shotHidden.value = JSON.stringify(snapshot.shotcounter_settings || {});
+      
+      // Apply shared settings checkboxes
+      const autoReloadCheckbox = form.querySelector('input[name="auto_reload_on_add"]');
+      if (autoReloadCheckbox && snapshot.shared_settings) {
+        autoReloadCheckbox.checked = snapshot.shared_settings.auto_reload_on_add !== false; // default to true
+      }
 
       const productEditor = form.querySelector("[data-product-editor]");
       const kassInput = form.querySelector('input[name="kassensystem_settings"]');
@@ -817,6 +831,22 @@
 
     document.querySelectorAll("[data-event-form]").forEach((form) => {
       bindCopyAndImport(form);
+      
+      // Add submit handler to collect shared settings from checkboxes
+      form.addEventListener('submit', function(e) {
+        const sharedInput = this.querySelector('input[name="shared_settings"]');
+        if (sharedInput) {
+          const currentSettings = parseJson(sharedInput.value, {});
+          
+          // Collect all checkboxes with data-shared-setting attribute
+          const autoReloadCheckbox = this.querySelector('input[name="auto_reload_on_add"]');
+          if (autoReloadCheckbox) {
+            currentSettings.auto_reload_on_add = autoReloadCheckbox.checked;
+          }
+          
+          sharedInput.value = JSON.stringify(currentSettings);
+        }
+      });
     });
     } catch (err) {
       console.error("Admin UI Init Error", err);

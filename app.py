@@ -29,6 +29,7 @@ from flask import (
     Response,
     abort,
     flash,
+    jsonify,
     redirect,
     render_template,
     request,
@@ -774,6 +775,15 @@ def create_event():
 
     try:
         shared_settings = parse_json_field(request.form.get("shared_settings"))
+        # Add auto_reload_on_add from checkbox
+        # If checkbox is present (checked), it will be "on", if unchecked it won't be in form
+        # For new events without this field in the form, default to True for backward compatibility
+        if "auto_reload_on_add" in request.form:
+            shared_settings["auto_reload_on_add"] = bool(request.form.get("auto_reload_on_add"))
+        else:
+            # Default to True for backward compatibility if not in form
+            shared_settings["auto_reload_on_add"] = True
+        
         kass_settings = validate_and_normalize_buttons(parse_json_field(request.form.get("kassensystem_settings")))
         shot_settings = validate_shotcounter_settings(parse_json_field(request.form.get("shotcounter_settings")))
     except ValueError as exc:
@@ -803,6 +813,11 @@ def update_event(event_id: int):
 
     try:
         event.shared_settings = parse_json_field(request.form.get("shared_settings"))
+        # Handle auto_reload_on_add checkbox
+        # When updating an event, if checkbox is not in form, it means it was unchecked (set to False)
+        # If checkbox is in form with value "on", it's checked (set to True)
+        event.shared_settings["auto_reload_on_add"] = bool(request.form.get("auto_reload_on_add"))
+        
         event.kassensystem_settings = validate_and_normalize_buttons(
             parse_json_field(request.form.get("kassensystem_settings"))
         )
@@ -875,9 +890,8 @@ def update_credentials():
 # ---------------------------------------------------------------------------
 # Kassensystem
 # ---------------------------------------------------------------------------
-@app.route("/cashier")
-def cashier():
-    event = require_active_event(kassensystem=True)
+def _get_cart_data(event):
+    """Helper function to get cart data for an event."""
     buttons = resolve_button_config(event)
     items = session.get(cart_key(event), [])
     prices = {button.name: button.price for button in buttons}
@@ -887,6 +901,18 @@ def cashier():
         {"name": name, "qty": qty, "price": prices.get(name, 0), "line_total": prices.get(name, 0) * qty}
         for name, qty in grouped
     ]
+    return {
+        "items": detailed_items,
+        "total": total,
+        "item_count": len(items)
+    }
+
+
+@app.route("/cashier")
+def cashier():
+    event = require_active_event(kassensystem=True)
+    buttons = resolve_button_config(event)
+    cart_data = _get_cart_data(event)
     
     # Group buttons by category
     buttons_by_category = {}
@@ -896,8 +922,17 @@ def cashier():
             buttons_by_category[category] = []
         buttons_by_category[category].append(button)
     
+    # Get auto_reload setting from shared_settings (default to True for backward compatibility)
+    auto_reload = event.shared_settings.get("auto_reload_on_add", True) if event.shared_settings else True
+    
     return render_template(
-        "cashier.html", buttons=buttons, buttons_by_category=buttons_by_category, items=detailed_items, total=total, event=event
+        "cashier.html", 
+        buttons=buttons, 
+        buttons_by_category=buttons_by_category, 
+        items=cart_data["items"], 
+        total=cart_data["total"], 
+        event=event,
+        auto_reload=auto_reload
     )
 
 
@@ -912,6 +947,15 @@ def add_item():
         items.append(name)
         session[cart_key(event)] = items
         app.logger.info("Artikel hinzugefügt: %s (Event %s)", name, event.name)
+    
+    # Check if this is an AJAX request (wants JSON response)
+    if request.args.get("ajax") == "1" or request.headers.get("X-Requested-With") == "XMLHttpRequest":
+        cart_data = _get_cart_data(event)
+        return jsonify({
+            "success": True,
+            "cart": cart_data
+        })
+    
     return redirect(url_for("cashier"))
 
 
@@ -923,6 +967,15 @@ def remove_last():
         removed = items.pop()
         session[cart_key(event)] = items
         app.logger.info("Artikel entfernt: %s (Event %s)", removed, event.name)
+    
+    # Check if this is an AJAX request (wants JSON response)
+    if request.args.get("ajax") == "1" or request.headers.get("X-Requested-With") == "XMLHttpRequest":
+        cart_data = _get_cart_data(event)
+        return jsonify({
+            "success": True,
+            "cart": cart_data
+        })
+    
     return redirect(url_for("cashier"))
 
 
