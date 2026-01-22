@@ -773,8 +773,34 @@
         });
       };
 
+      const getAllCategories = () => {
+        // Collect unique categories from all items in current editor
+        const categories = new Set();
+        categories.add(defaultCategory); // Always include default
+        items.forEach(item => {
+          if (item.category && item.category.trim()) {
+            categories.add(item.category.trim());
+          }
+        });
+        return Array.from(categories).sort();
+      };
+
       const renderList = () => {
         list.innerHTML = "";
+        
+        // Create a single datalist for all category inputs in this editor
+        const datalistId = `categories-datalist-${wrapper.dataset.scope || Date.now()}`;
+        const datalist = document.createElement("datalist");
+        datalist.id = datalistId;
+        
+        // Populate datalist with unique categories
+        const categories = getAllCategories();
+        categories.forEach(cat => {
+          const option = document.createElement("option");
+          option.value = cat;
+          datalist.appendChild(option);
+        });
+        list.appendChild(datalist);
 
         items.forEach((item, index) => {
           const row = document.createElement("div");
@@ -847,11 +873,23 @@
           const categoryLabel = document.createElement("label");
           categoryLabel.textContent = "Kategorie";
           const categoryInput = document.createElement("input");
+          categoryInput.setAttribute("list", datalistId);
           categoryInput.value = item.category || defaultCategory;
-          categoryInput.placeholder = "z.B. Getränke, Alkohol";
+          categoryInput.placeholder = "Wählen oder neue Kategorie eingeben";
           categoryInput.addEventListener("input", () => {
             item.category = categoryInput.value.trim() || defaultCategory;
             syncHidden();
+          });
+          categoryInput.addEventListener("change", () => {
+            // Update datalist when user commits a new category (on blur/enter)
+            const newCategory = categoryInput.value.trim();
+            if (newCategory && newCategory !== defaultCategory) {
+              const categories = getAllCategories();
+              if (!categories.includes(newCategory)) {
+                // Re-render list to update datalist with new category
+                renderList();
+              }
+            }
           });
           categoryContainer.append(categoryLabel, categoryInput);
 
