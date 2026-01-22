@@ -872,14 +872,21 @@ def update_credentials():
     """
     username = request.form.get("admin_username", "").strip()
     password = request.form.get("admin_password", "").strip()
+    has_password = bool(credentials_manager.get_credentials().get("admin_password"))
     
     # Validate inputs
     if not username:
         flash("Benutzername darf nicht leer sein.", "error")
         return redirect(url_for("admin"))
+    if not has_password and not password:
+        flash("Bitte ein Passwort setzen, damit der Admin-Bereich geschützt ist.", "error")
+        return redirect(url_for("admin"))
+    if password and len(password) < 8:
+        flash("Passwort muss mindestens 8 Zeichen lang sein.", "error")
+        return redirect(url_for("admin"))
     
     # Update credentials
-    success = credentials_manager.update_credentials(
+    success, error_message = credentials_manager.update_credentials(
         admin_username=username,
         admin_password=password if password else None
     )
@@ -888,8 +895,9 @@ def update_credentials():
         app.logger.info("Admin-Credentials aktualisiert: Benutzer=%s", username)
         flash("Credentials wurden erfolgreich aktualisiert.", "success")
     else:
-        app.logger.error("Fehler beim Aktualisieren der Credentials")
-        flash("Fehler beim Speichern der Credentials.", "error")
+        error_detail = error_message or "Unbekannter Fehler."
+        app.logger.error("Fehler beim Aktualisieren der Credentials: %s", error_detail)
+        flash(f"Fehler beim Speichern der Credentials: {error_detail}", "error")
     
     return redirect(url_for("admin"))
 

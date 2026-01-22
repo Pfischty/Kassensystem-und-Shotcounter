@@ -56,14 +56,14 @@ class CredentialsManager:
             logger.warning("Could not load credentials file: %s", e)
             return None
 
-    def _save_to_file(self, data: Dict[str, str]) -> bool:
+    def _save_to_file(self, data: Dict[str, str]) -> tuple[bool, Optional[str]]:
         """Speichert Credentials in die JSON-Datei.
         
         Args:
             data: Dictionary mit Credentials
             
         Returns:
-            True wenn erfolgreich gespeichert
+            Tuple aus Erfolg und Fehlermeldung (falls vorhanden)
         """
         try:
             # Ensure parent directory exists
@@ -86,10 +86,10 @@ class CredentialsManager:
             # Invalidate cache
             self._cache = None
             
-            return True
-        except IOError as e:
+            return True, None
+        except (IOError, OSError) as e:
             logger.error("Could not save credentials file: %s", e)
-            return False
+            return False, str(e)
 
     def get_credentials(self) -> Dict[str, str]:
         """Gibt die aktuellen Credentials zurück.
@@ -142,7 +142,7 @@ class CredentialsManager:
 
     def update_credentials(self, admin_username: Optional[str] = None,
                           admin_password: Optional[str] = None,
-                          secret_key: Optional[str] = None) -> bool:
+                          secret_key: Optional[str] = None) -> tuple[bool, Optional[str]]:
         """Aktualisiert die Credentials und speichert sie.
         
         Args:
@@ -151,7 +151,7 @@ class CredentialsManager:
             secret_key: Neuer Secret Key (optional)
             
         Returns:
-            True wenn erfolgreich gespeichert
+            Tuple aus Erfolg und Fehlermeldung (falls vorhanden)
         """
         # Get current credentials
         current = self.get_credentials()
@@ -214,7 +214,8 @@ class CredentialsManager:
             "secret_key": self.generate_secret_key(),
         }
         
-        return self._save_to_file(default_creds)
+        success, _ = self._save_to_file(default_creds)
+        return success
 
 
 # Globale Instanz für die Anwendung
