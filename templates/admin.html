@@ -169,7 +169,7 @@
     <button type="button" class="secondary" data-toggle>Details einblenden</button>
   </div>
   <div class="collapsible__content" hidden>
-    <form method="post" action="{{ url_for('update_credentials') }}">
+    <form method="post" action="{{ url_for('update_credentials') }}" data-credentials-form data-has-password="{{ 'true' if has_password else 'false' }}">
       <div class="stack">
         <label for="admin_username">Benutzername</label>
         <input 
@@ -189,7 +189,7 @@
           id="admin_password" 
           name="admin_password" 
           type="password"
-          placeholder="Neues Passwort eingeben"
+          placeholder="Neues Passwort (mind. 8 Zeichen)"
         >
         <div class="hint">
           {% if has_password %}
@@ -203,6 +203,7 @@
       <div class="field-inline" style="margin-top: 1rem;">
         <button type="submit">Zugangsdaten speichern</button>
       </div>
+      <div class="flash error" data-credentials-error style="display:none; margin-top: 1rem;"></div>
       
       <div class="muted" style="margin-top: 1rem;">
         <strong>Hinweis:</strong> Die Zugangsdaten werden in der Datei <code>credentials.json</code> gespeichert, 
@@ -881,6 +882,51 @@
         }
       });
     });
+
+    const credentialsForm = document.querySelector("[data-credentials-form]");
+    if (credentialsForm) {
+      const errorBox = credentialsForm.querySelector("[data-credentials-error]");
+      const usernameInput = credentialsForm.querySelector("#admin_username");
+      const passwordInput = credentialsForm.querySelector("#admin_password");
+      const hasPassword = credentialsForm.dataset.hasPassword === "true";
+
+      const showError = (message) => {
+        if (!errorBox) return;
+        errorBox.textContent = message;
+        errorBox.style.display = "block";
+      };
+
+      const clearError = () => {
+        if (!errorBox) return;
+        errorBox.textContent = "";
+        errorBox.style.display = "none";
+      };
+
+      credentialsForm.addEventListener("submit", (event) => {
+        const username = usernameInput ? usernameInput.value.trim() : "";
+        const password = passwordInput ? passwordInput.value : "";
+
+        if (!username) {
+          event.preventDefault();
+          showError("Benutzername darf nicht leer sein.");
+          return;
+        }
+
+        if (!hasPassword && !password) {
+          event.preventDefault();
+          showError("Bitte ein Passwort setzen, damit der Admin-Bereich geschützt ist.");
+          return;
+        }
+
+        if (password && password.length < 8) {
+          event.preventDefault();
+          showError("Passwort muss mindestens 8 Zeichen lang sein.");
+          return;
+        }
+
+        clearError();
+      });
+    }
     } catch (err) {
       console.error("Admin UI Init Error", err);
       document.querySelectorAll(".collapsible__content").forEach((content) => {
