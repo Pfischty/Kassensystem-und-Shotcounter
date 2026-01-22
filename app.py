@@ -294,6 +294,7 @@ DEFAULT_SHOTCOUNTER_SETTINGS: Dict[str, int | float | str] = {
     "title_size": 3.2,  # rem
     "team_size": 1.6,  # rem
     "leaderboard_limit": 10,
+    "leaderboard_layout": "stacked",
 }
 
 HEX_COLOR_PATTERN = re.compile(r"^#([0-9a-fA-F]{6}|[0-9a-fA-F]{3})$")
@@ -336,6 +337,15 @@ def _sanitize_leaderboard_limit(value: int | str | None, fallback: int) -> int:
     if parsed < 1:
         return fallback
     return min(parsed, 50)
+
+
+def _sanitize_leaderboard_layout(value: str | None, fallback: str) -> str:
+    allowed = {"stacked", "inline"}
+    if isinstance(value, str):
+        candidate = value.strip().lower()
+        if candidate in allowed:
+            return candidate
+    return fallback
 
 
 def allowed_file(filename: str) -> bool:
@@ -399,6 +409,9 @@ def validate_shotcounter_settings(raw: dict | None) -> Dict[str, int | float | s
     )
     settings["leaderboard_limit"] = _sanitize_leaderboard_limit(
         incoming.get("leaderboard_limit"), int(DEFAULT_SHOTCOUNTER_SETTINGS["leaderboard_limit"])
+    )
+    settings["leaderboard_layout"] = _sanitize_leaderboard_layout(
+        incoming.get("leaderboard_layout"), str(DEFAULT_SHOTCOUNTER_SETTINGS["leaderboard_layout"])
     )
     # Preserve background_image only if it's a valid string and file exists
     if incoming.get("background_image"):

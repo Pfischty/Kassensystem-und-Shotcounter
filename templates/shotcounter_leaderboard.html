@@ -111,6 +111,16 @@
     display: flex;
     align-items: center;
   }
+  .leaderboard-hero.layout-inline .lb-info {
+    justify-content: flex-start;
+  }
+  .leaderboard-hero.layout-inline .lb-info > div {
+    display: flex;
+    align-items: center;
+    justify-content: flex-start;
+    gap: 0.6rem;
+    text-align: left;
+  }
   .lb-name {
     margin: 0;
     font-size: var(--lb-team-size);
@@ -123,6 +133,14 @@
     color: rgba(226,232,240,0.75);
     font-weight: 600;
   }
+  .leaderboard-hero.layout-inline .lb-shots {
+    margin: 0;
+    font-size: var(--lb-team-size);
+    color: inherit;
+  }
+  .leaderboard-hero.layout-inline .lb-shots::before {
+    content: "– ";
+  }
   .lb-empty {
     color: rgba(226,232,240,0.65);
     font-size: 1.1rem;
@@ -134,7 +152,7 @@
   }
 </style>
 
-<div class="leaderboard-hero {% if shot_settings.background_image %}has-bg{% endif %}" data-refresh-url="{{ url_for('shotcounter_leaderboard_data', limit=limit) }}">
+<div class="leaderboard-hero layout-{{ shot_settings.leaderboard_layout }} {% if shot_settings.background_image %}has-bg{% endif %}" data-refresh-url="{{ url_for('shotcounter_leaderboard_data', limit=limit) }}">
   <div class="leaderboard-head">
     <div class="leaderboard-event">Shotcounter - {{ event.name }}</div>
   </div>

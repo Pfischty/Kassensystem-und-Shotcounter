@@ -273,6 +273,15 @@
             <input type="number" step="1" min="1" max="50" data-shot-field="leaderboard_limit">
           </label>
         </div>
+        <div class="shot-settings__numbers" style="margin-top: 0.6rem;">
+          <label class="stack">
+            <span>Leaderboard Layout</span>
+            <select data-shot-field="leaderboard_layout">
+              <option value="stacked">Teamname + Shots (2 Zeilen)</option>
+              <option value="inline">Teamname – Shots (1 Zeile)</option>
+            </select>
+          </label>
+        </div>
         <input type="hidden" name="shotcounter_settings" value='{{ shotcounter_defaults | tojson }}'>
       </div>
 
@@ -455,6 +464,15 @@
           <label class="stack">
             <span>Teams im Leaderboard</span>
             <input type="number" step="1" min="1" max="50" data-shot-field="leaderboard_limit">
+          </label>
+        </div>
+        <div class="shot-settings__numbers" style="margin-top: 0.6rem;">
+          <label class="stack">
+            <span>Leaderboard Layout</span>
+            <select data-shot-field="leaderboard_layout">
+              <option value="stacked">Teamname + Shots (2 Zeilen)</option>
+              <option value="inline">Teamname – Shots (1 Zeile)</option>
+            </select>
           </label>
         </div>
         
@@ -685,6 +703,8 @@
             input.value = sanitizeColor(settings[key] || defaults[key] || fallbackColor);
           } else if (input.type === "number") {
             input.value = settings[key] ?? defaults[key] ?? "";
+          } else if (input.tagName === "SELECT") {
+            input.value = settings[key] ?? defaults[key] ?? "";
           }
         });
       };
@@ -699,10 +719,12 @@
         input.addEventListener("input", () => {
           if (input.type === "color") {
             settings[key] = sanitizeColor(input.value || defaults[key] || fallbackColor);
-          } else {
+          } else if (input.type === "number") {
             const min = key === "leaderboard_limit" ? 1 : 0.5;
             const max = key === "leaderboard_limit" ? 50 : 10;
             settings[key] = clampNumber(input.value, defaults[key], min, max);
+          } else if (input.tagName === "SELECT") {
+            settings[key] = input.value;
           }
           syncHidden();
         });
