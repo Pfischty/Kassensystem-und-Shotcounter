@@ -1019,9 +1019,11 @@
           let html = '<h4 style="margin: 0.8rem 0;">Verfügbare Netzwerke</h4>';
           html += '<div style="display: flex; flex-direction: column; gap: 0.5rem;">';
           data.networks.forEach(network => {
-            html += `<div style="padding: 0.6rem; background: rgba(255,255,255,0.04); border: 1px solid var(--border); border-radius: 6px; cursor: pointer;" onclick="document.querySelector('input[name=ssid]').value='${network.ssid.replace(/'/g, "\\'")}'"}>`;
+            const escapedSsid = network.ssid.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+            const ssidForJs = network.ssid.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/"/g, '\\"');
+            html += `<div style="padding: 0.6rem; background: rgba(255,255,255,0.04); border: 1px solid var(--border); border-radius: 6px; cursor: pointer;" onclick="document.querySelector('input[name=ssid]').value='${ssidForJs}'"}>`;
             html += `<div style="display: flex; justify-content: space-between; align-items: center;">`;
-            html += `<strong>${network.ssid}</strong>`;
+            html += `<strong>${escapedSsid}</strong>`;
             html += `<div style="display: flex; gap: 0.5rem; align-items: center;">`;
             html += `<span class="pill">${network.encryption}</span>`;
             html += `<span class="muted" style="font-size: 0.85rem;">${network.quality}%</span>`;

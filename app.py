@@ -985,9 +985,20 @@ def _get_wlan_info() -> dict:
 def _get_dhcp_leases() -> list:
     """Get active DHCP leases from dnsmasq."""
     leases = []
-    lease_file = "/var/lib/misc/dnsmasq.leases"
+    # Try common locations for DHCP lease files
+    lease_files = [
+        "/var/lib/misc/dnsmasq.leases",  # Common on Debian/Ubuntu/Raspbian
+        "/var/lib/dhcp/dnsmasq.leases",  # Alternative location
+        "/var/lib/dnsmasq/dnsmasq.leases",  # Another alternative
+    ]
     
-    if not os.path.exists(lease_file):
+    lease_file = None
+    for path in lease_files:
+        if os.path.exists(path):
+            lease_file = path
+            break
+    
+    if not lease_file:
         return leases
     
     try:
@@ -1137,6 +1148,10 @@ def admin_wifi_connect():
     if len(ssid) > 32:
         return jsonify({"success": False, "error": "SSID zu lang (max 32 Zeichen)"})
     
+    # Validate SSID contains only safe characters (printable ASCII)
+    if not all(32 <= ord(c) <= 126 for c in ssid):
+        return jsonify({"success": False, "error": "SSID enthält ungültige Zeichen"})
+    
     if password and len(password) < 8:
         return jsonify({"success": False, "error": "Passwort muss mindestens 8 Zeichen haben"})
     
@@ -1178,9 +1193,17 @@ def admin_git_update():
     if not script_path.exists():
         return jsonify({"success": False, "error": "Update-Script nicht gefunden"})
     
+    # Validate branch name contains only safe characters
+    branch = git_info.get("branch", "main")
+    if not re.match(r'^[a-zA-Z0-9/_.-]+$', branch):
+        return jsonify({
+            "success": False,
+            "error": "Ungültiger Branch-Name"
+        })
+    
     # Pull changes
     result = _run_safe_command(
-        ["sudo", str(script_path), "update", "--branch", git_info.get("branch", "main")],
+        ["sudo", str(script_path), "update", "--branch", branch],
         timeout=120
     )
     
