@@ -484,7 +484,7 @@
         <input type="hidden" name="shotcounter_settings" value='{{ (shot_settings_map.get(event.id) or shotcounter_defaults) | tojson }}'>
       </div>
 
-      <div class="product-editor" data-product-editor data-items='{{ event_buttons.get(event.id, default_buttons) | tojson }}'>
+      <div class="product-editor" data-product-editor data-scope="{{ event.id }}" data-items='{{ event_buttons.get(event.id, default_buttons) | tojson }}'>
         <div class="product-editor__top">
           <div>
             <strong>Produkte für dieses Event</strong>
@@ -881,8 +881,11 @@
             syncHidden();
           });
           categoryInput.addEventListener("change", () => {
-            // Update datalist when user commits a new category (on blur/enter)
-            const newCategory = categoryInput.value.trim();
+            // Commit category selection/new entry and update datalist
+            const newCategory = categoryInput.value.trim() || defaultCategory;
+            item.category = newCategory;
+            syncHidden();
+
             if (newCategory && newCategory !== defaultCategory) {
               const categories = getAllCategories();
               if (!categories.includes(newCategory)) {
