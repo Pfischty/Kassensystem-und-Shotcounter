@@ -151,6 +151,11 @@
     color: #94a3b8;
     border-color: rgba(100, 116, 139, 0.5);
   }
+  
+  /* Prevent body scroll when modal is open */
+  body.modal-open {
+    overflow: hidden;
+  }
 </style>
 
 <!-- Events Section (moved to top) -->
@@ -528,7 +533,7 @@
       const modal = document.getElementById(modalId);
       if (modal) {
         modal.classList.add('active');
-        document.body.style.overflow = 'hidden';
+        document.body.classList.add('modal-open');
       }
     };
 
@@ -536,7 +541,7 @@
       const modal = document.getElementById(modalId);
       if (modal) {
         modal.classList.remove('active');
-        document.body.style.overflow = '';
+        document.body.classList.remove('modal-open');
       }
     };
 
@@ -565,7 +570,7 @@
     // Close modal when clicking outside
     document.querySelectorAll('.modal').forEach(modal => {
       modal.addEventListener('click', (e) => {
-        if (e.target === modal) {
+        if (e.target.classList.contains('modal')) {
           closeModal(modal.id);
         }
       });
