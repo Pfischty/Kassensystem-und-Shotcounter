@@ -56,6 +56,19 @@ app = Flask(__name__, instance_relative_config=True)
 
 is_production = os.environ.get("FLASK_ENV") == "production" or os.environ.get("APP_ENV") == "production"
 
+# Configure credentials storage path (default: instance/credentials.json).
+credentials_file_env = os.environ.get("CREDENTIALS_FILE")
+if credentials_file_env:
+    credentials_manager.credentials_file = Path(credentials_file_env)
+else:
+    repo_root = Path(__file__).resolve().parent
+    legacy_path = repo_root / "credentials.json"
+    instance_path = Path(app.instance_path) / "credentials.json"
+    if legacy_path.exists() and os.access(legacy_path.parent, os.W_OK):
+        credentials_manager.credentials_file = legacy_path
+    else:
+        credentials_manager.credentials_file = instance_path
+
 # Load credentials from file or environment
 creds = credentials_manager.get_credentials()
 secret_key = creds.get("secret_key") or os.environ.get("SECRET_KEY") or app.config.get("SECRET_KEY")

@@ -42,7 +42,7 @@ Ein zentrales System verwaltet Events und schaltet zwei Funktionen einzeln frei:
 3. **Shotcounter** (`/shotcounter`): Teams anlegen und Shots pro Team verbuchen.
 
 ## Credentials Management
-Die Admin-Zugangsdaten werden in einer separaten Datei `credentials.json` gespeichert, die **nicht ins Git-Repository** übernommen wird.
+Die Admin-Zugangsdaten werden in einer separaten Datei `instance/credentials.json` gespeichert, die **nicht ins Git-Repository** übernommen wird.
 
 ### Initiale Konfiguration
 Beim ersten Start ist das System **unlocked** (ohne Passwortschutz). Du kannst im Adminbereich (`/admin`) unter "Admin-Zugangsdaten" einen Benutzernamen und ein Passwort setzen. Sobald ein Passwort gesetzt ist, wird der Adminbereich geschützt.
@@ -51,7 +51,7 @@ Beim ersten Start ist das System **unlocked** (ohne Passwortschutz). Du kannst i
 - **Im Webinterface**: Unter `/admin` → "Admin-Zugangsdaten" → "Details einblenden"
   - Benutzername anpassen
   - Passwort ändern (leer lassen, um bestehendes zu behalten)
-- **Per Datei**: `credentials.json` im Hauptverzeichnis
+- **Per Datei**: `instance/credentials.json` (Standard)
   ```json
   {
     "admin_username": "admin",
@@ -61,12 +61,12 @@ Beim ersten Start ist das System **unlocked** (ohne Passwortschutz). Du kannst i
   ```
 
 ### Fallback auf Umgebungsvariablen
-Falls keine `credentials.json` existiert, werden die Credentials aus Umgebungsvariablen geladen:
+Falls keine `instance/credentials.json` existiert, werden die Credentials aus Umgebungsvariablen geladen:
 - `ADMIN_USERNAME` (default: "admin")
 - `ADMIN_PASSWORD`
 - `SECRET_KEY`
 
-**Hinweis**: Die Datei `credentials.example.json` enthält eine Vorlage und kann als Ausgangspunkt verwendet werden.
+**Hinweis**: Die Datei `credentials.example.json` enthält eine Vorlage und kann als Ausgangspunkt verwendet werden. Du kannst den Speicherort mit `CREDENTIALS_FILE` überschreiben.
 
 ## Logging
 Sauberes, rotierendes Logging unter `instance/logs/app.log` für alle relevanten Admin-, Kassen- und Shotcounter-Aktionen.
@@ -133,19 +133,19 @@ Wenn du bereits ein Deployment mit Umgebungsvariablen (`ADMIN_USERNAME`, `ADMIN_
    - Starte die Anwendung normal - sie liest die Credentials aus den Umgebungsvariablen
    - Rufe `/admin` auf und logge dich mit den Env-Credentials ein
    - Unter "Admin-Zugangsdaten" kannst du die Credentials in die Datei übernehmen (optional neue Werte setzen)
-   - Nach dem Speichern werden die Credentials in `credentials.json` gespeichert
+   - Nach dem Speichern werden die Credentials in `instance/credentials.json` gespeichert
 
 2. **Option B - Manuell migrieren:**
-   - Erstelle `credentials.json` im Hauptverzeichnis:
+   - Erstelle `instance/credentials.json`:
      ```bash
-     cat > credentials.json << EOF
+     cat > instance/credentials.json << EOF
      {
        "admin_username": "dein-username",
        "admin_password": "dein-passwort",
        "secret_key": "$(openssl rand -hex 16)"
      }
      EOF
-     chmod 600 credentials.json
+     chmod 600 instance/credentials.json
      ```
    - Optional: Entferne `ADMIN_USERNAME` und `ADMIN_PASSWORD` aus den Umgebungsvariablen
 
