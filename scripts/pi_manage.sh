@@ -200,13 +200,22 @@ update_app() {
   ensure_venv
   if [[ $offline -eq 0 ]]; then
     echo "Hole Updates von Git (Branch ${branch}) ..."
-    git -C "${APP_ROOT}" fetch --all
-    if [[ -n "$(git -C "${APP_ROOT}" status --porcelain)" ]]; then
+
+    # If running as root (e.g. via sudo/systemd), run git as SERVICE_USER so
+    # the correct SSH keys / agent are used. Otherwise run git as the current user.
+    if [[ "$(id -u)" -eq 0 ]]; then
+      git_cmd=(sudo -u "${SERVICE_USER}" git)
+    else
+      git_cmd=(git)
+    fi
+
+    "${git_cmd[@]}" -C "${APP_ROOT}" fetch --all
+    if [[ -n "$("${git_cmd[@]}" -C "${APP_ROOT}" status --porcelain)" ]]; then
       echo "Arbeitsverzeichnis ist nicht sauber. Bitte committen oder stashen." >&2
       exit 1
     fi
-    git -C "${APP_ROOT}" checkout "${branch}"
-    git -C "${APP_ROOT}" pull --ff-only
+    "${git_cmd[@]}" -C "${APP_ROOT}" checkout "${branch}"
+    "${git_cmd[@]}" -C "${APP_ROOT}" pull --ff-only
   else
     echo "Offline-Update: überspringe Git-Fetch."
   fi
