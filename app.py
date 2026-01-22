@@ -1235,10 +1235,23 @@ def admin_git_update():
     # web user to start the privileged update unit. If sudoers is used instead
     # the unit can also be started via sudo, but calling systemctl without
     # sudo lets polkit handle authorization and avoids NoNewPrivileges issues.
-    result = _run_safe_command(
-        ["systemctl", "start", "kassensystem-update.service"],
-        timeout=300,
-    )
+    # First try starting the unit directly so polkit can handle authorization.
+    result = _run_safe_command(["systemctl", "start", "kassensystem-update.service"], timeout=300)
+
+    # If systemctl failed and the error indicates interactive authentication is required,
+    # attempt a sudo fallback. This supports systems where a narrow sudoers NOPASSWD
+    # entry is used to allow the web user to start the unit.
+    if not result["success"]:
+        err = (result.get("error") or "").lower()
+        if "interactive authentication required" in err or "authentication is required" in err or "polkit" in err:
+            result_sudo = _run_safe_command(["sudo", "systemctl", "start", "kassensystem-update.service"], timeout=300)
+            if result_sudo["success"]:
+                result = result_sudo
+            else:
+                # combine errors for better diagnostics
+                combined = (result.get("error") or "") + "\n" + (result_sudo.get("error") or "")
+                result["error"] = combined
+                result["success"] = False
     
     if result["success"]:
         app.logger.info("Git Update erfolgreich durchgeführt")
