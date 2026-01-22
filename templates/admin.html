@@ -60,17 +60,148 @@
   .shot-settings__grid span { font-size: 0.9rem; color: #cbd5e1; }
   .shot-settings__numbers { display:grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap:0.6rem; margin-top: 0.6rem; }
   .badge-yellow { background: rgba(245, 158, 11, 0.2); color: #f59e0b; border: 1px solid rgba(245,158,11,0.5); }
+  
+  /* Modal/Popup Styles */
+  .modal {
+    display: none;
+    position: fixed;
+    z-index: 1000;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    overflow: auto;
+    background-color: rgba(0, 0, 0, 0.7);
+    animation: fadeIn 0.2s ease;
+  }
+  .modal.active {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .modal-content {
+    background: #0b1222;
+    border: 1px solid rgba(255,255,255,0.1);
+    border-radius: 16px;
+    padding: 2rem;
+    max-width: 900px;
+    width: 90%;
+    max-height: 90vh;
+    overflow-y: auto;
+    position: relative;
+    animation: slideIn 0.3s ease;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+  }
+  .modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 1.5rem;
+    padding-bottom: 1rem;
+    border-bottom: 1px solid var(--border);
+  }
+  .modal-header h2 {
+    margin: 0;
+    font-size: 1.5rem;
+  }
+  .modal-close {
+    background: transparent;
+    border: none;
+    font-size: 2rem;
+    color: #94a3b8;
+    cursor: pointer;
+    padding: 0;
+    width: 40px;
+    height: 40px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 8px;
+    transition: background 0.2s ease, color 0.2s ease;
+  }
+  .modal-close:hover {
+    background: rgba(255,255,255,0.1);
+    color: #fff;
+  }
+  @keyframes fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+  @keyframes slideIn {
+    from { transform: translateY(-20px); opacity: 0; }
+    to { transform: translateY(0); opacity: 1; }
+  }
+  
+  /* Status toggle button */
+  .status-toggle {
+    min-width: 130px;
+  }
+  .status-toggle.active {
+    background: rgba(34, 197, 94, 0.2);
+    color: #22c55e;
+    border-color: rgba(34, 197, 94, 0.5);
+  }
+  .status-toggle.inactive {
+    background: rgba(239, 68, 68, 0.2);
+    color: #ef4444;
+    border-color: rgba(239, 68, 68, 0.5);
+  }
+  .status-toggle.archived {
+    background: rgba(100, 116, 139, 0.2);
+    color: #94a3b8;
+    border-color: rgba(100, 116, 139, 0.5);
+  }
+  
+  /* Prevent body scroll when modal is open */
+  body.modal-open {
+    overflow: hidden;
+  }
 </style>
 
-<div class="collapsible card" data-collapsible>
-  <div class="collapsible__header">
-    <div>
-      <h2 style="margin:0;">Neues Event</h2>
-      <div class="muted">Optional Vorlage kopieren oder später Details bearbeiten.</div>
-    </div>
-    <button type="button" class="secondary" data-toggle>Details einblenden</button>
+<!-- Events Section (moved to top) -->
+<div class="card">
+  <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+    <h2 style="margin: 0;">Events</h2>
+    <button type="button" class="primary" id="new-event-btn">+ Neues Event</button>
   </div>
-  <div class="collapsible__content" hidden>
+  {% if not events %}
+    <p>Es wurden noch keine Events angelegt.</p>
+  {% endif %}
+  {% for event in events %}
+    <div class="event-card" style="margin-bottom: 1rem;" data-event-card="{{ event.id }}">
+      <div style="display: flex; justify-content: space-between; align-items: center; padding: 0.75rem 1rem;">
+        <div>
+          <strong>{{ event.name }}</strong>
+          {% if event.is_active %}<span class="badge badge-green">aktiv</span>{% endif %}
+          {% if event.is_archived %}<span class="badge badge-red">archiviert</span>{% endif %}
+          <div class="muted">Letzte Änderung: {{ event.updated_at.strftime("%d.%m.%Y %H:%M") if event.updated_at else "–" }}</div>
+        </div>
+        <div class="inline-actions">
+          <form class="inline" method="post" action="{{ url_for('activate_event', event_id=event.id) if (event.is_archived or not event.is_active) else url_for('archive_event', event_id=event.id) }}">
+            <button type="submit" class="status-toggle {% if event.is_active %}active{% elif event.is_archived %}archived{% else %}inactive{% endif %}">
+              {% if event.is_archived %}
+                Archiviert - Aktivieren
+              {% elif event.is_active %}
+                Aktiv - Archivieren
+              {% else %}
+                Inaktiv - Aktivieren
+              {% endif %}
+            </button>
+          </form>
+          <button type="button" class="secondary" data-event-settings="{{ event.id }}">Einstellungen</button>
+        </div>
+      </div>
+    </div>
+  {% endfor %}
+</div>
+
+<!-- Modal for New Event -->
+<div id="new-event-modal" class="modal">
+  <div class="modal-content">
+    <div class="modal-header">
+      <h2>Neues Event anlegen</h2>
+      <button type="button" class="modal-close" data-close-modal="new-event-modal">&times;</button>
+    </div>
     <form method="post" action="{{ url_for('create_event') }}" data-event-form data-scope="new">
       <div class="stack">
         <label for="name">Name</label>
@@ -247,160 +378,143 @@
   </div>
 </div>
 
-<div class="card">
-  <h2>Events</h2>
-  {% if not events %}
-    <p>Es wurden noch keine Events angelegt.</p>
-  {% endif %}
-  {% for event in events %}
-    <div class="event-card collapsible" data-collapsible data-event-card="{{ event.id }}">
-      <div class="collapsible__header">
-        <div>
-          <strong>{{ event.name }}</strong>
-          {% if event.is_active %}<span class="badge badge-green">aktiv</span>{% endif %}
-          {% if event.is_archived %}<span class="badge badge-red">archiviert</span>{% endif %}
-          <div class="muted">Letzte Änderung: {{ event.updated_at.strftime("%d.%m.%Y %H:%M") if event.updated_at else "–" }}</div>
-        </div>
-        <div class="inline-actions">
-          <form class="inline" method="post" action="{{ url_for('activate_event', event_id=event.id) }}">
-            <button type="submit" class="secondary">Aktivieren</button>
-          </form>
-          <form class="inline" method="post" action="{{ url_for('archive_event', event_id=event.id) }}">
-            <button type="submit" class="danger">Archivieren</button>
-          </form>
-          <button type="button" class="secondary" data-toggle>Details</button>
+<!-- Modals for Event Settings (one for each event, generated dynamically) -->
+{% for event in events %}
+<div id="event-modal-{{ event.id }}" class="modal">
+  <div class="modal-content">
+    <div class="modal-header">
+      <h2>{{ event.name }} - Einstellungen</h2>
+      <button type="button" class="modal-close" data-close-modal="event-modal-{{ event.id }}">&times;</button>
+    </div>
+    <form method="post" action="{{ url_for('update_event', event_id=event.id) }}" data-event-form data-scope="{{ event.id }}">
+      <div class="field-inline" style="margin: 0.4rem 0;">
+        <label><input type="checkbox" name="kassensystem_enabled" {% if event.kassensystem_enabled %}checked{% endif %}> Kassensystem aktiv</label>
+        <label><input type="checkbox" name="shotcounter_enabled" {% if event.shotcounter_enabled %}checked{% endif %}> Shotcounter aktiv</label>
+      </div>
+      <div class="field-inline" style="margin: 0.6rem 0;">
+        <label><input type="checkbox" name="auto_reload_on_add" {% if event.shared_settings and event.shared_settings.get('auto_reload_on_add', True) %}checked{% endif %} data-shared-setting> Auto-Reload beim Hinzufügen (Kasse)</label>
+      </div>
+      <div class="muted" style="margin-bottom: 0.6rem;">Wenn deaktiviert, wird die Kasse nicht neu geladen beim Hinzufügen von Artikeln (performanter).</div>
+
+      {% if events|length > 1 %}
+      <div class="stack" style="margin:0.6rem 0;">
+        <label>Einstellungen aus Event kopieren</label>
+        <div class="field-inline">
+          <select data-copy-select>
+            <option value="">Bitte wählen</option>
+            {% for template in events if template.id != event.id %}
+              <option value="{{ template.id }}">{{ template.name }}</option>
+            {% endfor %}
+          </select>
+          <button type="button" class="secondary" data-copy-btn>Übernehmen</button>
+          <span class="pill">kopiert auch Produkte</span>
         </div>
       </div>
-      <div class="collapsible__content" hidden>
-        <form method="post" action="{{ url_for('update_event', event_id=event.id) }}" data-event-form data-scope="{{ event.id }}">
-          <div class="field-inline" style="margin: 0.4rem 0;">
-            <label><input type="checkbox" name="kassensystem_enabled" {% if event.kassensystem_enabled %}checked{% endif %}> Kassensystem aktiv</label>
-            <label><input type="checkbox" name="shotcounter_enabled" {% if event.shotcounter_enabled %}checked{% endif %}> Shotcounter aktiv</label>
-          </div>
-          <div class="field-inline" style="margin: 0.6rem 0;">
-            <label><input type="checkbox" name="auto_reload_on_add" {% if event.shared_settings and event.shared_settings.get('auto_reload_on_add', True) %}checked{% endif %} data-shared-setting> Auto-Reload beim Hinzufügen (Kasse)</label>
-          </div>
-          <div class="muted" style="margin-bottom: 0.6rem;">Wenn deaktiviert, wird die Kasse nicht neu geladen beim Hinzufügen von Artikeln (performanter).</div>
+      {% endif %}
 
-          {% if events|length > 1 %}
-          <div class="stack" style="margin:0.6rem 0;">
-            <label>Einstellungen aus Event kopieren</label>
-            <div class="field-inline">
-              <select data-copy-select>
-                <option value="">Bitte wählen</option>
-                {% for template in events if template.id != event.id %}
-                  <option value="{{ template.id }}">{{ template.name }}</option>
-                {% endfor %}
-              </select>
-              <button type="button" class="secondary" data-copy-btn>Übernehmen</button>
-              <span class="pill">kopiert auch Produkte</span>
-            </div>
-          </div>
-          {% endif %}
+      <input type="hidden" name="shared_settings" value='{{ (event.shared_settings or {}) | tojson }}'>
 
-          <input type="hidden" name="shared_settings" value='{{ (event.shared_settings or {}) | tojson }}'>
-
-          <div
-            class="shot-settings"
-            data-shot-settings
-            data-defaults='{{ shotcounter_defaults | tojson }}'
-            data-current='{{ (shot_settings_map.get(event.id) or shotcounter_defaults) | tojson }}'
-          >
-            <strong>Shotcounter Styling</strong>
-            <div class="muted">Steuert Vollbild/Touch: Farben, Schriftgrößen und Teamanzahl.</div>
-            <div class="shot-settings__grid">
-              <label class="stack">
-                <span>Hintergrund</span>
-                <input type="color" class="color-input" data-shot-field="background_color">
-              </label>
-              <label class="stack">
-                <span>Primärfarbe (Karten)</span>
-                <input type="color" class="color-input" data-shot-field="primary_color">
-              </label>
-              <label class="stack">
-                <span>Sekundärfarbe (Verlauf)</span>
-                <input type="color" class="color-input" data-shot-field="secondary_color">
-              </label>
-              <label class="stack">
-                <span>Terziärfarbe (Verlauf)</span>
-                <input type="color" class="color-input" data-shot-field="tertiary_color">
-              </label>
-            </div>
-            <div class="shot-settings__numbers">
-              <label class="stack">
-                <span>Schriftgröße Titel (rem)</span>
-                <input type="number" step="0.1" min="0.5" max="10" data-shot-field="title_size">
-              </label>
-              <label class="stack">
-                <span>Schriftgröße Teams (rem)</span>
-                <input type="number" step="0.1" min="0.5" max="10" data-shot-field="team_size">
-              </label>
-              <label class="stack">
-                <span>Teams im Leaderboard</span>
-                <input type="number" step="1" min="1" max="50" data-shot-field="leaderboard_limit">
-              </label>
-            </div>
-            
-            <!-- Background Image Upload -->
-            <div style="margin-top: 1rem; padding-top: 1rem; border-top: 1px solid var(--border);">
-              <strong>Hintergrundbild</strong>
-              <div class="muted">Optional: Bild als Hintergrund für die Leaderboard-Anzeige hochladen.</div>
-              {% set current_bg = shot_settings_map.get(event.id, {}).get('background_image') %}
-              {% if current_bg %}
-                <div style="margin-top: 0.6rem; display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap;">
-                  <img src="{{ url_for('uploaded_file', filename=current_bg) }}" alt="Aktuelles Hintergrundbild" style="max-width: 200px; max-height: 120px; border-radius: 8px; border: 1px solid var(--border);">
-                  <form method="post" action="{{ url_for('upload_background', event_id=event.id) }}" style="display: inline;">
-                    <input type="hidden" name="delete_background" value="1">
-                    <button type="submit" class="danger" onclick="return confirm('Hintergrundbild wirklich entfernen?');">Bild entfernen</button>
-                  </form>
-                </div>
-              {% endif %}
-              <form method="post" action="{{ url_for('upload_background', event_id=event.id) }}" enctype="multipart/form-data" style="margin-top: 0.6rem;">
-                <div class="field-inline">
-                  <input type="file" name="background_image" accept="image/png,image/jpeg,image/gif,image/webp" style="max-width: 300px;">
-                  <button type="submit">Hochladen</button>
-                </div>
-                <div class="muted" style="margin-top: 0.3rem;">Erlaubte Formate: PNG, JPG, GIF, WebP. Max. 5 MB.</div>
+      <div
+        class="shot-settings"
+        data-shot-settings
+        data-defaults='{{ shotcounter_defaults | tojson }}'
+        data-current='{{ (shot_settings_map.get(event.id) or shotcounter_defaults) | tojson }}'
+      >
+        <strong>Shotcounter Styling</strong>
+        <div class="muted">Steuert Vollbild/Touch: Farben, Schriftgrößen und Teamanzahl.</div>
+        <div class="shot-settings__grid">
+          <label class="stack">
+            <span>Hintergrund</span>
+            <input type="color" class="color-input" data-shot-field="background_color">
+          </label>
+          <label class="stack">
+            <span>Primärfarbe (Karten)</span>
+            <input type="color" class="color-input" data-shot-field="primary_color">
+          </label>
+          <label class="stack">
+            <span>Sekundärfarbe (Verlauf)</span>
+            <input type="color" class="color-input" data-shot-field="secondary_color">
+          </label>
+          <label class="stack">
+            <span>Terziärfarbe (Verlauf)</span>
+            <input type="color" class="color-input" data-shot-field="tertiary_color">
+          </label>
+        </div>
+        <div class="shot-settings__numbers">
+          <label class="stack">
+            <span>Schriftgröße Titel (rem)</span>
+            <input type="number" step="0.1" min="0.5" max="10" data-shot-field="title_size">
+          </label>
+          <label class="stack">
+            <span>Schriftgröße Teams (rem)</span>
+            <input type="number" step="0.1" min="0.5" max="10" data-shot-field="team_size">
+          </label>
+          <label class="stack">
+            <span>Teams im Leaderboard</span>
+            <input type="number" step="1" min="1" max="50" data-shot-field="leaderboard_limit">
+          </label>
+        </div>
+        
+        <!-- Background Image Upload -->
+        <div style="margin-top: 1rem; padding-top: 1rem; border-top: 1px solid var(--border);">
+          <strong>Hintergrundbild</strong>
+          <div class="muted">Optional: Bild als Hintergrund für die Leaderboard-Anzeige hochladen.</div>
+          {% set current_bg = shot_settings_map.get(event.id, {}).get('background_image') %}
+          {% if current_bg %}
+            <div style="margin-top: 0.6rem; display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap;">
+              <img src="{{ url_for('uploaded_file', filename=current_bg) }}" alt="Aktuelles Hintergrundbild" style="max-width: 200px; max-height: 120px; border-radius: 8px; border: 1px solid var(--border);">
+              <form method="post" action="{{ url_for('upload_background', event_id=event.id) }}" style="display: inline;">
+                <input type="hidden" name="delete_background" value="1">
+                <button type="submit" class="danger" onclick="return confirm('Hintergrundbild wirklich entfernen?');">Bild entfernen</button>
               </form>
             </div>
-            
-            <input type="hidden" name="shotcounter_settings" value='{{ (shot_settings_map.get(event.id) or shotcounter_defaults) | tojson }}'>
-          </div>
-
-          <div class="product-editor" data-product-editor data-items='{{ event_buttons.get(event.id, default_buttons) | tojson }}'>
-            <div class="product-editor__top">
-              <div>
-                <strong>Produkte für dieses Event</strong>
-                <div class="muted">Titel, Preis, Farbe bearbeiten. Reihenfolge per Drag & Drop ändern.</div>
-              </div>
-              <div class="inline-actions">
-                <label class="secondary" style="padding:0.45rem 0.65rem; cursor:pointer;">
-                  JSON importieren
-                  <input type="file" accept="application/json" data-product-import hidden>
-                </label>
-                <button type="button" class="secondary" data-product-export>Daten exportieren</button>
-                <button type="button" class="secondary" data-add-product>+ Produkt</button>
-              </div>
+          {% endif %}
+          <form method="post" action="{{ url_for('upload_background', event_id=event.id) }}" enctype="multipart/form-data" style="margin-top: 0.6rem;">
+            <div class="field-inline">
+              <input type="file" name="background_image" accept="image/png,image/jpeg,image/gif,image/webp" style="max-width: 300px;">
+              <button type="submit">Hochladen</button>
             </div>
-            <div class="product-editor__preview" data-product-preview></div>
-            <div class="product-editor__list" data-product-list></div>
-            <input type="hidden" name="kassensystem_settings" value='{{ kass_settings.get(event.id, {"items": event_buttons.get(event.id, default_buttons)}) | tojson }}'>
-          </div>
-
-          <div class="field-inline" style="margin-top:0.8rem;">
-            <label class="secondary" style="padding:0.45rem 0.65rem; cursor:pointer;">
-              Event-JSON importieren
-              <input type="file" accept="application/json" data-import-event hidden>
-            </label>
-            <button type="button" class="secondary" data-export-event>Event-JSON exportieren</button>
-            <span class="muted">Import ersetzt die Felder oben, JSON bleibt optional.</span>
-          </div>
-          <button type="submit">Speichern</button>
-        </form>
+            <div class="muted" style="margin-top: 0.3rem;">Erlaubte Formate: PNG, JPG, GIF, WebP. Max. 5 MB.</div>
+          </form>
+        </div>
+        
+        <input type="hidden" name="shotcounter_settings" value='{{ (shot_settings_map.get(event.id) or shotcounter_defaults) | tojson }}'>
       </div>
-    </div>
-  {% endfor %}
+
+      <div class="product-editor" data-product-editor data-items='{{ event_buttons.get(event.id, default_buttons) | tojson }}'>
+        <div class="product-editor__top">
+          <div>
+            <strong>Produkte für dieses Event</strong>
+            <div class="muted">Titel, Preis, Farbe bearbeiten. Reihenfolge per Drag & Drop ändern.</div>
+          </div>
+          <div class="inline-actions">
+            <label class="secondary" style="padding:0.45rem 0.65rem; cursor:pointer;">
+              JSON importieren
+              <input type="file" accept="application/json" data-product-import hidden>
+            </label>
+            <button type="button" class="secondary" data-product-export>Daten exportieren</button>
+            <button type="button" class="secondary" data-add-product>+ Produkt</button>
+          </div>
+        </div>
+        <div class="product-editor__preview" data-product-preview></div>
+        <div class="product-editor__list" data-product-list></div>
+        <input type="hidden" name="kassensystem_settings" value='{{ kass_settings.get(event.id, {"items": event_buttons.get(event.id, default_buttons)}) | tojson }}'>
+      </div>
+
+      <div class="field-inline" style="margin-top:0.8rem;">
+        <label class="secondary" style="padding:0.45rem 0.65rem; cursor:pointer;">
+          Event-JSON importieren
+          <input type="file" accept="application/json" data-import-event hidden>
+        </label>
+        <button type="button" class="secondary" data-export-event>Event-JSON exportieren</button>
+        <span class="muted">Import ersetzt die Felder oben, JSON bleibt optional.</span>
+      </div>
+      <button type="submit">Speichern</button>
+    </form>
+  </div>
 </div>
+{% endfor %}
+
 
 <script id="event-settings-data" type="application/json">
   {{ event_payloads | tojson }}
@@ -415,6 +529,63 @@
 <script>
   (function () {
     try {
+    // Modal functionality
+    const openModal = (modalId) => {
+      const modal = document.getElementById(modalId);
+      if (modal) {
+        modal.classList.add('active');
+        document.body.classList.add('modal-open');
+      }
+    };
+
+    const closeModal = (modalId) => {
+      const modal = document.getElementById(modalId);
+      if (modal) {
+        modal.classList.remove('active');
+        document.body.classList.remove('modal-open');
+      }
+    };
+
+    // Open new event modal
+    const newEventBtn = document.getElementById('new-event-btn');
+    if (newEventBtn) {
+      newEventBtn.addEventListener('click', () => openModal('new-event-modal'));
+    }
+
+    // Open event settings modals
+    document.querySelectorAll('[data-event-settings]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const eventId = btn.getAttribute('data-event-settings');
+        openModal(`event-modal-${eventId}`);
+      });
+    });
+
+    // Close modals
+    document.querySelectorAll('[data-close-modal]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const modalId = btn.getAttribute('data-close-modal');
+        closeModal(modalId);
+      });
+    });
+
+    // Close modal when clicking outside
+    document.querySelectorAll('.modal').forEach(modal => {
+      modal.addEventListener('click', (e) => {
+        if (e.target.classList.contains('modal')) {
+          closeModal(modal.id);
+        }
+      });
+    });
+
+    // Close modal on escape key
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        document.querySelectorAll('.modal.active').forEach(modal => {
+          closeModal(modal.id);
+        });
+      }
+    });
+
     const fallbackColor = "#1f2a44";
     const defaultCategory = "Standard";
 
