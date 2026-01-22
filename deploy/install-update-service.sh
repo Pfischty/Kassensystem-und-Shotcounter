@@ -6,6 +6,8 @@ APP_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 UNIT_SRC="${APP_ROOT}/deploy/kassensystem-update.service"
 UNIT_DST="/etc/systemd/system/kassensystem-update.service"
 SUDOERS_DST="/etc/sudoers.d/kassensystem-update"
+POLKIT_SRC="${APP_ROOT}/deploy/polkit/50-kassensystem-update.pkla"
+POLKIT_DST="/etc/polkit-1/localauthority/50-local.d/50-kassensystem-update.pkla"
 
 if [[ $(id -u) -ne 0 ]]; then
   echo "Please run as root: sudo $0"
@@ -31,6 +33,13 @@ cat > "${SUDOERS_DST}" <<'EOF'
 kassensystem ALL=(root) NOPASSWD: /bin/systemctl start kassensystem-update.service, /bin/systemctl status kassensystem-update.service
 EOF
 chmod 440 "${SUDOERS_DST}"
+
+if [[ -f "${POLKIT_SRC}" ]]; then
+  echo "Installing polkit rule to allow 'kassensystem' to manage the update unit..."
+  mkdir -p "$(dirname "${POLKIT_DST}")"
+  cp "${POLKIT_SRC}" "${POLKIT_DST}"
+  chmod 644 "${POLKIT_DST}"
+fi
 
 echo "Installation complete."
 echo "If the web service runs with NoNewPrivileges=true, you may still need to set NoNewPrivileges=false for the web unit or restart the service."
