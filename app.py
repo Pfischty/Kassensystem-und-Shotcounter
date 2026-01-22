@@ -297,6 +297,15 @@ DEFAULT_SHOTCOUNTER_SETTINGS: Dict[str, int | float | str] = {
     "leaderboard_layout": "stacked",
 }
 
+DEFAULT_PRICE_LIST_SETTINGS: Dict[str, int | float | str | list] = {
+    "font_size": 1.4,  # rem
+    "rotation_seconds": 10,
+    "background_mode": "none",  # none | custom
+    "background_color": "#0b1222",
+    "background_image": None,
+    "enabled_categories": [],
+}
+
 HEX_COLOR_PATTERN = re.compile(r"^#([0-9a-fA-F]{6}|[0-9a-fA-F]{3})$")
 
 
@@ -339,6 +348,25 @@ def _sanitize_leaderboard_limit(value: int | str | None, fallback: int) -> int:
     return min(parsed, 50)
 
 
+def _sanitize_rotation_seconds(value: int | str | None, fallback: int) -> int:
+    try:
+        parsed = int(value) if value is not None else fallback
+    except (TypeError, ValueError):
+        return fallback
+    if parsed < 2:
+        return 2
+    return min(parsed, 120)
+
+
+def _sanitize_price_list_layout(value: str | None, fallback: str) -> str:
+    allowed = {"none", "custom"}
+    if isinstance(value, str):
+        candidate = value.strip().lower()
+        if candidate in allowed:
+            return candidate
+    return fallback
+
+
 def _sanitize_leaderboard_layout(value: str | None, fallback: str) -> str:
     allowed = {"stacked", "inline"}
     if isinstance(value, str):
@@ -346,6 +374,19 @@ def _sanitize_leaderboard_layout(value: str | None, fallback: str) -> str:
         if candidate in allowed:
             return candidate
     return fallback
+
+
+def _sanitize_price_list_categories(value: object) -> List[str]:
+    if not isinstance(value, list):
+        return []
+    cleaned: List[str] = []
+    for item in value:
+        if not isinstance(item, str):
+            continue
+        name = item.strip()
+        if name and name not in cleaned:
+            cleaned.append(name)
+    return cleaned
 
 
 def allowed_file(filename: str) -> bool:
@@ -386,6 +427,23 @@ def delete_background_image(filename: str | None) -> None:
         app.logger.error("Fehler beim Löschen des Hintergrundbildes: %s", exc)
 
 
+def save_price_list_image(file: FileStorage | None, event_id: int) -> str | None:
+    """Save uploaded price list background image and return the filename."""
+    if not file or not file.filename:
+        return None
+    if not allowed_file(file.filename):
+        return None
+    ext = file.filename.rsplit(".", 1)[1].lower()
+    filename = f"pl_{event_id}_{secrets.token_hex(8)}.{ext}"
+    filepath = Path(app.config["UPLOAD_FOLDER"]) / filename
+    try:
+        file.save(str(filepath))
+        return filename
+    except Exception as exc:
+        app.logger.error("Fehler beim Speichern des Preisliste-Hintergrundbildes: %s", exc)
+        return None
+
+
 def validate_shotcounter_settings(raw: dict | None) -> Dict[str, int | float | str]:
     settings = {**DEFAULT_SHOTCOUNTER_SETTINGS}
     incoming = raw if isinstance(raw, dict) else {}
@@ -422,9 +480,47 @@ def validate_shotcounter_settings(raw: dict | None) -> Dict[str, int | float | s
     return settings
 
 
+def validate_price_list_settings(raw: dict | None) -> Dict[str, int | float | str | list]:
+    settings = {**DEFAULT_PRICE_LIST_SETTINGS}
+    incoming = raw if isinstance(raw, dict) else {}
+    settings["font_size"] = _sanitize_font_size(
+        incoming.get("font_size"), float(DEFAULT_PRICE_LIST_SETTINGS["font_size"])
+    )
+    settings["rotation_seconds"] = _sanitize_rotation_seconds(
+        incoming.get("rotation_seconds"), int(DEFAULT_PRICE_LIST_SETTINGS["rotation_seconds"])
+    )
+    settings["background_mode"] = _sanitize_price_list_layout(
+        incoming.get("background_mode"), str(DEFAULT_PRICE_LIST_SETTINGS["background_mode"])
+    )
+    settings["background_color"] = _sanitize_hex_color(
+        incoming.get("background_color"), str(DEFAULT_PRICE_LIST_SETTINGS["background_color"])
+    )
+    settings["enabled_categories"] = _sanitize_price_list_categories(incoming.get("enabled_categories"))
+
+    if incoming.get("background_image"):
+        bg_img = str(incoming["background_image"])
+        filepath = Path(app.config["UPLOAD_FOLDER"]) / bg_img
+        if filepath.exists() and filepath.is_file():
+            settings["background_image"] = bg_img
+    return settings
+
+
+def validate_shared_settings(raw: dict | None) -> Dict:
+    base = raw if isinstance(raw, dict) else {}
+    sanitized = {k: v for k, v in base.items() if k not in {"auto_reload_on_add", "price_list"}}
+    sanitized["auto_reload_on_add"] = bool(base.get("auto_reload_on_add", True))
+    sanitized["price_list"] = validate_price_list_settings(base.get("price_list"))
+    return sanitized
+
+
 def resolve_shotcounter_settings(event: Event | None) -> Dict[str, int | float | str]:
     raw_settings = event.shotcounter_settings if event and isinstance(event.shotcounter_settings, dict) else {}
     return validate_shotcounter_settings(raw_settings)
+
+
+def resolve_price_list_settings(event: Event | None) -> Dict[str, int | float | str | list]:
+    raw = event.shared_settings if event and isinstance(event.shared_settings, dict) else {}
+    return validate_price_list_settings(raw.get("price_list"))
 
 
 def require_active_event(*, kassensystem: bool = False, shotcounter: bool = False) -> Event:
@@ -790,6 +886,7 @@ def admin():
         kass_settings=kass_settings,
         event_payloads=event_payloads,
         shotcounter_defaults=DEFAULT_SHOTCOUNTER_SETTINGS,
+        price_list_defaults=DEFAULT_PRICE_LIST_SETTINGS,
         shot_settings_map=shot_settings_map,
         admin_username=admin_username,
         has_password=has_password,
@@ -809,13 +906,12 @@ def create_event():
     try:
         shared_settings = parse_json_field(request.form.get("shared_settings"))
         # Add auto_reload_on_add from checkbox
-        # If checkbox is present (checked), it will be "on", if unchecked it won't be in form
-        # For new events without this field in the form, default to True for backward compatibility
         if "auto_reload_on_add" in request.form:
             shared_settings["auto_reload_on_add"] = bool(request.form.get("auto_reload_on_add"))
         else:
-            # Default to True for backward compatibility if not in form
             shared_settings["auto_reload_on_add"] = True
+
+        shared_settings = validate_shared_settings(shared_settings)
         
         kass_settings = validate_and_normalize_buttons(parse_json_field(request.form.get("kassensystem_settings")))
         shot_settings = validate_shotcounter_settings(parse_json_field(request.form.get("shotcounter_settings")))
@@ -846,10 +942,8 @@ def update_event(event_id: int):
 
     try:
         event.shared_settings = parse_json_field(request.form.get("shared_settings"))
-        # Handle auto_reload_on_add checkbox
-        # When updating an event, if checkbox is not in form, it means it was unchecked (set to False)
-        # If checkbox is in form with value "on", it's checked (set to True)
         event.shared_settings["auto_reload_on_add"] = bool(request.form.get("auto_reload_on_add"))
+        event.shared_settings = validate_shared_settings(event.shared_settings)
         
         event.kassensystem_settings = validate_and_normalize_buttons(
             parse_json_field(request.form.get("kassensystem_settings"))
@@ -1459,6 +1553,38 @@ def shotcounter_touch():
     return render_template("shotcounter_touch.html", teams=teams, event=event)
 
 
+@app.route("/preisliste")
+def price_list():
+    event = require_active_event()
+    price_settings = resolve_price_list_settings(event)
+
+    try:
+        kass_settings = validate_and_normalize_buttons(event.kassensystem_settings or {})
+    except ValueError:
+        kass_settings = validate_and_normalize_buttons({})
+
+    items = kass_settings.get("items", []) if isinstance(kass_settings, dict) else []
+    categories = _build_price_list_categories(items)
+
+    enabled = price_settings.get("enabled_categories") or []
+    if enabled:
+        categories = [cat for cat in categories if cat["name"] in enabled]
+
+    background_image = None
+    if price_settings.get("background_mode") == "custom":
+        background_image = price_settings.get("background_image") or None
+
+    return render_template(
+        "price_list.html",
+        event=event,
+        categories=categories,
+        rotation_seconds=int(price_settings.get("rotation_seconds", 10)),
+        font_size=float(price_settings.get("font_size", 1.4)),
+        background_image=background_image,
+        background_color=price_settings.get("background_color", "#0b1222"),
+    )
+
+
 def _leaderboard_limit(default: int) -> int:
     """Sanitizes the requested leaderboard size."""
 
@@ -1489,6 +1615,23 @@ def _top_teams(event: Event, limit: int) -> List[Team]:
 
 def _serialize_teams(teams: Iterable[Team]) -> List[Dict[str, int | str]]:
     return [{"id": team.id, "name": team.name, "shots": team.shots} for team in teams]
+
+
+def _build_price_list_categories(items: List[Dict]) -> List[Dict[str, object]]:
+    ordered: List[str] = []
+    bucket: Dict[str, List[Dict[str, object]]] = {}
+    for item in items:
+        category = str(item.get("category") or "Standard").strip() or "Standard"
+        if category not in bucket:
+            bucket[category] = []
+            ordered.append(category)
+        bucket[category].append(
+            {
+                "label": item.get("label") or item.get("name") or "",
+                "price": item.get("price", 0),
+            }
+        )
+    return [{"name": name, "items": bucket.get(name, [])} for name in ordered]
 
 
 def _redirect_target(default: str = "shotcounter") -> str:
@@ -1699,6 +1842,61 @@ def upload_background(event_id: int):
     else:
         flash("Fehler beim Hochladen des Bildes.", "error")
     
+    return redirect(url_for("admin"))
+
+
+@app.route("/admin/events/<int:event_id>/price-list/background", methods=["POST"])
+def upload_price_list_background(event_id: int):
+    """Upload or delete background image for the price list view."""
+    event = Event.query.get_or_404(event_id)
+    shared_settings = validate_shared_settings(event.shared_settings or {})
+    price_settings = validate_price_list_settings(shared_settings.get("price_list"))
+
+    if request.form.get("delete_price_list_background"):
+        old_image = price_settings.get("background_image")
+        if old_image:
+            delete_background_image(old_image)
+        price_settings["background_image"] = None
+        shared_settings["price_list"] = price_settings
+        event.shared_settings = shared_settings
+        attributes.flag_modified(event, "shared_settings")
+        db.session.commit()
+        flash("Preisliste-Hintergrundbild wurde entfernt.", "success")
+        return redirect(url_for("admin"))
+
+    if "price_list_background" not in request.files:
+        flash("Keine Datei ausgewählt.", "error")
+        return redirect(url_for("admin"))
+
+    file = request.files["price_list_background"]
+    if file.filename == "":
+        flash("Keine Datei ausgewählt.", "error")
+        return redirect(url_for("admin"))
+
+    if not allowed_file(file.filename):
+        flash(
+            f"Ungültiger Dateityp. Erlaubt sind: {', '.join(ALLOWED_EXTENSIONS)}",
+            "error",
+        )
+        return redirect(url_for("admin"))
+
+    old_image = price_settings.get("background_image")
+    if old_image:
+        delete_background_image(old_image)
+
+    filename = save_price_list_image(file, event_id)
+    if filename:
+        price_settings["background_image"] = filename
+        price_settings["background_mode"] = "custom"
+        shared_settings["price_list"] = price_settings
+        event.shared_settings = shared_settings
+        attributes.flag_modified(event, "shared_settings")
+        db.session.commit()
+        app.logger.info("Preisliste-Hintergrundbild hochgeladen für Event %s: %s", event.name, filename)
+        flash("Preisliste-Hintergrundbild wurde hochgeladen.", "success")
+    else:
+        flash("Fehler beim Hochladen des Bildes.", "error")
+
     return redirect(url_for("admin"))
 
 

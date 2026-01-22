@@ -231,7 +231,7 @@
       </div>
       {% endif %}
 
-      <input type="hidden" name="shared_settings" value='{}'>
+      <input type="hidden" name="shared_settings" value='{{ {"price_list": price_list_defaults} | tojson }}'>
 
       <div
         class="shot-settings"
@@ -283,6 +283,55 @@
           </label>
         </div>
         <input type="hidden" name="shotcounter_settings" value='{{ shotcounter_defaults | tojson }}'>
+      </div>
+
+      <div class="collapsible" data-collapsible data-start-open="false" style="margin-top: 0.8rem;">
+        <div class="collapsible__header">
+          <div>
+            <strong>Preisliste</strong>
+            <div class="muted">Rotierende Kategorien für die Preisanzeige.</div>
+          </div>
+          <button type="button" class="secondary" data-toggle>Details einblenden</button>
+        </div>
+        <div class="collapsible__content" hidden>
+          <div
+            class="price-settings"
+            data-price-settings
+            data-defaults='{{ price_list_defaults | tojson }}'
+            data-current='{{ price_list_defaults | tojson }}'
+          >
+            <div class="shot-settings__numbers">
+              <label class="stack">
+                <span>Schriftgröße (rem)</span>
+                <input type="number" step="0.1" min="0.6" max="6" data-price-field="font_size">
+              </label>
+              <label class="stack">
+                <span>Wechsel-Intervall (Sek.)</span>
+                <input type="number" step="1" min="2" max="120" data-price-field="rotation_seconds">
+              </label>
+              <label class="stack">
+                <span>Hintergrundbild</span>
+                <select data-price-field="background_mode">
+                  <option value="none">Kein Bild</option>
+                  <option value="custom">Eigenes Bild verwenden</option>
+                </select>
+              </label>
+            </div>
+            <div class="shot-settings__numbers" style="margin-top: 0.6rem;">
+              <label class="stack">
+                <span>Hintergrundfarbe</span>
+                <input type="color" class="color-input" data-price-field="background_color">
+              </label>
+            </div>
+            <div class="muted" style="margin-top: 0.4rem;">Hintergrundbild kann nach dem Speichern hochgeladen werden.</div>
+            <div class="stack" style="margin-top: 0.8rem;">
+              <span>Kategorien aktivieren</span>
+              <div data-price-categories></div>
+              <div class="hint" data-price-error style="display:none; color:#ef4444;"></div>
+              <div class="muted">Kategorien kommen aus den Kassenartikeln.</div>
+            </div>
+          </div>
+        </div>
       </div>
 
       <input type="hidden" name="kassensystem_settings" value='{{ {"items": default_buttons} | tojson }}'>
@@ -510,6 +559,87 @@
         <input type="hidden" name="shotcounter_settings" value='{{ (shot_settings_map.get(event.id) or shotcounter_defaults) | tojson }}'>
       </div>
 
+      <div class="collapsible" data-collapsible data-start-open="false" style="margin-top: 0.8rem;">
+        <div class="collapsible__header">
+          <div>
+            <strong>Preisliste</strong>
+            <div class="muted">Rotierende Kategorien für die Preisanzeige.</div>
+          </div>
+          <button type="button" class="secondary" data-toggle>Details einblenden</button>
+        </div>
+        <div class="collapsible__content" hidden>
+          {% set current_pl = (event.shared_settings or {}).get('price_list', {}) %}
+          {% set current_pl_bg = current_pl.get('background_image') %}
+          <div
+            class="price-settings"
+            data-price-settings
+            data-defaults='{{ price_list_defaults | tojson }}'
+            data-current='{{ current_pl | tojson }}'
+            data-scope="{{ event.id }}"
+          >
+            <div class="shot-settings__numbers">
+              <label class="stack">
+                <span>Schriftgröße (rem)</span>
+                <input type="number" step="0.1" min="0.6" max="6" data-price-field="font_size">
+              </label>
+              <label class="stack">
+                <span>Wechsel-Intervall (Sek.)</span>
+                <input type="number" step="1" min="2" max="120" data-price-field="rotation_seconds">
+              </label>
+              <label class="stack">
+                <span>Hintergrundbild</span>
+                <select data-price-field="background_mode">
+                  <option value="none">Kein Bild</option>
+                  <option value="custom">Eigenes Bild verwenden</option>
+                </select>
+              </label>
+            </div>
+            <div class="shot-settings__numbers" style="margin-top: 0.6rem;">
+              <label class="stack">
+                <span>Hintergrundfarbe</span>
+                <input type="color" class="color-input" data-price-field="background_color">
+              </label>
+            </div>
+
+            <div data-price-custom-bg style="margin-top: 0.8rem; padding-top: 0.8rem; border-top: 1px solid var(--border);">
+              <strong>Preisliste Hintergrundbild</strong>
+              <div class="muted">Optional: eigenes Bild für die Preisliste.</div>
+              {% if current_pl_bg %}
+                <div style="margin-top: 0.6rem; display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap;">
+                  <img src="{{ url_for('uploaded_file', filename=current_pl_bg) }}" alt="Aktuelles Preisliste-Hintergrundbild" style="max-width: 200px; max-height: 120px; border-radius: 8px; border: 1px solid var(--border);">
+                  <button
+                    type="submit"
+                    class="danger"
+                    form="pl-delete-{{ event.id }}"
+                    onclick="return confirm('Preisliste-Hintergrundbild wirklich entfernen?');"
+                  >Bild entfernen</button>
+                </div>
+              {% endif %}
+              <div style="margin-top: 0.6rem;">
+                <div class="field-inline">
+                  <input
+                    type="file"
+                    name="price_list_background"
+                    accept="image/png,image/jpeg,image/gif,image/webp"
+                    style="max-width: 300px;"
+                    form="pl-upload-{{ event.id }}"
+                  >
+                  <button type="submit" form="pl-upload-{{ event.id }}">Hochladen</button>
+                </div>
+                <div class="muted" style="margin-top: 0.3rem;">Erlaubte Formate: PNG, JPG, GIF, WebP. Max. 5 MB.</div>
+              </div>
+            </div>
+
+            <div class="stack" style="margin-top: 0.8rem;">
+              <span>Kategorien aktivieren</span>
+              <div data-price-categories></div>
+              <div class="hint" data-price-error style="display:none; color:#ef4444;"></div>
+              <div class="muted">Kategorien kommen aus den Kassenartikeln.</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <div class="product-editor" data-product-editor data-scope="{{ event.id }}" data-items='{{ event_buttons.get(event.id, default_buttons) | tojson }}'>
         <div class="product-editor__top">
           <div>
@@ -547,6 +677,10 @@
     <form id="bg-delete-{{ event.id }}" method="post" action="{{ url_for('upload_background', event_id=event.id) }}">
       <input type="hidden" name="delete_background" value="1">
     </form>
+    <form id="pl-upload-{{ event.id }}" method="post" action="{{ url_for('upload_price_list_background', event_id=event.id) }}" enctype="multipart/form-data"></form>
+    <form id="pl-delete-{{ event.id }}" method="post" action="{{ url_for('upload_price_list_background', event_id=event.id) }}">
+      <input type="hidden" name="delete_price_list_background" value="1">
+    </form>
   </div>
 </div>
 {% endfor %}
@@ -560,6 +694,9 @@
 </script>
 <script id="shotcounter-defaults-data" type="application/json">
   {{ shotcounter_defaults | tojson }}
+</script>
+<script id="price-list-defaults-data" type="application/json">
+  {{ price_list_defaults | tojson }}
 </script>
 
 <script>
@@ -647,6 +784,19 @@
         title_size: 3.2,
         team_size: 1.6,
         leaderboard_limit: 10,
+        leaderboard_layout: "stacked",
+      }
+    );
+
+    const priceDefaults = parseJson(
+      getTextContent("price-list-defaults-data"),
+      {
+        font_size: 1.4,
+        rotation_seconds: 10,
+        background_mode: "none",
+        background_color: "#0b1222",
+        background_image: null,
+        enabled_categories: [],
       }
     );
 
@@ -765,6 +915,8 @@
 
       const syncHidden = () => {
         hidden.value = JSON.stringify({ ...baseSettings, items });
+        const categories = getAllCategories();
+        wrapper.dispatchEvent(new CustomEvent("product-editor:change", { detail: { categories } }));
       };
 
       const renderPreview = () => {
@@ -1019,6 +1171,167 @@
       syncHidden();
     });
 
+    // Preisliste-Settings
+    document.querySelectorAll("[data-price-settings]").forEach((wrapper) => {
+      const form = wrapper.closest("form");
+      const sharedInput = form ? form.querySelector('input[name="shared_settings"]') : null;
+      const productEditor = form ? form.querySelector("[data-product-editor]") : null;
+      const defaults = { ...priceDefaults, ...parseJson(wrapper.dataset.defaults, priceDefaults) };
+      const current = parseJson(wrapper.dataset.current, {});
+
+      let shared = parseJson(sharedInput ? sharedInput.value : "", {});
+      let settings = { ...defaults, ...(shared.price_list || current) };
+
+      const normalizeSettings = (data) => {
+        const next = { ...defaults, ...(data || {}) };
+        next.font_size = clampNumber(next.font_size, defaults.font_size, 0.6, 6);
+        next.rotation_seconds = clampNumber(next.rotation_seconds, defaults.rotation_seconds, 2, 120);
+        next.background_mode = ["none", "custom"].includes(next.background_mode) ? next.background_mode : defaults.background_mode;
+        next.background_color = sanitizeColor(next.background_color || defaults.background_color || fallbackColor);
+        next.enabled_categories = Array.isArray(next.enabled_categories)
+          ? next.enabled_categories.filter((name) => typeof name === "string" && name.trim())
+          : [];
+        return next;
+      };
+
+      const getItemsFromEditor = () => {
+        if (productEditor && productEditor.productApi) {
+          const settings = productEditor.productApi.getSettings();
+          return Array.isArray(settings.items) ? settings.items : [];
+        }
+        const fallback = form ? form.querySelector('input[name="kassensystem_settings"]') : null;
+        const parsed = parseJson(fallback ? fallback.value : "", {});
+        return Array.isArray(parsed.items) ? parsed.items : [];
+      };
+
+      const getCategories = () => {
+        const items = getItemsFromEditor();
+        const categories = new Set();
+        categories.add(defaultCategory);
+        items.forEach((item) => {
+          const category = (item.category || defaultCategory).toString().trim();
+          if (category) categories.add(category);
+        });
+        return Array.from(categories);
+      };
+
+      const updateShared = () => {
+        if (!sharedInput) return;
+        shared = parseJson(sharedInput.value, {});
+        shared.price_list = settings;
+        sharedInput.value = JSON.stringify(shared);
+      };
+
+      const errorEl = wrapper.querySelector("[data-price-error]");
+      const customBg = wrapper.querySelector("[data-price-custom-bg]");
+
+      const syncInputs = () => {
+        wrapper.querySelectorAll("[data-price-field]").forEach((input) => {
+          const key = input.dataset.priceField;
+          if (!key) return;
+          if (input.type === "number") {
+            input.value = settings[key] ?? defaults[key] ?? "";
+          } else if (input.type === "color") {
+            input.value = sanitizeColor(settings[key] || defaults[key] || fallbackColor);
+          } else if (input.tagName === "SELECT") {
+            input.value = settings[key] ?? defaults[key] ?? "";
+          }
+        });
+        if (customBg) {
+          customBg.style.display = settings.background_mode === "custom" ? "block" : "none";
+        }
+      };
+
+      const renderCategories = () => {
+        const container = wrapper.querySelector("[data-price-categories]");
+        if (!container) return;
+        const categories = getCategories();
+        const enabledRaw = settings.enabled_categories.length ? settings.enabled_categories : categories;
+        const enabled = enabledRaw.filter((name) => categories.includes(name));
+        settings.enabled_categories = enabled;
+        container.innerHTML = "";
+
+        categories.forEach((name) => {
+          const label = document.createElement("label");
+          label.style.display = "inline-flex";
+          label.style.alignItems = "center";
+          label.style.gap = "0.4rem";
+          label.style.marginRight = "0.8rem";
+          const checkbox = document.createElement("input");
+          checkbox.type = "checkbox";
+          checkbox.checked = enabled.includes(name);
+          checkbox.addEventListener("change", () => {
+            const selected = Array.from(container.querySelectorAll("input[type='checkbox']"))
+              .filter((el) => el.checked)
+              .map((el) => el.dataset.category || "")
+              .filter(Boolean);
+
+            settings.enabled_categories = selected;
+            if (errorEl) {
+              if (!selected.length) {
+                errorEl.textContent = "Mindestens eine Kategorie aktivieren.";
+                errorEl.style.display = "block";
+              } else {
+                errorEl.textContent = "";
+                errorEl.style.display = "none";
+              }
+            }
+            updateShared();
+          });
+          checkbox.dataset.category = name;
+          label.appendChild(checkbox);
+          const span = document.createElement("span");
+          span.textContent = name;
+          label.appendChild(span);
+          container.appendChild(label);
+        });
+
+        if (errorEl && !settings.enabled_categories.length) {
+          errorEl.textContent = "Mindestens eine Kategorie aktivieren.";
+          errorEl.style.display = "block";
+        }
+      };
+
+      wrapper.querySelectorAll("[data-price-field]").forEach((input) => {
+        const key = input.dataset.priceField;
+        if (!key) return;
+        input.addEventListener("input", () => {
+          if (input.type === "number") {
+            settings[key] = clampNumber(input.value, defaults[key], key === "rotation_seconds" ? 2 : 0.6, key === "rotation_seconds" ? 120 : 6);
+          } else if (input.type === "color") {
+            settings[key] = sanitizeColor(input.value || defaults[key] || fallbackColor);
+          } else if (input.tagName === "SELECT") {
+            settings[key] = input.value;
+          }
+          settings = normalizeSettings(settings);
+          syncInputs();
+          updateShared();
+        });
+      });
+
+      if (productEditor) {
+        productEditor.addEventListener("product-editor:change", () => {
+          renderCategories();
+          updateShared();
+        });
+      }
+
+      wrapper.priceSettingsApi = {
+        getSettings: () => ({ ...settings }),
+        setSettings: (data) => {
+          settings = normalizeSettings(data);
+          syncInputs();
+          renderCategories();
+          updateShared();
+        },
+      };
+
+      settings = normalizeSettings(settings);
+      syncInputs();
+      renderCategories();
+      updateShared();
+    });
+
     const collectSnapshot = (form) => {
       const sharedInput = form.querySelector('input[name="shared_settings"]');
       const shotInput = form.querySelector('input[name="shotcounter_settings"]');
@@ -1045,6 +1358,7 @@
 
       const sharedHidden = form.querySelector('input[name="shared_settings"]');
       const shotHidden = form.querySelector('input[name="shotcounter_settings"]');
+      const priceSettingsWrapper = form.querySelector("[data-price-settings]");
       if (sharedHidden) sharedHidden.value = JSON.stringify(snapshot.shared_settings || {});
       if (shotHidden) shotHidden.value = JSON.stringify(snapshot.shotcounter_settings || {});
       
@@ -1059,6 +1373,10 @@
       const shotSettingsWrapper = form.querySelector("[data-shot-settings]");
       if (shotSettingsWrapper && shotSettingsWrapper.shotSettingsApi) {
         shotSettingsWrapper.shotSettingsApi.setSettings(snapshot.shotcounter_settings || {});
+      }
+      if (priceSettingsWrapper && priceSettingsWrapper.priceSettingsApi) {
+        const shared = snapshot.shared_settings || {};
+        priceSettingsWrapper.priceSettingsApi.setSettings(shared.price_list || {});
       }
       if (productEditor && productEditor.productApi) {
         productEditor.productApi.setSettings(snapshot.kassensystem_settings || { items: defaultButtons });
@@ -1149,6 +1467,25 @@
               return false;
             }
           }
+
+          const priceSettingsWrapper = form.querySelector("[data-price-settings]");
+          if (priceSettingsWrapper && priceSettingsWrapper.priceSettingsApi) {
+            const priceSettings = priceSettingsWrapper.priceSettingsApi.getSettings();
+            if (!priceSettings.enabled_categories || priceSettings.enabled_categories.length === 0) {
+              e.preventDefault();
+              e.stopPropagation();
+              if (statusEl) {
+                statusEl.style.display = 'inline';
+                statusEl.style.color = '#ef4444';
+                statusEl.textContent = 'Fehler: Mindestens eine Preisliste-Kategorie aktivieren.';
+                setTimeout(() => {
+                  statusEl.style.display = 'none';
+                }, 5000);
+              }
+              alert('Fehler: Mindestens eine Preisliste-Kategorie aktivieren.');
+              return false;
+            }
+          }
         });
       }
       
@@ -1179,6 +1516,11 @@
           const autoReloadCheckbox = this.querySelector('input[name="auto_reload_on_add"]');
           if (autoReloadCheckbox) {
             currentSettings.auto_reload_on_add = autoReloadCheckbox.checked;
+          }
+
+          const priceSettingsWrapper = this.querySelector("[data-price-settings]");
+          if (priceSettingsWrapper && priceSettingsWrapper.priceSettingsApi) {
+            currentSettings.price_list = priceSettingsWrapper.priceSettingsApi.getSettings();
           }
           
           sharedInput.value = JSON.stringify(currentSettings);

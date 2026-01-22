@@ -1,0 +1,132 @@
+{% extends "base.html" %}
+{% block title %}Preisliste{% endblock %}
+{% block header %}{% endblock %}
+{% block content %}
+<style>
+  header { display: none; }
+  body, html { height: 100%; }
+  .container { padding: 0; }
+  .price-list-hero {
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    padding: 2rem 2.5rem;
+    box-sizing: border-box;
+    background: var(--pl-background);
+    color: #e2e8f0;
+  }
+  {% if background_image %}
+  .price-list-hero.has-image {
+    background: var(--pl-background) url('{{ url_for('uploaded_file', filename=background_image|e) }}') center/cover no-repeat;
+    position: relative;
+  }
+  .price-list-hero.has-image::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(135deg, rgba(11, 18, 34, 0.4), rgba(15, 23, 42, 0.55));
+    z-index: 0;
+  }
+  {% endif %}
+  .price-list-content {
+    position: relative;
+    z-index: 1;
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem;
+  }
+  .price-list-title {
+    font-size: calc(var(--pl-font-size) * 1.6);
+    font-weight: 800;
+    text-align: center;
+    margin: 0;
+  }
+  .price-list-category {
+    background: rgba(15, 23, 42, 0.65);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 16px;
+    padding: 1.5rem 1.8rem;
+  }
+  .price-list-category h2 {
+    margin: 0 0 1rem 0;
+    font-size: calc(var(--pl-font-size) * 1.3);
+    font-weight: 800;
+  }
+  .price-list-items {
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+  }
+  .price-list-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    font-size: var(--pl-font-size);
+    font-weight: 600;
+  }
+  .price-list-item span.price {
+    font-weight: 800;
+  }
+  .price-list-empty {
+    font-size: calc(var(--pl-font-size) * 1.1);
+    text-align: center;
+    color: rgba(226,232,240,0.75);
+  }
+</style>
+
+<div
+  class="price-list-hero {% if background_image %}has-image{% endif %}"
+  style="--pl-font-size: {{ font_size }}rem; --pl-background: {{ background_color }};"
+  data-rotation-seconds="{{ rotation_seconds }}"
+>
+  <div class="price-list-content">
+    <h1 class="price-list-title">Preisliste – {{ event.name }}</h1>
+    <div id="price-list-container"></div>
+  </div>
+</div>
+
+<script>
+  const categories = {{ categories | tojson }};
+  const container = document.getElementById("price-list-container");
+  const rotationSeconds = Number(document.querySelector(".price-list-hero").dataset.rotationSeconds || "10");
+  let index = 0;
+
+  const renderCategory = (category) => {
+    if (!category) {
+      container.innerHTML = '<div class="price-list-empty">Keine Kategorien aktiv.</div>';
+      return;
+    }
+    const itemsHtml = (category.items || []).map((item) => {
+      const price = Number(item.price || 0);
+      return `
+        <div class="price-list-item">
+          <span>${item.label || ""}</span>
+          <span class="price">${price} CHF</span>
+        </div>
+      `;
+    }).join("");
+
+    container.innerHTML = `
+      <div class="price-list-category">
+        <h2>${category.name}</h2>
+        <div class="price-list-items">
+          ${itemsHtml || '<div class="price-list-empty">Keine Produkte in dieser Kategorie.</div>'}
+        </div>
+      </div>
+    `;
+  };
+
+  if (!Array.isArray(categories) || categories.length === 0) {
+    renderCategory(null);
+  } else {
+    renderCategory(categories[0]);
+    if (categories.length > 1 && rotationSeconds >= 2) {
+      setInterval(() => {
+        index = (index + 1) % categories.length;
+        renderCategory(categories[index]);
+      }, rotationSeconds * 1000);
+    }
+  }
+</script>
+{% endblock %}
