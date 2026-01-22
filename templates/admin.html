@@ -606,20 +606,23 @@
     
     <div class="admin-subsection">
       <h3 class="admin-subsection__title">Hintergrund</h3>
-      <form data-auto-save data-endpoint="/admin/events/{{ active_event.id }}/price-list/background" data-indicator="preisliste" enctype="multipart/form-data">
+      <form method="post" action="{{ url_for('upload_price_list_background', event_id=active_event.id) }}" enctype="multipart/form-data">
         <div class="admin-form__group">
-          <label class="admin-form__label" for="pl_bg_mode">Hintergrund Modus</label>
-          <select class="admin-form__select" id="pl_bg_mode" name="background_mode">
-            <option value="none">Keiner</option>
-            <option value="custom">Eigenes Bild</option>
-          </select>
-        </div>
-        
-        <div class="admin-form__group" id="pl-image-upload" style="display: none;">
           <label class="admin-form__label" for="pl_bg_image">Hintergrundbild hochladen</label>
-          <input class="admin-form__input" type="file" id="pl_bg_image" name="background_image" accept="image/*">
+          <input class="admin-form__input" type="file" id="pl_bg_image" name="price_list_background" accept="image/*">
           <div class="hint">Unterstützte Formate: PNG, JPG, GIF, WebP (max. 5MB)</div>
         </div>
+        <div class="field-inline" style="margin-top: 1rem;">
+          <button type="submit" class="primary">Bild hochladen</button>
+          {% if (active_event.shared_settings or {}).get('price_list', {}).get('background_image') %}
+          <button type="submit" name="delete_price_list_background" value="1" class="secondary">Bild löschen</button>
+          {% endif %}
+        </div>
+        {% if (active_event.shared_settings or {}).get('price_list', {}).get('background_image') %}
+        <div class="muted" style="margin-top: 0.5rem;">
+          Aktuelles Bild: <code>{{ (active_event.shared_settings or {}).get('price_list', {}).get('background_image') }}</code>
+        </div>
+        {% endif %}
       </form>
     </div>
   </div>
@@ -700,11 +703,18 @@
     
     <div class="admin-subsection">
       <h3 class="admin-subsection__title">Hintergrund</h3>
-      <form data-auto-save data-endpoint="/admin/events/{{ active_event.id }}/shotcounter/background" data-indicator="shotcounter" enctype="multipart/form-data">
+      <form method="post" action="{{ url_for('upload_background', event_id=active_event.id) }}" enctype="multipart/form-data">
         <div class="admin-form__group">
           <label class="admin-form__label" for="shot_bg_image">Hintergrundbild hochladen</label>
-          <input class="admin-form__input" type="file" id="shot_bg_image" name="background_image" accept="image/*">
+          <input class="admin-form__input" type="file" id="shot_bg_image" name="background" accept="image/*">
           <div class="hint">Unterstützte Formate: PNG, JPG, GIF, WebP (max. 5MB)</div>
+        </div>
+        
+        <div class="field-inline" style="margin-top: 1rem;">
+          <button type="submit" class="primary">Bild hochladen</button>
+          {% if (shot_settings_map[active_event.id] or {}).get('background_image') %}
+          <button type="submit" name="delete_background" value="1" class="secondary">Bild löschen</button>
+          {% endif %}
         </div>
         
         {% if (shot_settings_map[active_event.id] or {}).get('background_image') %}
@@ -765,17 +775,10 @@
       <div class="muted" style="margin-bottom: 1rem;">
         Bilder hochladen und verwalten für Hintergründe und Produktbilder.
       </div>
-      <form data-endpoint="/admin/media/upload" enctype="multipart/form-data">
-        <div class="admin-form__group">
-          <label class="admin-form__label" for="media_upload">Neue Medien hochladen</label>
-          <input class="admin-form__input" type="file" id="media_upload" name="media_files" accept="image/*" multiple>
-          <div class="hint">Mehrere Dateien können gleichzeitig hochgeladen werden</div>
-        </div>
-        <button type="submit" class="primary">Hochladen</button>
-      </form>
-      
-      <div id="media-list" style="margin-top: 1.5rem;">
-        <p class="muted">Lade Mediendateien...</p>
+      <!-- Media upload functionality - To be implemented -->
+      <div class="muted" style="padding: 1rem; background: rgba(245, 158, 11, 0.1); border: 1px solid rgba(245, 158, 11, 0.3); border-radius: 8px;">
+        <strong>Hinweis:</strong> Medienmanagement wird in einer zukünftigen Version implementiert.
+        Hintergrundbilder können bereits über die entsprechenden Abschnitte hochgeladen werden.
       </div>
     </div>
   </div>
@@ -887,21 +890,6 @@ if (cancelEventBtn) {
     eventCreationForm.style.display = 'none';
     createEventBtn.style.display = 'inline-block';
   });
-}
-
-// Show/hide price list image upload based on mode
-const plBgMode = document.getElementById('pl_bg_mode');
-const plImageUpload = document.getElementById('pl-image-upload');
-
-if (plBgMode && plImageUpload) {
-  plBgMode.addEventListener('change', () => {
-    plImageUpload.style.display = plBgMode.value === 'custom' ? 'block' : 'none';
-  });
-  
-  // Initial state
-  if (plBgMode.value === 'custom') {
-    plImageUpload.style.display = 'block';
-  }
 }
 </script>
 
