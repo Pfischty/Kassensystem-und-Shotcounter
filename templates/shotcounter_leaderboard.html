@@ -38,12 +38,20 @@
     content: '';
     position: absolute;
     inset: 0;
-    background: linear-gradient(135deg, rgba(11, 18, 34, 0.75), rgba(15, 23, 42, 0.85));
+    background: linear-gradient(135deg, rgba(11, 18, 34, 0.4), rgba(15, 23, 42, 0.55));
     z-index: 0;
   }
   .leaderboard-head, .leaderboard-grid {
     position: relative;
     z-index: 1;
+  }
+  .leaderboard-hero.has-bg .lb-card {
+    background: transparent;
+    border: none;
+    box-shadow: none;
+  }
+  .leaderboard-hero.has-bg .lb-rank {
+    background: linear-gradient(135deg, color-mix(in srgb, var(--lb-secondary) 80%, transparent), color-mix(in srgb, var(--lb-tertiary) 80%, transparent));
   }
   {% endif %}
   .leaderboard-head {
@@ -117,7 +125,7 @@
   }
 </style>
 
-<div class="leaderboard-hero" data-refresh-url="{{ url_for('shotcounter_leaderboard_data', limit=limit) }}">
+<div class="leaderboard-hero {% if shot_settings.background_image %}has-bg{% endif %}" data-refresh-url="{{ url_for('shotcounter_leaderboard_data', limit=limit) }}">
   <div class="leaderboard-head">
     <div class="leaderboard-event">Shotcounter - {{ event.name }}</div>
   </div>
