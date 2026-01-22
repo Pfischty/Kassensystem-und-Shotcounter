@@ -1228,27 +1228,10 @@ def admin_git_update():
             "error": "Ungültiger Branch-Name"
         })
     
-    # Trigger the privileged update service (runs the update script as root)
-    # Requires a systemd unit `kassensystem-update.service` installed and
-    # the web/service user to be allowed to start it (via sudoers or polkit).
-    # Use systemctl directly (no sudo) so polkit permissions can allow the
-    # web user to start the privileged update unit. If sudoers is used instead
-    # the unit can also be started via sudo, but calling systemctl without
-    # sudo lets polkit handle authorization and avoids NoNewPrivileges issues.
-    # First try starting the unit directly so polkit can handle authorization.
-    result = _run_safe_command(["systemctl", "start", "kassensystem-update.service"], timeout=300)
-
-    # If direct systemctl fails, always attempt a sudo fallback. This supports
-    # systems where a narrow sudoers NOPASSWD entry is used and avoids relying
-    # on specific error messages from polkit/systemd.
-    if not result["success"]:
-        result_sudo = _run_safe_command(["sudo", "systemctl", "start", "kassensystem-update.service"], timeout=300)
-        if result_sudo["success"]:
-            result = result_sudo
-        else:
-            combined = (result.get("error") or "") + "\n" + (result_sudo.get("error") or "")
-            result["error"] = combined.strip()
-            result["success"] = False
+    # Trigger the privileged update service (runs the update script as root).
+    # Use sudo with a narrow NOPASSWD sudoers entry to avoid interactive
+    # polkit prompts in the web context.
+    result = _run_safe_command(["sudo", "systemctl", "start", "kassensystem-update.service"], timeout=300)
     
     if result["success"]:
         app.logger.info("Git Update erfolgreich durchgeführt")
