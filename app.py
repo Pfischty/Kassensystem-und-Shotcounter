@@ -997,20 +997,36 @@ def update_credentials():
     If credentials are already set (locked state), this route requires authentication
     through the before_request handler. If unlocked (no password set), anyone can
     set the initial credentials.
+    
+    Supports both JSON (for auto-save) and redirect responses.
     """
     username = request.form.get("admin_username", "").strip()
     password = request.form.get("admin_password", "").strip()
     has_password = bool(credentials_manager.get_credentials().get("admin_password"))
     
+    # Determine if this is a JSON request
+    wants_json = request.headers.get('Accept') == 'application/json' or request.is_json
+    
     # Validate inputs
     if not username:
-        flash("Benutzername darf nicht leer sein.", "error")
+        error_msg = "Benutzername darf nicht leer sein."
+        if wants_json:
+            return jsonify({"success": False, "error": error_msg}), 400
+        flash(error_msg, "error")
         return redirect(url_for("admin"))
+    
     if not has_password and not password:
-        flash("Bitte ein Passwort setzen, damit der Admin-Bereich geschützt ist.", "error")
+        error_msg = "Bitte ein Passwort setzen, damit der Admin-Bereich geschützt ist."
+        if wants_json:
+            return jsonify({"success": False, "error": error_msg}), 400
+        flash(error_msg, "error")
         return redirect(url_for("admin"))
+    
     if password and len(password) < 8:
-        flash("Passwort muss mindestens 8 Zeichen lang sein.", "error")
+        error_msg = "Passwort muss mindestens 8 Zeichen lang sein."
+        if wants_json:
+            return jsonify({"success": False, "error": error_msg}), 400
+        flash(error_msg, "error")
         return redirect(url_for("admin"))
     
     # Update credentials
@@ -1021,10 +1037,14 @@ def update_credentials():
     
     if success:
         app.logger.info("Admin-Credentials aktualisiert: Benutzer=%s", username)
+        if wants_json:
+            return jsonify({"success": True})
         flash("Credentials wurden erfolgreich aktualisiert.", "success")
     else:
         error_detail = error_message or "Unbekannter Fehler."
         app.logger.error("Fehler beim Aktualisieren der Credentials: %s", error_detail)
+        if wants_json:
+            return jsonify({"success": False, "error": error_detail}), 400
         flash(f"Fehler beim Speichern der Credentials: {error_detail}", "error")
     
     return redirect(url_for("admin"))
@@ -1905,6 +1925,200 @@ def upload_price_list_background(event_id: int):
 
     return redirect(url_for("admin"))
 
+
+
+# ---------------------------------------------------------------------------
+# New Modular Admin API Endpoints for Auto-Save
+# ---------------------------------------------------------------------------
+
+@app.route("/admin/events/<int:event_id>/parameters", methods=["POST"])
+def update_event_parameters(event_id: int):
+    """Update basic event parameters (systems enabled, default font size)."""
+    event = Event.query.get_or_404(event_id)
+    
+    try:
+        event.kassensystem_enabled = bool(request.form.get("kassensystem_enabled"))
+        event.shotcounter_enabled = bool(request.form.get("shotcounter_enabled"))
+        
+        # Update default font size if provided
+        default_font_size = request.form.get("default_font_size")
+        if default_font_size:
+            shared_settings = event.shared_settings or {}
+            shared_settings["default_font_size"] = float(default_font_size)
+            event.shared_settings = shared_settings
+            attributes.flag_modified(event, "shared_settings")
+        
+        db.session.commit()
+        app.logger.info("Event Parameter aktualisiert: %s", event.name)
+        return jsonify({"success": True})
+    except Exception as e:
+        app.logger.error("Fehler beim Aktualisieren der Event-Parameter: %s", str(e))
+        return jsonify({"success": False, "error": str(e)}), 400
+
+
+@app.route("/admin/events/<int:event_id>/kassensystem/styling", methods=["POST"])
+def update_kassensystem_styling(event_id: int):
+    """Update Kassensystem styling (colors)."""
+    event = Event.query.get_or_404(event_id)
+    
+    try:
+        kass_settings = event.kassensystem_settings or {}
+        
+        if request.form.get("background_color"):
+            kass_settings["background_color"] = request.form.get("background_color")
+        if request.form.get("primary_color"):
+            kass_settings["primary_color"] = request.form.get("primary_color")
+        
+        event.kassensystem_settings = kass_settings
+        attributes.flag_modified(event, "kassensystem_settings")
+        db.session.commit()
+        app.logger.info("Kassensystem Styling aktualisiert: %s", event.name)
+        return jsonify({"success": True})
+    except Exception as e:
+        app.logger.error("Fehler beim Aktualisieren des Kassensystem-Stylings: %s", str(e))
+        return jsonify({"success": False, "error": str(e)}), 400
+
+
+@app.route("/admin/events/<int:event_id>/kassensystem/settings", methods=["POST"])
+def update_kassensystem_settings(event_id: int):
+    """Update Kassensystem settings (auto reload, etc)."""
+    event = Event.query.get_or_404(event_id)
+    
+    try:
+        shared_settings = event.shared_settings or {}
+        shared_settings["auto_reload_on_add"] = bool(request.form.get("auto_reload_on_add"))
+        
+        event.shared_settings = shared_settings
+        attributes.flag_modified(event, "shared_settings")
+        db.session.commit()
+        app.logger.info("Kassensystem Einstellungen aktualisiert: %s", event.name)
+        return jsonify({"success": True})
+    except Exception as e:
+        app.logger.error("Fehler beim Aktualisieren der Kassensystem-Einstellungen: %s", str(e))
+        return jsonify({"success": False, "error": str(e)}), 400
+
+
+@app.route("/admin/events/<int:event_id>/price-list/styling", methods=["POST"])
+def update_price_list_styling(event_id: int):
+    """Update price list styling (font size, rotation interval)."""
+    event = Event.query.get_or_404(event_id)
+    
+    try:
+        shared_settings = event.shared_settings or {}
+        price_settings = shared_settings.get("price_list", {})
+        
+        if request.form.get("font_size"):
+            font_size = float(request.form.get("font_size"))
+            if 0.6 <= font_size <= 6:
+                price_settings["font_size"] = font_size
+        
+        if request.form.get("rotation_seconds"):
+            rotation = int(request.form.get("rotation_seconds"))
+            if 2 <= rotation <= 120:
+                price_settings["rotation_seconds"] = rotation
+        
+        shared_settings["price_list"] = price_settings
+        event.shared_settings = validate_shared_settings(shared_settings)
+        attributes.flag_modified(event, "shared_settings")
+        db.session.commit()
+        app.logger.info("Preislisten-Styling aktualisiert: %s", event.name)
+        return jsonify({"success": True})
+    except Exception as e:
+        app.logger.error("Fehler beim Aktualisieren des Preislisten-Stylings: %s", str(e))
+        return jsonify({"success": False, "error": str(e)}), 400
+
+
+@app.route("/admin/events/<int:event_id>/shotcounter/styling", methods=["POST"])
+def update_shotcounter_styling(event_id: int):
+    """Update Shotcounter styling (colors, font sizes)."""
+    event = Event.query.get_or_404(event_id)
+    
+    try:
+        shot_settings = event.shotcounter_settings or {}
+        
+        # Update colors
+        if request.form.get("background_color"):
+            shot_settings["background_color"] = request.form.get("background_color")
+        if request.form.get("primary_color"):
+            shot_settings["primary_color"] = request.form.get("primary_color")
+        if request.form.get("secondary_color"):
+            shot_settings["secondary_color"] = request.form.get("secondary_color")
+        if request.form.get("tertiary_color"):
+            shot_settings["tertiary_color"] = request.form.get("tertiary_color")
+        
+        # Update font sizes
+        if request.form.get("title_size"):
+            title_size = float(request.form.get("title_size"))
+            if 1 <= title_size <= 10:
+                shot_settings["title_size"] = title_size
+        
+        if request.form.get("team_size"):
+            team_size = float(request.form.get("team_size"))
+            if 1 <= team_size <= 10:
+                shot_settings["team_size"] = team_size
+        
+        event.shotcounter_settings = validate_shotcounter_settings(shot_settings)
+        attributes.flag_modified(event, "shotcounter_settings")
+        db.session.commit()
+        app.logger.info("Shotcounter-Styling aktualisiert: %s", event.name)
+        return jsonify({"success": True})
+    except Exception as e:
+        app.logger.error("Fehler beim Aktualisieren des Shotcounter-Stylings: %s", str(e))
+        return jsonify({"success": False, "error": str(e)}), 400
+
+
+@app.route("/admin/events/<int:event_id>/shotcounter/settings", methods=["POST"])
+def update_shotcounter_settings_endpoint(event_id: int):
+    """Update Shotcounter settings (leaderboard limit, layout)."""
+    event = Event.query.get_or_404(event_id)
+    
+    try:
+        shot_settings = event.shotcounter_settings or {}
+        
+        if request.form.get("leaderboard_limit"):
+            limit = int(request.form.get("leaderboard_limit"))
+            if 1 <= limit <= 50:
+                shot_settings["leaderboard_limit"] = limit
+        
+        if request.form.get("leaderboard_layout"):
+            layout = request.form.get("leaderboard_layout")
+            if layout in ["stacked", "inline"]:
+                shot_settings["leaderboard_layout"] = layout
+        
+        event.shotcounter_settings = validate_shotcounter_settings(shot_settings)
+        attributes.flag_modified(event, "shotcounter_settings")
+        db.session.commit()
+        app.logger.info("Shotcounter-Einstellungen aktualisiert: %s", event.name)
+        return jsonify({"success": True})
+    except Exception as e:
+        app.logger.error("Fehler beim Aktualisieren der Shotcounter-Einstellungen: %s", str(e))
+        return jsonify({"success": False, "error": str(e)}), 400
+
+
+@app.route("/admin/events/<int:event_id>/shotcounter/background", methods=["POST"])
+def update_shotcounter_background_new(event_id: int):
+    """Update Shotcounter background image."""
+    event = Event.query.get_or_404(event_id)
+    
+    try:
+        file = request.files.get("background_image")
+        if not file or file.filename == "":
+            return jsonify({"success": False, "error": "Keine Datei ausgewählt"}), 400
+        
+        filename = save_background_image(file, event_id)
+        if filename:
+            shot_settings = event.shotcounter_settings or {}
+            shot_settings["background_image"] = filename
+            event.shotcounter_settings = validate_shotcounter_settings(shot_settings)
+            attributes.flag_modified(event, "shotcounter_settings")
+            db.session.commit()
+            app.logger.info("Shotcounter-Hintergrundbild aktualisiert: %s - %s", event.name, filename)
+            return jsonify({"success": True, "filename": filename})
+        else:
+            return jsonify({"success": False, "error": "Fehler beim Speichern des Bildes"}), 400
+    except Exception as e:
+        app.logger.error("Fehler beim Aktualisieren des Shotcounter-Hintergrunds: %s", str(e))
+        return jsonify({"success": False, "error": str(e)}), 400
 
 
 # ---------------------------------------------------------------------------
