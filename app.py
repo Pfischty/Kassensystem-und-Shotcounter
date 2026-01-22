@@ -45,6 +45,7 @@ from sqlalchemy import event, func, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import attributes
 from werkzeug.datastructures import FileStorage
+from werkzeug.utils import secure_filename
 
 from credentials_manager import credentials_manager
 
@@ -394,6 +395,18 @@ def allowed_file(filename: str) -> bool:
     return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_EXTENSIONS
 
 
+def list_media_files() -> List[str]:
+    """Return a sorted list of uploaded media files."""
+    uploads_dir = Path(app.config["UPLOAD_FOLDER"])
+    return sorted(
+        [
+            file.name
+            for file in uploads_dir.iterdir()
+            if file.is_file() and allowed_file(file.name)
+        ]
+    )
+
+
 def save_background_image(file: FileStorage | None, event_id: int) -> str | None:
     """Save uploaded background image and return the filename."""
     if not file or not file.filename:
@@ -545,6 +558,8 @@ def resolve_button_config(event: Event | None) -> List[ButtonConfig]:
     items_source = raw_items if raw_items else [btn.__dict__ for btn in DEFAULT_BUTTONS]
     for item in items_source:
         try:
+            if item.get("show_in_kassensystem") is False:
+                continue
             normalized.append(
                 ButtonConfig(
                     name=item["name"],
@@ -601,6 +616,8 @@ def validate_and_normalize_buttons(settings: Dict | None) -> Dict:
                 "css_class": item.get("css_class") or "custom",
                 "color": item.get("color"),
                 "category": item.get("category") or "Standard",
+                "show_in_kassensystem": item.get("show_in_kassensystem", True) is not False,
+                "show_in_price_list": item.get("show_in_price_list", True) is not False,
             }
         )
 
@@ -618,6 +635,8 @@ def validate_and_normalize_buttons(settings: Dict | None) -> Dict:
                 "css_class": btn.css_class,
                 "color": btn.color,
                 "category": btn.category,
+                "show_in_kassensystem": True,
+                "show_in_price_list": True,
             }
             for btn in DEFAULT_BUTTONS
         ]
@@ -859,8 +878,16 @@ def admin():
     events = Event.query.order_by(Event.created_at.desc()).all()
     active_event = get_active_event()
     default_button_presets = [button.__dict__ for button in DEFAULT_BUTTONS]
-    button_map = {event.id: [btn.__dict__ for btn in resolve_button_config(event)] for event in events}
-    kass_settings = {event.id: {**(event.kassensystem_settings or {}), "items": button_map[event.id]} for event in events}
+    button_map: Dict[int, List[Dict]] = {}
+    kass_settings: Dict[int, Dict] = {}
+    for event in events:
+        try:
+            normalized = validate_and_normalize_buttons(event.kassensystem_settings or {})
+        except ValueError:
+            normalized = validate_and_normalize_buttons({})
+        items = normalized.get("items", []) if isinstance(normalized, dict) else []
+        button_map[event.id] = items or default_button_presets
+        kass_settings[event.id] = {**(event.kassensystem_settings or {}), "items": button_map[event.id]}
     shot_settings_map = {event.id: resolve_shotcounter_settings(event) for event in events}
     event_payloads = {
         event.id: {
@@ -879,10 +906,8 @@ def admin():
     admin_username = current_creds.get("admin_username", "")
     has_password = bool(current_creds.get("admin_password"))
     
-    uploads_dir = Path(app.config["UPLOAD_FOLDER"])
-    price_list_images = sorted(
-        [p.name for p in uploads_dir.glob("pl_*.*") if p.is_file()]
-    )
+    media_files = list_media_files()
+    price_list_images = media_files
 
     return render_template(
         "admin.html",
@@ -895,6 +920,7 @@ def admin():
         shotcounter_defaults=DEFAULT_SHOTCOUNTER_SETTINGS,
         price_list_defaults=DEFAULT_PRICE_LIST_SETTINGS,
         price_list_images=price_list_images,
+        media_files=media_files,
         shot_settings_map=shot_settings_map,
         admin_username=admin_username,
         has_password=has_password,
@@ -1627,6 +1653,8 @@ def _build_price_list_categories(items: List[Dict]) -> List[Dict[str, object]]:
     ordered: List[str] = []
     bucket: Dict[str, List[Dict[str, object]]] = {}
     for item in items:
+        if item.get("show_in_price_list") is False:
+            continue
         category = str(item.get("category") or "Standard").strip() or "Standard"
         if category not in bucket:
             bucket[category] = []
@@ -1904,6 +1932,111 @@ def upload_price_list_background(event_id: int):
         flash("Fehler beim Hochladen des Bildes.", "error")
 
     return redirect(url_for("admin"))
+
+
+# ---------------------------------------------------------------------------
+# Media Management
+# ---------------------------------------------------------------------------
+def _unique_media_filename(filename: str) -> str:
+    """Ensure media filename is unique within uploads folder."""
+    uploads_dir = Path(app.config["UPLOAD_FOLDER"])
+    candidate = filename
+    stem = Path(filename).stem
+    suffix = Path(filename).suffix
+    counter = 1
+    while (uploads_dir / candidate).exists():
+        candidate = f"{stem}-{counter}{suffix}"
+        counter += 1
+    return candidate
+
+
+@app.route("/admin/media/list")
+def admin_media_list():
+    return jsonify({"files": list_media_files()})
+
+
+@app.route("/admin/media/upload", methods=["POST"])
+def admin_media_upload():
+    file = request.files.get("media_file")
+    if not file or not file.filename:
+        return jsonify({"success": False, "error": "Keine Datei ausgewählt."}), 400
+    if not allowed_file(file.filename):
+        return (
+            jsonify(
+                {
+                    "success": False,
+                    "error": f"Ungültiger Dateityp. Erlaubt sind: {', '.join(ALLOWED_EXTENSIONS)}",
+                }
+            ),
+            400,
+        )
+    sanitized = secure_filename(file.filename)
+    if not sanitized:
+        return jsonify({"success": False, "error": "Ungültiger Dateiname."}), 400
+    filename = _unique_media_filename(sanitized)
+    filepath = Path(app.config["UPLOAD_FOLDER"]) / filename
+    try:
+        file.save(str(filepath))
+    except Exception as exc:
+        app.logger.error("Fehler beim Speichern der Medien-Datei: %s", exc)
+        return jsonify({"success": False, "error": "Fehler beim Speichern der Datei."}), 500
+    return jsonify({"success": True, "filename": filename, "files": list_media_files()})
+
+
+@app.route("/admin/media/rename", methods=["POST"])
+def admin_media_rename():
+    original = (request.form.get("filename") or "").strip()
+    new_name = (request.form.get("new_name") or "").strip()
+
+    if not original or not new_name:
+        return jsonify({"success": False, "error": "Dateiname und neuer Name sind erforderlich."}), 400
+    if not allowed_file(original):
+        return jsonify({"success": False, "error": "Ungültige Datei für das Umbenennen."}), 400
+
+    uploads_dir = Path(app.config["UPLOAD_FOLDER"])
+    original_path = uploads_dir / original
+    if not original_path.exists():
+        return jsonify({"success": False, "error": "Datei wurde nicht gefunden."}), 404
+
+    sanitized = secure_filename(new_name)
+    if not sanitized:
+        return jsonify({"success": False, "error": "Neuer Dateiname ist ungültig."}), 400
+
+    if "." not in sanitized:
+        sanitized = f"{sanitized}{original_path.suffix}"
+    if not allowed_file(sanitized):
+        return jsonify({"success": False, "error": "Dateiendung nicht erlaubt."}), 400
+
+    if sanitized == original:
+        return jsonify({"success": False, "error": "Neuer Dateiname ist identisch."}), 400
+
+    target_name = _unique_media_filename(sanitized)
+    target_path = uploads_dir / target_name
+    try:
+        original_path.rename(target_path)
+    except Exception as exc:
+        app.logger.error("Fehler beim Umbenennen der Medien-Datei: %s", exc)
+        return jsonify({"success": False, "error": "Datei konnte nicht umbenannt werden."}), 500
+
+    if original != target_name:
+        updated = False
+        for event in Event.query.all():
+            if isinstance(event.shotcounter_settings, dict):
+                if event.shotcounter_settings.get("background_image") == original:
+                    event.shotcounter_settings["background_image"] = target_name
+                    attributes.flag_modified(event, "shotcounter_settings")
+                    updated = True
+            if isinstance(event.shared_settings, dict):
+                price_list = event.shared_settings.get("price_list")
+                if isinstance(price_list, dict) and price_list.get("background_image") == original:
+                    price_list["background_image"] = target_name
+                    event.shared_settings["price_list"] = price_list
+                    attributes.flag_modified(event, "shared_settings")
+                    updated = True
+        if updated:
+            db.session.commit()
+
+    return jsonify({"success": True, "filename": target_name, "files": list_media_files()})
 
 
 
