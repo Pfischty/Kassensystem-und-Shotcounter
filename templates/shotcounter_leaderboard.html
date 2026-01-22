@@ -19,14 +19,33 @@
     min-height: 100vh;
     display: flex;
     flex-direction: column;
+    {% if shot_settings.background_image %}
+    background: var(--lb-background) url('{{ url_for('uploaded_file', filename=shot_settings.background_image|e) }}') center/cover no-repeat;
+    position: relative;
+    {% else %}
     background: var(--lb-background);
     background:
       radial-gradient(circle at 20% 20%, color-mix(in srgb, var(--lb-secondary) 20%, transparent), transparent 28%),
       radial-gradient(circle at 80% 0%, color-mix(in srgb, var(--lb-tertiary) 20%, transparent), transparent 25%),
       linear-gradient(135deg, var(--lb-background) 0%, #0f172a 60%, var(--lb-background) 100%);
+    {% endif %}
     padding: 2rem 2.5rem 2.5rem;
     box-sizing: border-box;
   }
+  {% if shot_settings.background_image %}
+  /* Add overlay for better text readability when using background image */
+  .leaderboard-hero::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(135deg, rgba(11, 18, 34, 0.75), rgba(15, 23, 42, 0.85));
+    z-index: 0;
+  }
+  .leaderboard-head, .leaderboard-grid {
+    position: relative;
+    z-index: 1;
+  }
+  {% endif %}
   .leaderboard-head {
     display: flex;
     align-items: center;
