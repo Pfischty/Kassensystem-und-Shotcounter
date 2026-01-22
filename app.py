@@ -477,6 +477,8 @@ def validate_shotcounter_settings(raw: dict | None) -> Dict[str, int | float | s
         filepath = Path(app.config["UPLOAD_FOLDER"]) / bg_img
         if filepath.exists() and filepath.is_file():
             settings["background_image"] = bg_img
+            if settings.get("background_mode") == "none":
+                settings["background_mode"] = "custom"
     return settings
 
 
@@ -877,6 +879,11 @@ def admin():
     admin_username = current_creds.get("admin_username", "")
     has_password = bool(current_creds.get("admin_password"))
     
+    uploads_dir = Path(app.config["UPLOAD_FOLDER"])
+    price_list_images = sorted(
+        [p.name for p in uploads_dir.glob("pl_*.*") if p.is_file()]
+    )
+
     return render_template(
         "admin.html",
         events=events,
@@ -887,6 +894,7 @@ def admin():
         event_payloads=event_payloads,
         shotcounter_defaults=DEFAULT_SHOTCOUNTER_SETTINGS,
         price_list_defaults=DEFAULT_PRICE_LIST_SETTINGS,
+        price_list_images=price_list_images,
         shot_settings_map=shot_settings_map,
         admin_username=admin_username,
         has_password=has_password,
@@ -1570,9 +1578,7 @@ def price_list():
     if enabled:
         categories = [cat for cat in categories if cat["name"] in enabled]
 
-    background_image = None
-    if price_settings.get("background_mode") == "custom":
-        background_image = price_settings.get("background_image") or None
+    background_image = price_settings.get("background_image") or None
 
     return render_template(
         "price_list.html",

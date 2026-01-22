@@ -604,6 +604,34 @@
             <div data-price-custom-bg style="margin-top: 0.8rem; padding-top: 0.8rem; border-top: 1px solid var(--border);">
               <strong>Preisliste Hintergrundbild</strong>
               <div class="muted">Optional: eigenes Bild für die Preisliste.</div>
+              <div class="shot-settings__numbers" style="margin-top: 0.6rem;">
+                <label class="stack" style="min-width: 220px;">
+                  <span>Vorhandenes Bild wählen</span>
+                  <select data-price-image-select>
+                    <option value="">Kein Bild</option>
+                    {% for filename in price_list_images %}
+                      <option value="{{ filename }}">{{ filename }}</option>
+                    {% endfor %}
+                  </select>
+                </label>
+                <div style="display:flex; align-items:flex-end; gap:0.6rem;">
+                  <img data-price-image-preview src="" alt="Preisliste Hintergrund Vorschau" style="max-width: 200px; max-height: 120px; border-radius: 8px; border: 1px solid var(--border); display:none;">
+                </div>
+              </div>
+              <div class="shot-settings__numbers" style="margin-top: 0.6rem;">
+                <label class="stack" style="min-width: 220px;">
+                  <span>Vorhandenes Bild wählen</span>
+                  <select data-price-image-select>
+                    <option value="">Kein Bild</option>
+                    {% for filename in price_list_images %}
+                      <option value="{{ filename }}">{{ filename }}</option>
+                    {% endfor %}
+                  </select>
+                </label>
+                <div style="display:flex; align-items:flex-end; gap:0.6rem;">
+                  <img data-price-image-preview src="" alt="Preisliste Hintergrund Vorschau" style="max-width: 200px; max-height: 120px; border-radius: 8px; border: 1px solid var(--border); display:none;">
+                </div>
+              </div>
               {% if current_pl_bg %}
                 <div style="margin-top: 0.6rem; display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap;">
                   <img src="{{ url_for('uploaded_file', filename=current_pl_bg) }}" alt="Aktuelles Preisliste-Hintergrundbild" style="max-width: 200px; max-height: 120px; border-radius: 8px; border: 1px solid var(--border);">
@@ -1224,6 +1252,8 @@
 
       const errorEl = wrapper.querySelector("[data-price-error]");
       const customBg = wrapper.querySelector("[data-price-custom-bg]");
+      const imageSelect = wrapper.querySelector("[data-price-image-select]");
+      const imagePreview = wrapper.querySelector("[data-price-image-preview]");
 
       const syncInputs = () => {
         wrapper.querySelectorAll("[data-price-field]").forEach((input) => {
@@ -1238,7 +1268,19 @@
           }
         });
         if (customBg) {
-          customBg.style.display = settings.background_mode === "custom" ? "block" : "none";
+          customBg.style.display = "block";
+        }
+        if (imageSelect) {
+          imageSelect.value = settings.background_image || "";
+        }
+        if (imagePreview) {
+          if (settings.background_image) {
+            imagePreview.src = `/uploads/${settings.background_image}`;
+            imagePreview.style.display = "block";
+          } else {
+            imagePreview.removeAttribute("src");
+            imagePreview.style.display = "none";
+          }
         }
       };
 
@@ -1308,6 +1350,19 @@
           updateShared();
         });
       });
+
+      if (imageSelect) {
+        imageSelect.addEventListener("change", () => {
+          const selected = imageSelect.value || "";
+          settings.background_image = selected || null;
+          if (selected) {
+            settings.background_mode = "custom";
+          }
+          settings = normalizeSettings(settings);
+          syncInputs();
+          updateShared();
+        });
+      }
 
       if (productEditor) {
         productEditor.addEventListener("product-editor:change", () => {
