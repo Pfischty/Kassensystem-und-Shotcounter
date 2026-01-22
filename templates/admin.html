@@ -285,7 +285,10 @@
         </label>
         <button type="button" class="secondary" data-export-event>Event-JSON exportieren</button>
       </div>
-      <button type="submit">Event anlegen</button>
+      <div class="form-actions" style="margin-top: 1rem;">
+        <button type="submit" class="primary" data-submit-btn>Event anlegen</button>
+        <span class="form-status" data-form-status style="margin-left: 0.8rem; color: #94a3b8; display: none;"></span>
+      </div>
     </form>
   </div>
 </div>
@@ -509,7 +512,10 @@
         <button type="button" class="secondary" data-export-event>Event-JSON exportieren</button>
         <span class="muted">Import ersetzt die Felder oben, JSON bleibt optional.</span>
       </div>
-      <button type="submit">Speichern</button>
+      <div class="form-actions" style="margin-top: 1rem;">
+        <button type="submit" class="primary" data-submit-btn>Speichern</button>
+        <span class="form-status" data-form-status style="margin-left: 0.8rem; color: #94a3b8; display: none;"></span>
+      </div>
     </form>
   </div>
 </div>
@@ -1037,8 +1043,59 @@
     document.querySelectorAll("[data-event-form]").forEach((form) => {
       bindCopyAndImport(form);
       
-      // Add submit handler to collect shared settings from checkboxes
+      // Ensure submit button works properly
+      const submitBtn = form.querySelector('[data-submit-btn]');
+      if (submitBtn) {
+        submitBtn.addEventListener('click', function(e) {
+          // Let the button naturally submit the form
+          // This click handler is just to ensure the form is properly prepared
+          const statusEl = form.querySelector('[data-form-status]');
+          
+          // Validate product names are unique before submission
+          const productEditor = form.querySelector('[data-product-editor]');
+          if (productEditor && productEditor.productApi) {
+            const settings = productEditor.productApi.getSettings();
+            const items = settings.items || [];
+            const names = items.map(item => item.name);
+            const duplicates = names.filter((name, index) => names.indexOf(name) !== index);
+            
+            if (duplicates.length > 0) {
+              e.preventDefault();
+              e.stopPropagation();
+              if (statusEl) {
+                statusEl.style.display = 'inline';
+                statusEl.style.color = '#ef4444';
+                statusEl.textContent = `Fehler: Doppelte Produktnamen gefunden: ${duplicates.join(', ')}`;
+                setTimeout(() => {
+                  statusEl.style.display = 'none';
+                }, 5000);
+              }
+              alert(`Fehler: Doppelte Produktnamen gefunden: ${duplicates.join(', ')}`);
+              return false;
+            }
+          }
+        });
+      }
+      
+      // Add submit handler to collect shared settings from checkboxes and show loading state
       form.addEventListener('submit', function(e) {
+        const submitBtn = this.querySelector('[data-submit-btn]');
+        const statusEl = this.querySelector('[data-form-status]');
+        
+        // Show loading state
+        if (submitBtn) {
+          submitBtn.disabled = true;
+          const originalText = submitBtn.textContent;
+          submitBtn.textContent = 'Speichere...';
+          submitBtn.dataset.originalText = originalText;
+        }
+        if (statusEl) {
+          statusEl.style.display = 'inline';
+          statusEl.style.color = '#94a3b8';
+          statusEl.textContent = 'Daten werden gespeichert...';
+        }
+        
+        // Collect shared settings
         const sharedInput = this.querySelector('input[name="shared_settings"]');
         if (sharedInput) {
           const currentSettings = parseJson(sharedInput.value, {});
@@ -1051,6 +1108,8 @@
           
           sharedInput.value = JSON.stringify(currentSettings);
         }
+        
+        // Form will now submit naturally
       });
     });
 
