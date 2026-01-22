@@ -951,6 +951,17 @@ def _run_safe_command(cmd: list[str], timeout: int = 10) -> dict:
         }
 
 
+def _systemctl_bin() -> str:
+    """Resolve systemctl path for sudoers-compatibility."""
+    return "/bin/systemctl" if Path("/bin/systemctl").exists() else "/usr/bin/systemctl"
+
+
+def _systemctl_show_value(property_name: str, timeout: int = 10) -> dict:
+    """Read a systemd unit property value (no sudo)."""
+    cmd = [_systemctl_bin(), "show", "kassensystem-update.service", "-p", property_name, "--value"]
+    return _run_safe_command(cmd, timeout=timeout)
+
+
 def _get_network_interface_info(interface: str) -> dict:
     """Get information about a network interface."""
     info = {
@@ -1231,7 +1242,24 @@ def admin_git_update():
     # Trigger the privileged update service (runs the update script as root).
     # Use sudo with a narrow NOPASSWD sudoers entry to avoid interactive
     # polkit prompts in the web context.
-    result = _run_safe_command(["sudo", "systemctl", "start", "kassensystem-update.service"], timeout=300)
+    systemctl_bin = _systemctl_bin()
+    before_invocation = _systemctl_show_value("InvocationID")
+    before_id = before_invocation["output"].strip() if before_invocation["success"] else ""
+
+    result = _run_safe_command(["sudo", systemctl_bin, "start", "kassensystem-update.service"], timeout=300)
+
+    # If start failed but the unit actually ran successfully, treat as success.
+    if not result["success"] and before_invocation["success"]:
+        after_invocation = _systemctl_show_value("InvocationID")
+        result_state = _systemctl_show_value("Result")
+        after_id = after_invocation["output"].strip() if after_invocation["success"] else ""
+        if after_id and after_id != before_id and result_state["success"]:
+            if result_state["output"].strip().lower() == "success":
+                app.logger.warning(
+                    "systemctl start returned non-zero, but unit invocation succeeded (ID %s).",
+                    after_id,
+                )
+                result = {"success": True, "output": "", "error": ""}
     
     if result["success"]:
         app.logger.info("Git Update erfolgreich durchgeführt")
@@ -1240,10 +1268,13 @@ def admin_git_update():
             "message": "Update erfolgreich. Service wird neu gestartet..."
         })
     else:
-        app.logger.error(f"Git Update fehlgeschlagen: {result['error']}")
+        error_detail = result.get("error") or ""
+        if not error_detail:
+            error_detail = result.get("output") or ""
+        app.logger.error("Git Update fehlgeschlagen: %s", error_detail)
         return jsonify({
             "success": False,
-            "error": result["error"] or "Update fehlgeschlagen"
+            "error": error_detail or "Update fehlgeschlagen"
         })
 
 
