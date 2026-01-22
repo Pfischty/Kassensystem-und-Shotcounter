@@ -550,6 +550,12 @@ def enforce_admin_auth():
     username, password = credentials
     auth = request.authorization
     if not auth or auth.username != username or auth.password != password:
+        # If the request likely comes from JS (fetch/AJAX) return JSON
+        # so the client can parse the error instead of getting an HTML page.
+        accept = request.headers.get("Accept", "")
+        is_xhr = request.headers.get("X-Requested-With") == "XMLHttpRequest"
+        if is_xhr or "application/json" in accept:
+            return jsonify({"success": False, "error": "Admin-Authentifizierung erforderlich."}), 401
         return _admin_auth_required()
     return None
 
