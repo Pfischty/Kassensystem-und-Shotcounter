@@ -1231,8 +1231,12 @@ def admin_git_update():
     # Trigger the privileged update service (runs the update script as root)
     # Requires a systemd unit `kassensystem-update.service` installed and
     # the web/service user to be allowed to start it (via sudoers or polkit).
+    # Use systemctl directly (no sudo) so polkit permissions can allow the
+    # web user to start the privileged update unit. If sudoers is used instead
+    # the unit can also be started via sudo, but calling systemctl without
+    # sudo lets polkit handle authorization and avoids NoNewPrivileges issues.
     result = _run_safe_command(
-        ["sudo", "systemctl", "start", "kassensystem-update.service"],
+        ["systemctl", "start", "kassensystem-update.service"],
         timeout=300,
     )
     
