@@ -3,6 +3,15 @@
 # Pi maintenance helper for Kassensystem und Shotcounter.
 # This script assumes it is stored inside the project repo.
 #
+# Notes about execution context:
+# - The script can be run interactively as root (via sudo) for setup and
+#   maintenance tasks.
+# - For automated updates from the web UI we recommend installing the
+#   privileged systemd unit `kassensystem-update.service` (see deploy/ directory)
+#   and allowing the `kassensystem` service user to start that unit via
+#   sudoers or polkit. That keeps the web process unprivileged while still
+#   allowing a controlled, auditable root-runner for updates.
+#
 # Highlights
 # - Create/refresh a virtualenv (supports offline installs via ./wheels/)
 # - Write & enable a systemd service for auto-start after reboot

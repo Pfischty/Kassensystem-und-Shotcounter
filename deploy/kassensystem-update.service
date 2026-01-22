@@ -1,0 +1,14 @@
+[Unit]
+Description=Kassensystem Update Runner
+After=network.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/Kassensystem-und-Shotcounter
+User=root
+Group=root
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+ExecStart=/opt/Kassensystem-und-Shotcounter/scripts/pi_manage.sh update --branch main
+
+[Install]
+WantedBy=multi-user.target

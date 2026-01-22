@@ -108,6 +108,33 @@ Kurzüberblick:
   ```bash
   sudo ./scripts/pi_manage.sh update --offline
   ```
+  
+  **Sichere Update-Variante (empfohlen)**
+
+  Für Produktions- oder längere Deployments empfehlen wir die sichere Variante: die Web-App löst ein privilegiertes systemd-Unit aus, das das `update`-Skript als `root` startet. Vorteile:
+  - Trennung von Web-Prozess und privilegierten Aktionen
+  - Kein globales Deaktivieren von `NoNewPrivileges` für den Web-Service
+  - Auditierbare Logs via systemd
+
+  Installation (einmalig auf dem Zielsystem):
+  ```bash
+  sudo cp deploy/kassensystem-update.service /etc/systemd/system/kassensystem-update.service
+  sudo systemctl daemon-reload
+  sudo systemctl enable --now kassensystem-update.service
+  ```
+
+  Erlaube der Service-User `kassensystem` das Starten/Prüfen dieses Units (sudoers, empfehlenswert):
+  ```text
+  # /etc/sudoers.d/kassensystem-update
+  kassensystem ALL=(root) NOPASSWD: /bin/systemctl start kassensystem-update.service, /bin/systemctl status kassensystem-update.service
+  ```
+  Dann schützen:
+  ```bash
+  sudo chmod 440 /etc/sudoers.d/kassensystem-update
+  ```
+
+  Alternativ kann eine polkit-Regel die Start-Rechte feingranular regeln. Nach Installation startet die Admin-Weboberfläche intern `systemctl start kassensystem-update.service`.
+
 - **Kiosk** (Chromium):
   ```bash
   sudo ./scripts/pi_manage.sh write-kiosk

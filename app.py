@@ -1228,10 +1228,12 @@ def admin_git_update():
             "error": "Ungültiger Branch-Name"
         })
     
-    # Pull changes
+    # Trigger the privileged update service (runs the update script as root)
+    # Requires a systemd unit `kassensystem-update.service` installed and
+    # the web/service user to be allowed to start it (via sudoers or polkit).
     result = _run_safe_command(
-        ["sudo", str(script_path), "update", "--branch", branch],
-        timeout=120
+        ["sudo", "systemctl", "start", "kassensystem-update.service"],
+        timeout=300,
     )
     
     if result["success"]:
