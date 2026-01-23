@@ -1311,7 +1311,8 @@
             settings.enabled_categories = selected;
             if (errorEl) {
               if (!selected.length) {
-                errorEl.textContent = "Mindestens eine Kategorie aktivieren.";
+                errorEl.textContent = "Keine Auswahl = alle Kategorien.";
+                errorEl.style.color = "#94a3b8";
                 errorEl.style.display = "block";
               } else {
                 errorEl.textContent = "";
@@ -1329,7 +1330,8 @@
         });
 
         if (errorEl && !settings.enabled_categories.length) {
-          errorEl.textContent = "Mindestens eine Kategorie aktivieren.";
+          errorEl.textContent = "Keine Auswahl = alle Kategorien.";
+          errorEl.style.color = "#94a3b8";
           errorEl.style.display = "block";
         }
       };
@@ -1525,21 +1527,7 @@
 
           const priceSettingsWrapper = form.querySelector("[data-price-settings]");
           if (priceSettingsWrapper && priceSettingsWrapper.priceSettingsApi) {
-            const priceSettings = priceSettingsWrapper.priceSettingsApi.getSettings();
-            if (!priceSettings.enabled_categories || priceSettings.enabled_categories.length === 0) {
-              e.preventDefault();
-              e.stopPropagation();
-              if (statusEl) {
-                statusEl.style.display = 'inline';
-                statusEl.style.color = '#ef4444';
-                statusEl.textContent = 'Fehler: Mindestens eine Preisliste-Kategorie aktivieren.';
-                setTimeout(() => {
-                  statusEl.style.display = 'none';
-                }, 5000);
-              }
-              alert('Fehler: Mindestens eine Preisliste-Kategorie aktivieren.');
-              return false;
-            }
+            priceSettingsWrapper.priceSettingsApi.getSettings();
           }
         });
       }
