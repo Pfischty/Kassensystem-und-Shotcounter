@@ -244,6 +244,8 @@ class ButtonConfig:
     css_class: str
     color: str | None = None
     category: str = "Standard"
+    show_in_cashier: bool = True
+    show_in_price_list: bool = True
 
 
 DEFAULT_BUTTONS: List[ButtonConfig] = [
@@ -555,6 +557,8 @@ def resolve_button_config(event: Event | None) -> List[ButtonConfig]:
                     or default_color_lookup.get(item.get("css_class", ""))
                     or "#1f2a44",
                     category=item.get("category", "Standard"),
+                    show_in_cashier=item.get("show_in_cashier") is not False,
+                    show_in_price_list=item.get("show_in_price_list") is not False,
                 )
             )
         except (KeyError, TypeError, ValueError):
@@ -601,6 +605,8 @@ def validate_and_normalize_buttons(settings: Dict | None) -> Dict:
                 "css_class": item.get("css_class") or "custom",
                 "color": item.get("color"),
                 "category": item.get("category") or "Standard",
+                "show_in_cashier": item.get("show_in_cashier") is not False,
+                "show_in_price_list": item.get("show_in_price_list") is not False,
             }
         )
 
@@ -618,6 +624,8 @@ def validate_and_normalize_buttons(settings: Dict | None) -> Dict:
                 "css_class": btn.css_class,
                 "color": btn.color,
                 "category": btn.category,
+                "show_in_cashier": btn.show_in_cashier,
+                "show_in_price_list": btn.show_in_price_list,
             }
             for btn in DEFAULT_BUTTONS
         ]
@@ -901,6 +909,46 @@ def admin():
     )
 
 
+@app.route("/admin/events/<int:event_id>/settings")
+def admin_event_settings(event_id: int):
+    event = Event.query.get_or_404(event_id)
+    events = Event.query.order_by(Event.created_at.desc()).all()
+    default_button_presets = [button.__dict__ for button in DEFAULT_BUTTONS]
+    button_map = {evt.id: [btn.__dict__ for btn in resolve_button_config(evt)] for evt in events}
+    kass_settings = {evt.id: {**(evt.kassensystem_settings or {}), "items": button_map[evt.id]} for evt in events}
+    shot_settings_map = {evt.id: resolve_shotcounter_settings(evt) for evt in events}
+    event_payloads = {
+        evt.id: {
+            "name": evt.name,
+            "kassensystem_enabled": evt.kassensystem_enabled,
+            "shotcounter_enabled": evt.shotcounter_enabled,
+            "shared_settings": evt.shared_settings or {},
+            "shotcounter_settings": shot_settings_map[evt.id],
+            "kassensystem_settings": kass_settings[evt.id],
+        }
+        for evt in events
+    }
+
+    uploads_dir = Path(app.config["UPLOAD_FOLDER"])
+    price_list_images = sorted(
+        [p.name for p in uploads_dir.glob("pl_*.*") if p.is_file()]
+    )
+
+    return render_template(
+        "event_settings.html",
+        event=event,
+        events=events,
+        default_buttons=default_button_presets,
+        event_buttons=button_map,
+        kass_settings=kass_settings,
+        event_payloads=event_payloads,
+        shotcounter_defaults=DEFAULT_SHOTCOUNTER_SETTINGS,
+        price_list_defaults=DEFAULT_PRICE_LIST_SETTINGS,
+        price_list_images=price_list_images,
+        shot_settings_map=shot_settings_map,
+    )
+
+
 @app.route("/admin/events", methods=["POST"])
 def create_event():
     name = (request.form.get("name") or "").strip()
@@ -964,7 +1012,7 @@ def update_event(event_id: int):
     db.session.commit()
     app.logger.info("Event aktualisiert: %s", event.name)
     flash("Event wurde aktualisiert.", "success")
-    return redirect(url_for("admin"))
+    return redirect(_redirect_target("admin"))
 
 
 @app.route("/admin/events/<int:event_id>/activate", methods=["POST"])
@@ -1417,7 +1465,7 @@ def _get_cart_data(event):
 @app.route("/cashier")
 def cashier():
     event = require_active_event(kassensystem=True)
-    buttons = resolve_button_config(event)
+    buttons = [btn for btn in resolve_button_config(event) if btn.show_in_cashier]
     cart_data = _get_cart_data(event)
     
     # Group buttons by category
@@ -1445,7 +1493,7 @@ def cashier():
 @app.route("/cashier/add")
 def add_item():
     event = require_active_event(kassensystem=True)
-    buttons = resolve_button_config(event)
+    buttons = [btn for btn in resolve_button_config(event) if btn.show_in_cashier]
     prices = {button.name: button.price for button in buttons}
     name = request.args.get("name")
     if name and name in prices:
@@ -1572,6 +1620,7 @@ def price_list():
         kass_settings = validate_and_normalize_buttons({})
 
     items = kass_settings.get("items", []) if isinstance(kass_settings, dict) else []
+    items = [item for item in items if item.get("show_in_price_list") is not False]
     categories = _build_price_list_categories(items)
 
     enabled = price_settings.get("enabled_categories") or []
