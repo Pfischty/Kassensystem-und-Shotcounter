@@ -264,7 +264,14 @@ document.addEventListener('click', (e) => {
       try { baseSettings = JSON.parse(hidden.value || "{}"); } catch (err) { baseSettings = {}; }
 
       let parsedItems = [];
-      try { parsedItems = JSON.parse(wrapper.dataset.items || "[]"); } catch (err) { parsedItems = []; }
+      try {
+        // First try to read from saved data (hidden input), then fallback to template data
+        if (baseSettings.items && Array.isArray(baseSettings.items)) {
+          parsedItems = baseSettings.items;
+        } else {
+          parsedItems = JSON.parse(wrapper.dataset.items || "[]");
+        }
+      } catch (err) { parsedItems = []; }
 
       let items = Array.isArray(parsedItems) ? parsedItems.map(normalizeItem) : [];
       if (!items.length) {
@@ -461,8 +468,8 @@ document.addEventListener('click', (e) => {
           cashierText.textContent = "Kasse";
           cashierLabel.append(cashierToggle, cashierText);
 
-          const priceLabel = document.createElement("label");
-          priceLabel.className = "pill-toggle";
+          const priceListLabel = document.createElement("label");
+          priceListLabel.className = "pill-toggle";
           const priceToggle = document.createElement("input");
           priceToggle.type = "checkbox";
           priceToggle.checked = item.show_in_price_list !== false;
@@ -472,9 +479,9 @@ document.addEventListener('click', (e) => {
           });
           const priceText = document.createElement("span");
           priceText.textContent = "Preisliste";
-          priceLabel.append(priceToggle, priceText);
+          priceListLabel.append(priceToggle, priceText);
 
-          visibilityGroup.append(cashierLabel, priceLabel);
+          visibilityGroup.append(cashierLabel, priceListLabel);
           visibilityContainer.append(visibilityLabel, visibilityGroup);
 
           const actions = document.createElement("div");
