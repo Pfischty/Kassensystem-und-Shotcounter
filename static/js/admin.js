@@ -143,6 +143,112 @@ document.addEventListener('click', (e) => {
     };
   })();
 
+  const promptAction = (() => {
+    let modal;
+    let messageEl;
+    let inputEl;
+    let okBtn;
+    let cancelBtn;
+    let resolver;
+    let cleanupKeydown;
+
+    const close = (result) => {
+      if (!modal) return;
+      modal.style.display = "none";
+      document.body.style.overflow = "";
+      if (cleanupKeydown) cleanupKeydown();
+      const resolve = resolver;
+      resolver = null;
+      if (resolve) resolve(result);
+    };
+
+    const ensureModal = () => {
+      if (modal) return;
+      modal = document.createElement("div");
+      modal.setAttribute("data-prompt-modal", "");
+      Object.assign(modal.style, {
+        position: "fixed",
+        inset: "0",
+        display: "none",
+        alignItems: "center",
+        justifyContent: "center",
+        background: "rgba(0,0,0,0.65)",
+        zIndex: "2000",
+        padding: "1rem",
+      });
+
+      const box = document.createElement("div");
+      Object.assign(box.style, {
+        background: "var(--card)",
+        border: "1px solid var(--border)",
+        borderRadius: "12px",
+        padding: "1rem 1.2rem",
+        maxWidth: "420px",
+        width: "100%",
+        boxShadow: "0 10px 40px rgba(0,0,0,0.45)",
+      });
+
+      const title = document.createElement("div");
+      title.textContent = "Eingabe";
+      title.style.fontWeight = "700";
+      title.style.marginBottom = "0.5rem";
+
+      messageEl = document.createElement("div");
+      messageEl.style.marginBottom = "0.7rem";
+
+      inputEl = document.createElement("input");
+      inputEl.type = "text";
+      inputEl.style.width = "100%";
+      inputEl.style.marginBottom = "0.9rem";
+
+      const actions = document.createElement("div");
+      Object.assign(actions.style, { display: "flex", gap: "0.6rem", justifyContent: "flex-end" });
+
+      cancelBtn = document.createElement("button");
+      cancelBtn.type = "button";
+      cancelBtn.className = "secondary";
+      cancelBtn.textContent = "Abbrechen";
+
+      okBtn = document.createElement("button");
+      okBtn.type = "button";
+      okBtn.className = "primary";
+      okBtn.textContent = "OK";
+
+      actions.append(cancelBtn, okBtn);
+      box.append(title, messageEl, inputEl, actions);
+      modal.appendChild(box);
+      document.body.appendChild(modal);
+
+      modal.addEventListener("click", (event) => {
+        if (event.target === modal) close(null);
+      });
+      cancelBtn.addEventListener("click", () => close(null));
+      okBtn.addEventListener("click", () => close(String(inputEl.value || "").trim()));
+    };
+
+    return (message, initialValue = "") =>
+      new Promise((resolve) => {
+        ensureModal();
+        resolver = resolve;
+        messageEl.textContent = message || "";
+        inputEl.value = String(initialValue || "");
+        modal.style.display = "flex";
+        document.body.style.overflow = "hidden";
+
+        const keyHandler = (event) => {
+          if (event.key === "Escape") {
+            close(null);
+          }
+          if (event.key === "Enter") {
+            close(String(inputEl.value || "").trim());
+          }
+        };
+        cleanupKeydown = () => document.removeEventListener("keydown", keyHandler);
+        document.addEventListener("keydown", keyHandler);
+        setTimeout(() => inputEl.focus(), 0);
+      });
+  })();
+
   safeRun("confirm-handlers", () => {
     document.addEventListener(
       "click",
@@ -773,11 +879,11 @@ document.addEventListener('click', (e) => {
           renameBtn.type = "button";
           renameBtn.className = "secondary";
           renameBtn.textContent = "Umbenennen";
-          renameBtn.addEventListener("click", () => {
+          renameBtn.addEventListener("click", async () => {
             const currentName = nameInput.value.trim() || name;
             if (!currentName) return;
-            const nextName = prompt("Kategorie umbenennen:", currentName);
-            if (nextName === null) return;
+            const nextName = await promptAction("Kategorie umbenennen:", currentName);
+            if (!nextName) return;
             renameCategory(currentName, nextName);
           });
 
@@ -801,8 +907,8 @@ document.addEventListener('click', (e) => {
       };
 
       if (addCategoryBtn) {
-        addCategoryBtn.addEventListener("click", () => {
-          const name = prompt("Neue Kategorie:");
+        addCategoryBtn.addEventListener("click", async () => {
+          const name = await promptAction("Neue Kategorie:");
           if (!name) return;
           addCategory(name);
         });
@@ -1004,7 +1110,13 @@ document.addEventListener('click', (e) => {
           removeBtn.className = "danger";
           removeBtn.textContent = "Entfernen";
           removeBtn.addEventListener("click", () => {
-            items.splice(index, 1);
+            const itemIndex = items.indexOf(item);
+            if (itemIndex >= 0) {
+              items.splice(itemIndex, 1);
+            } else {
+              const byName = items.findIndex((candidate) => candidate && candidate.name === item.name);
+              if (byName >= 0) items.splice(byName, 1);
+            }
             if (!items.length) {
               items.push(normalizeItem({ name: "produkt", label: "Produkt", price: 0, color: fallbackColor }, 0));
             }
