@@ -412,6 +412,11 @@ document.addEventListener('click', (e) => {
       return Math.max(0, Math.round(parsed));
     };
 
+    const getItemPriority = (item) => {
+      const value = Number(item?.priority);
+      return Number.isFinite(value) ? Math.round(value) : null;
+    };
+
     const normalizeItem = (item, index) => {
       const safeItem = item || {};
       const rawLabel = safeItem.label ?? safeItem.name ?? "";
@@ -420,6 +425,7 @@ document.addEventListener('click', (e) => {
       const name = String(rawName).trim();
       const price = Number.isFinite(Number(safeItem.price)) ? Number(safeItem.price) : 0;
       const hasDepot = safeItem.has_depot === true;
+      const priority = getItemPriority(safeItem);
       return {
         name,
         label,
@@ -428,6 +434,7 @@ document.addEventListener('click', (e) => {
         color: sanitizeColor(safeItem.color || ""),
         category: String(safeItem.category ?? defaultCategory),
         has_depot: hasDepot,
+        priority: priority ?? null,
       };
     };
 
@@ -571,7 +578,20 @@ document.addEventListener('click', (e) => {
         return next;
       };
 
+      const syncCategoryOrderFromDom = () => {
+        if (!categoryOrderList) return;
+        const nextOrder = Array.from(
+          categoryOrderList.querySelectorAll(".category-order__item")
+        )
+          .map((row) => row.dataset.categoryName)
+          .filter(Boolean);
+        if (nextOrder.length) {
+          categoryOrder = nextOrder;
+        }
+      };
+
       const syncHidden = () => {
+        syncCategoryOrderFromDom();
         const categories = getAllCategories();
         normalizeCategoryOrder(categories);
         normalizeCategoryVisibility(categories);
@@ -583,6 +603,21 @@ document.addEventListener('click', (e) => {
           items,
         });
         wrapper.dispatchEvent(new CustomEvent("product-editor:change", { detail: { categories } }));
+      };
+
+      const getNextPriority = (categoryName) => {
+        const normalizedCategory = String(categoryName || defaultCategory).trim() || defaultCategory;
+        const inCategory = items.filter((item) => {
+          const current = String(item?.category || defaultCategory).trim() || defaultCategory;
+          return current === normalizedCategory;
+        });
+        const priorities = inCategory
+          .map((item) => getItemPriority(item))
+          .filter((value) => value !== null);
+        if (priorities.length) {
+          return Math.max(...priorities) + 1;
+        }
+        return inCategory.length;
       };
 
       const getSortedItems = (filterKey) => {
@@ -612,6 +647,13 @@ document.addEventListener('click', (e) => {
             const idxB = categoryIndex.has(catB) ? categoryIndex.get(catB) : 9999;
             if (idxA !== idxB) {
               return (idxA === -1 ? 9999 : idxA) - (idxB === -1 ? 9999 : idxB);
+            }
+            const priorityA = getItemPriority(a);
+            const priorityB = getItemPriority(b);
+            if (priorityA !== null || priorityB !== null) {
+              const safeA = priorityA ?? Number.MAX_SAFE_INTEGER;
+              const safeB = priorityB ?? Number.MAX_SAFE_INTEGER;
+              if (safeA !== safeB) return safeA - safeB;
             }
             const labelA = String(a.label || a.name || "").toLowerCase();
             const labelB = String(b.label || b.name || "").toLowerCase();
@@ -1026,25 +1068,116 @@ document.addEventListener('click', (e) => {
         list.appendChild(datalist);
 
         const orderedCategories = getOrderedCategories(categories);
-        const categoryIndex = new Map();
-        orderedCategories.forEach((name, idx) => categoryIndex.set(name, idx));
 
-        const sortedItems = items.slice().sort((a, b) => {
-          const catA = String(a.category || defaultCategory).trim() || defaultCategory;
-          const catB = String(b.category || defaultCategory).trim() || defaultCategory;
-          const idxA = categoryIndex.has(catA) ? categoryIndex.get(catA) : 9999;
-          const idxB = categoryIndex.has(catB) ? categoryIndex.get(catB) : 9999;
-          if (idxA !== idxB) return idxA - idxB;
-          const labelA = String(a.label || a.name || "").toLowerCase();
-          const labelB = String(b.label || b.name || "").toLowerCase();
-          if (labelA < labelB) return -1;
-          if (labelA > labelB) return 1;
-          return 0;
-        });
+        const sortItemsWithinCategory = (groupItems) =>
+          groupItems.slice().sort((a, b) => {
+            const priorityA = getItemPriority(a);
+            const priorityB = getItemPriority(b);
+            if (priorityA !== null || priorityB !== null) {
+              const safeA = priorityA ?? Number.MAX_SAFE_INTEGER;
+              const safeB = priorityB ?? Number.MAX_SAFE_INTEGER;
+              if (safeA !== safeB) return safeA - safeB;
+            }
+            const labelA = String(a.label || a.name || "").toLowerCase();
+            const labelB = String(b.label || b.name || "").toLowerCase();
+            if (labelA < labelB) return -1;
+            if (labelA > labelB) return 1;
+            return 0;
+          });
 
-        sortedItems.forEach((item, index) => {
-          const row = document.createElement("div");
-          row.className = "product-row";
+        let draggingRow = null;
+        let draggingCategory = null;
+
+        const getDragAfterElement = (container, y) => {
+          const draggableElements = Array.from(
+            container.querySelectorAll(".product-row:not(.is-dragging)")
+          );
+          return draggableElements.reduce(
+            (closest, child) => {
+              const box = child.getBoundingClientRect();
+              const offset = y - box.top - box.height / 2;
+              if (offset < 0 && offset > closest.offset) {
+                return { offset, element: child };
+              }
+              return closest;
+            },
+            { offset: Number.NEGATIVE_INFINITY, element: null }
+          ).element;
+        };
+
+        const applyItemOrderFromDom = (container, categoryName) => {
+          const rows = Array.from(container.querySelectorAll(".product-row"));
+          rows.forEach((row, idx) => {
+            const itemName = row.dataset.itemName;
+            const item = items.find((candidate) => candidate && candidate.name === itemName);
+            if (item) {
+              item.priority = idx;
+              item.category = categoryName;
+            }
+          });
+          renderPreview();
+          syncHidden();
+        };
+
+        orderedCategories.forEach((category) => {
+          const groupItems = items.filter((item) => {
+            const itemCategory = String(item?.category || defaultCategory).trim() || defaultCategory;
+            return itemCategory === category;
+          });
+          if (!groupItems.length) return;
+
+          const groupWrap = document.createElement("div");
+          groupWrap.className = "product-category";
+
+          const groupHeader = document.createElement("div");
+          groupHeader.className = "product-category__header";
+          groupHeader.innerHTML = `<strong>${category}</strong><span class="muted">Drag & Drop zum Sortieren</span>`;
+
+          const groupList = document.createElement("div");
+          groupList.className = "product-category__list";
+          groupList.dataset.category = category;
+
+          groupList.addEventListener("dragover", (event) => {
+            event.preventDefault();
+            if (!draggingRow || draggingCategory !== category) return;
+            const afterElement = getDragAfterElement(groupList, event.clientY);
+            if (!afterElement) {
+              groupList.appendChild(draggingRow);
+            } else {
+              groupList.insertBefore(draggingRow, afterElement);
+            }
+          });
+
+          groupList.addEventListener("drop", (event) => {
+            event.preventDefault();
+            if (!draggingRow || draggingCategory !== category) return;
+            applyItemOrderFromDom(groupList, category);
+          });
+
+          const sortedItems = sortItemsWithinCategory(groupItems);
+
+          sortedItems.forEach((item) => {
+            const row = document.createElement("div");
+            row.className = "product-row";
+            row.dataset.itemName = item.name;
+            row.dataset.category = category;
+            row.draggable = true;
+
+            row.addEventListener("dragstart", (event) => {
+              draggingRow = row;
+              draggingCategory = category;
+              row.classList.add("is-dragging");
+              event.dataTransfer.effectAllowed = "move";
+              event.dataTransfer.setData("text/plain", item.name || "");
+            });
+
+            row.addEventListener("dragend", () => {
+              row.classList.remove("is-dragging");
+              if (draggingRow === row) {
+                draggingRow = null;
+                draggingCategory = null;
+              }
+            });
 
           const nameContainer = document.createElement("div");
           nameContainer.className = "stack";
@@ -1055,6 +1188,7 @@ document.addEventListener('click', (e) => {
           nameInput.placeholder = "unique-key";
           nameInput.addEventListener("input", () => {
             item.name = nameInput.value.trim();
+            row.dataset.itemName = item.name;
             syncHidden();
           });
           nameContainer.append(nameLabel, nameInput);
@@ -1151,8 +1285,11 @@ document.addEventListener('click', (e) => {
             }
             const nextCategory = raw || defaultCategory;
             if (categories.includes(nextCategory)) {
+              const nextPriority = getNextPriority(nextCategory);
               item.category = nextCategory;
+              item.priority = nextPriority;
               categoryInput.value = nextCategory;
+              renderList();
               renderPreview();
               renderCategoryOrder();
               syncHidden();
@@ -1195,12 +1332,17 @@ document.addEventListener('click', (e) => {
           colorActionsGroup.append(colorContainer, actions);
 
           row.append(labelContainer, nameContainer, priceDepotGroup, categoryContainer, colorActionsGroup);
-          list.appendChild(row);
+          groupList.appendChild(row);
+          });
+
+          groupWrap.append(groupHeader, groupList);
+          list.appendChild(groupWrap);
         });
       };
 
       if (addButton) {
         addButton.addEventListener("click", () => {
+          const nextPriority = getNextPriority(defaultCategory);
           items.push(
             normalizeItem(
               {
@@ -1212,6 +1354,7 @@ document.addEventListener('click', (e) => {
               items.length
             )
           );
+          items[items.length - 1].priority = nextPriority;
           renderList();
           renderPreview();
           renderCategoryOrder();
@@ -1281,13 +1424,20 @@ document.addEventListener('click', (e) => {
       }
 
       wrapper.productApi = {
-        getSettings: () => ({
-          ...baseSettings,
-          depot_price: depotPrice,
-          category_order: categoryOrder,
-          category_visibility: categoryVisibility,
-          items,
-        }),
+        getSettings: () => {
+          syncCategoryOrderFromDom();
+          return {
+            ...baseSettings,
+            depot_price: depotPrice,
+            category_order: categoryOrder,
+            category_visibility: categoryVisibility,
+            items,
+          };
+        },
+        syncCategoryOrder: () => {
+          syncCategoryOrderFromDom();
+          syncHidden();
+        },
         setSettings: (data) => {
           const importedItems = Array.isArray(data && data.items) ? data.items : [];
           baseSettings = data && typeof data === "object" && !Array.isArray(data) ? { ...data } : {};
@@ -1589,6 +1739,10 @@ document.addEventListener('click', (e) => {
           if (priceSettingsWrapper && priceSettingsWrapper.priceSettingsApi) {
             priceSettingsWrapper.priceSettingsApi.getSettings();
           }
+
+          if (productEditor && productEditor.productApi && productEditor.productApi.syncCategoryOrder) {
+            productEditor.productApi.syncCategoryOrder();
+          }
         });
       }
 
@@ -1627,6 +1781,12 @@ document.addEventListener('click', (e) => {
           }
 
           sharedInput.value = JSON.stringify(currentSettings);
+        }
+
+        const productEditor = this.querySelector('[data-product-editor]');
+        const kassInput = this.querySelector('input[name="kassensystem_settings"]');
+        if (productEditor && productEditor.productApi && kassInput) {
+          kassInput.value = JSON.stringify(productEditor.productApi.getSettings());
         }
 
         // Form will now submit naturally

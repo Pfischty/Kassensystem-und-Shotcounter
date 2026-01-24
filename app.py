@@ -246,6 +246,7 @@ class ButtonConfig:
     category: str = "Standard"
     has_depot: bool = False
     depot_price: int = 2
+    priority: int | None = None
 
     @property
     def price_with_depot(self) -> int:
@@ -546,6 +547,11 @@ def resolve_button_config(event: Event | None) -> List[ButtonConfig]:
     items_source = raw_items if raw_items else [btn.__dict__ for btn in DEFAULT_BUTTONS]
     for item in items_source:
         try:
+            raw_priority = item.get("priority") if isinstance(item, dict) else None
+            try:
+                priority = int(raw_priority) if raw_priority is not None else None
+            except (TypeError, ValueError):
+                priority = None
             normalized.append(
                 ButtonConfig(
                     name=item["name"],
@@ -558,6 +564,7 @@ def resolve_button_config(event: Event | None) -> List[ButtonConfig]:
                     category=item.get("category", "Standard"),
                     has_depot=item.get("has_depot") is True,
                     depot_price=depot_price,
+                    priority=priority,
                 )
             )
         except (KeyError, TypeError, ValueError):
@@ -603,6 +610,12 @@ def validate_and_normalize_buttons(settings: Dict | None) -> Dict:
         except (TypeError, ValueError):
             price = 0
 
+        raw_priority = item.get("priority")
+        try:
+            priority = int(raw_priority) if raw_priority is not None else None
+        except (TypeError, ValueError):
+            priority = None
+
         normalized.append(
             {
                 "name": name,
@@ -612,6 +625,7 @@ def validate_and_normalize_buttons(settings: Dict | None) -> Dict:
                 "color": item.get("color"),
                 "category": item.get("category") or "Standard",
                 "has_depot": item.get("has_depot") is True,
+                "priority": priority,
             }
         )
 
@@ -1545,8 +1559,13 @@ def cashier():
         if name not in seen:
             ordered_categories.append(name)
 
+    def _button_sort_key(button: ButtonConfig) -> tuple[int, str]:
+        priority = button.priority if isinstance(button.priority, int) else 9999
+        label = (button.label or button.name or "").lower()
+        return priority, label
+
     buttons_by_category = {
-        category: sorted(group, key=lambda b: (b.label or b.name).lower())
+        category: sorted(group, key=_button_sort_key)
         for category, group in ((name, buttons_by_category[name]) for name in ordered_categories)
     }
     
@@ -1771,6 +1790,7 @@ def _build_price_list_categories(items: List[Dict], category_order: List[str] | 
             {
                 "label": item.get("label") or item.get("name") or "",
                 "price": item.get("price", 0),
+                "priority": item.get("priority"),
             }
         )
 
@@ -1790,7 +1810,13 @@ def _build_price_list_categories(items: List[Dict], category_order: List[str] | 
 
     categories = []
     for name in ordered_names:
-        entries = sorted(bucket.get(name, []), key=lambda entry: str(entry.get("label") or "").lower())
+        entries = sorted(
+            bucket.get(name, []),
+            key=lambda entry: (
+                entry.get("priority") if isinstance(entry.get("priority"), int) else 9999,
+                str(entry.get("label") or "").lower(),
+            ),
+        )
         categories.append({"name": name, "items": entries})
     return categories
 
