@@ -27,6 +27,36 @@
     gap: 0.6rem;
     grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
   }
+  .product-editor__preview[data-product-preview="cashier"] {
+    display: flex;
+    flex-direction: column;
+    gap: 0.8rem;
+  }
+  .product-editor__preview[data-product-preview="cashier"] .price-preview-category {
+    width: 100%;
+  }
+  .product-editor__previews {
+    display: grid;
+    gap: 1rem;
+    margin-top: 0.8rem;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  }
+  .product-preview-block {
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 0.75rem;
+    background: rgba(255,255,255,0.02);
+  }
+  .product-preview-title { font-weight: 700; margin-bottom: 0.5rem; }
+  .product-editor__preview--list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+  }
+  .price-preview-category { border-top: 1px dashed var(--border); padding-top: 0.5rem; }
+  .price-preview-category:first-child { border-top: none; padding-top: 0; }
+  .price-preview-category h4 { margin: 0 0 0.35rem 0; font-size: 0.95rem; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.04em; }
+  .price-preview-item { display:flex; justify-content:space-between; font-size: 0.95rem; }
   .product-preview-card {
     border-radius: 12px;
     padding: 0.85rem;
@@ -291,7 +321,7 @@
     <div class="product-editor__top">
       <div>
         <strong>Produkte für dieses Event</strong>
-        <div class="muted">Titel, Preis, Farbe bearbeiten. Reihenfolge per Drag & Drop ändern.</div>
+        <div class="muted">Titel, Preis, Kategorie und Sichtbarkeit bearbeiten (Farben werden nur in der Vorschau angezeigt).</div>
         <div class="field-inline" style="margin-top:0.45rem;">
           <label class="stack" style="min-width: 180px;">
             <span>Depot-Preis (CHF)</span>
@@ -309,7 +339,16 @@
         <button type="button" class="secondary" data-add-product>+ Produkt</button>
       </div>
     </div>
-    <div class="product-editor__preview" data-product-preview></div>
+    <div class="product-editor__previews">
+      <div class="product-preview-block">
+        <div class="product-preview-title">Kasse Vorschau (sichtbare Produkte)</div>
+        <div class="product-editor__preview" data-product-preview="cashier"></div>
+      </div>
+      <div class="product-preview-block">
+        <div class="product-preview-title">Preisliste Vorschau (sortiert)</div>
+        <div class="product-editor__preview product-editor__preview--list" data-product-preview="price"></div>
+      </div>
+    </div>
     <div class="product-editor__list" data-product-list></div>
     <input type="hidden" name="kassensystem_settings" value='{{ kass_settings.get(event.id, {"items": event_buttons.get(event.id, default_buttons)}) | tojson }}'>
   </div>

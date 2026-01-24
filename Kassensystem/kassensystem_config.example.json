@@ -1,67 +1,95 @@
 {
+  "depot_price": 2,
   "items": [
     {
       "name": "Süssgetränke",
       "label": "Süssgetränke",
       "price": 6,
       "css_class": "suess",
-      "category": "Getränke"
+      "category": "Getränke",
+      "show_in_cashier": true,
+      "show_in_price_list": true,
+      "has_depot": false
     },
     {
       "name": "Bier",
       "label": "Bier / Mate / Red Bull / Smirnoff",
       "price": 7,
       "css_class": "bier",
-      "category": "Alkohol"
+      "category": "Alkohol",
+      "show_in_cashier": true,
+      "show_in_price_list": true,
+      "has_depot": true
     },
     {
       "name": "Wein",
       "label": "Wein",
       "price": 7,
       "css_class": "wein",
-      "category": "Alkohol"
+      "category": "Alkohol",
+      "show_in_cashier": true,
+      "show_in_price_list": true,
+      "has_depot": true
     },
     {
       "name": "Weinflasche 0.7",
       "label": "Weinflasche",
       "price": 22,
       "css_class": "flasche",
-      "category": "Alkohol"
+      "category": "Alkohol",
+      "show_in_cashier": true,
+      "show_in_price_list": true,
+      "has_depot": true
     },
     {
       "name": "Drink 10",
       "label": "Drink 10",
       "price": 12,
       "css_class": "gross",
-      "category": "Alkohol"
+      "category": "Alkohol",
+      "show_in_cashier": true,
+      "show_in_price_list": true,
+      "has_depot": true
     },
     {
       "name": "Depot rein",
       "label": "Depot rein",
       "price": -2,
       "css_class": "depot",
-      "category": "Diverses"
+      "category": "Diverses",
+      "show_in_cashier": true,
+      "show_in_price_list": false,
+      "has_depot": false
     },
     {
       "name": "Weinglassdepot",
       "label": "Weinglas Depot",
       "price": 2,
       "css_class": "Weinglassdepot",
-      "category": "Diverses"
+      "category": "Diverses",
+      "show_in_cashier": true,
+      "show_in_price_list": false,
+      "has_depot": false
     },
     {
       "name": "Kaffee",
       "label": "Kaffee",
       "price": 3,
       "css_class": "kaffee",
-      "category": "Getränke"
+      "category": "Getränke",
+      "show_in_cashier": true,
+      "show_in_price_list": true,
+      "has_depot": false
     },
     {
       "name": "Shot",
       "label": "Shot",
       "price": 5,
       "css_class": "shot",
-      "category": "Alkohol"
+      "category": "Alkohol",
+      "show_in_cashier": true,
+      "show_in_price_list": true,
+      "has_depot": false
     }
   ]
 }

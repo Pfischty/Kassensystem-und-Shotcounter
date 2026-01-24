@@ -262,7 +262,8 @@ document.addEventListener('click', (e) => {
         const form = wrapper.closest("form");
         const statusEl = form ? form.querySelector('[data-form-status]') : null;
         const addButton = wrapper.querySelector("[data-add-product]");
-        const preview = wrapper.querySelector("[data-product-preview]");
+        const cashierPreview = wrapper.querySelector("[data-product-preview='cashier']");
+        const pricePreview = wrapper.querySelector("[data-product-preview='price']");
         const list = wrapper.querySelector("[data-product-list]");
         const hidden = wrapper.querySelector('input[name="kassensystem_settings"]');
         const importInput = wrapper.querySelector("[data-product-import]");
@@ -304,45 +305,98 @@ document.addEventListener('click', (e) => {
         wrapper.dispatchEvent(new CustomEvent("product-editor:change", { detail: { categories } }));
       };
 
-      const renderPreview = () => {
-        preview.innerHTML = "";
-        let dragIndex = null;
-
-        items.forEach((item, index) => {
-          const displayPrice = Number(item.price || 0) + (item.has_depot ? Number(depotPrice || 0) : 0);
-          const card = document.createElement("div");
-          card.className = "product-preview-card";
-          card.draggable = true;
-          card.style.background = sanitizeColor(item.color);
-          card.dataset.index = index;
-          card.innerHTML = `<small>${displayPrice} CHF${item.has_depot ? " (inkl. Depot)" : ""}</small><div style="font-weight:700;">${item.label}</div>`;
-
-          card.addEventListener("dragstart", () => {
-            dragIndex = index;
-            card.classList.add("dragging");
+      const getSortedItems = (filterKey) => {
+        return items
+          .filter((item) => {
+            if (!item) return false;
+            if (filterKey === "cashier") return item.show_in_cashier !== false;
+            if (filterKey === "price") return item.show_in_price_list !== false;
+            return true;
+          })
+          .slice()
+          .sort((a, b) => {
+            const catA = String(a.category || defaultCategory).toLowerCase();
+            const catB = String(b.category || defaultCategory).toLowerCase();
+            if (catA < catB) return -1;
+            if (catA > catB) return 1;
+            const labelA = String(a.label || a.name || "").toLowerCase();
+            const labelB = String(b.label || b.name || "").toLowerCase();
+            if (labelA < labelB) return -1;
+            if (labelA > labelB) return 1;
+            return 0;
           });
-          card.addEventListener("dragend", () => card.classList.remove("dragging"));
-          card.addEventListener("dragover", (ev) => {
-            ev.preventDefault();
-            card.classList.add("drag-over");
-          });
-          card.addEventListener("dragleave", () => card.classList.remove("drag-over"));
-          card.addEventListener("drop", (ev) => {
-            ev.preventDefault();
-            card.classList.remove("drag-over");
-            const targetIndex = Number(card.dataset.index);
-            if (Number.isNaN(targetIndex) || dragIndex === null || dragIndex === targetIndex) {
-              return;
-            }
-            const [moved] = items.splice(dragIndex, 1);
-            items.splice(targetIndex, 0, moved);
-            renderList();
-            renderPreview();
-            syncHidden();
-          });
+      };
 
-          preview.appendChild(card);
+      const renderCashierPreview = () => {
+        if (!cashierPreview) return;
+        cashierPreview.innerHTML = "";
+        const sorted = getSortedItems("cashier");
+        if (!sorted.length) {
+          cashierPreview.innerHTML = "<div class='muted'>Keine Produkte sichtbar.</div>";
+          return;
+        }
+        const bucket = new Map();
+        sorted.forEach((item) => {
+          const category = String(item.category || defaultCategory).trim() || defaultCategory;
+          if (!bucket.has(category)) bucket.set(category, []);
+          bucket.get(category).push(item);
         });
+        Array.from(bucket.entries()).forEach(([category, categoryItems]) => {
+          const section = document.createElement("div");
+          section.className = "price-preview-category";
+          const title = document.createElement("h4");
+          title.textContent = category;
+          section.appendChild(title);
+          const list = document.createElement("div");
+          list.style.display = "grid";
+          list.style.gridTemplateColumns = "repeat(auto-fill, minmax(150px, 1fr))";
+          list.style.gap = "0.6rem";
+          categoryItems.forEach((item) => {
+            const displayPrice = Number(item.price || 0) + (item.has_depot ? Number(depotPrice || 0) : 0);
+            const card = document.createElement("div");
+            card.className = "product-preview-card";
+            card.style.background = sanitizeColor(item.color);
+            card.innerHTML = `<small>${displayPrice} CHF${item.has_depot ? " (inkl. Depot)" : ""}</small><div style=\"font-weight:700;\">${item.label}</div>`;
+            list.appendChild(card);
+          });
+          section.appendChild(list);
+          cashierPreview.appendChild(section);
+        });
+      };
+
+      const renderPricePreview = () => {
+        if (!pricePreview) return;
+        pricePreview.innerHTML = "";
+        const sorted = getSortedItems("price");
+        if (!sorted.length) {
+          pricePreview.innerHTML = "<div class='muted'>Keine Produkte sichtbar.</div>";
+          return;
+        }
+        const bucket = new Map();
+        sorted.forEach((item) => {
+          const category = String(item.category || defaultCategory).trim() || defaultCategory;
+          if (!bucket.has(category)) bucket.set(category, []);
+          bucket.get(category).push(item);
+        });
+        Array.from(bucket.entries()).forEach(([category, categoryItems]) => {
+          const section = document.createElement("div");
+          section.className = "price-preview-category";
+          const title = document.createElement("h4");
+          title.textContent = category;
+          section.appendChild(title);
+          categoryItems.forEach((item) => {
+            const row = document.createElement("div");
+            row.className = "price-preview-item";
+            row.innerHTML = `<span>${item.label || ""}</span><span>${Number(item.price || 0)} CHF</span>`;
+            section.appendChild(row);
+          });
+          pricePreview.appendChild(section);
+        });
+      };
+
+      const renderPreview = () => {
+        renderCashierPreview();
+        renderPricePreview();
       };
 
       const getAllCategories = () => {
@@ -450,21 +504,6 @@ document.addEventListener('click', (e) => {
           depotToggleWrap.append(depotToggle, depotText);
           depotContainer.append(depotLabel, depotToggleWrap);
 
-          const colorContainer = document.createElement("div");
-          colorContainer.className = "stack";
-          const colorLabel = document.createElement("label");
-          colorLabel.textContent = "Hintergrundfarbe";
-          const colorInput = document.createElement("input");
-          colorInput.type = "color";
-          colorInput.className = "color-input";
-          colorInput.value = sanitizeColor(item.color);
-          colorInput.addEventListener("input", () => {
-            item.color = sanitizeColor(colorInput.value);
-            renderPreview();
-            syncHidden();
-          });
-          colorContainer.append(colorLabel, colorInput);
-
           const categoryContainer = document.createElement("div");
           categoryContainer.className = "stack";
           const categoryLabel = document.createElement("label");
@@ -545,7 +584,7 @@ document.addEventListener('click', (e) => {
           });
           actions.appendChild(removeBtn);
 
-          row.append(labelContainer, nameContainer, priceContainer, depotContainer, colorContainer, categoryContainer, visibilityContainer, actions);
+          row.append(labelContainer, nameContainer, priceContainer, depotContainer, categoryContainer, visibilityContainer, actions);
           list.appendChild(row);
         });
       };

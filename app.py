@@ -1495,12 +1495,17 @@ def cashier():
     cart_data = _get_cart_data(event)
     
     # Group buttons by category
-    buttons_by_category = {}
+    buttons_by_category: Dict[str, List[ButtonConfig]] = {}
     for button in buttons:
         category = button.category
         if category not in buttons_by_category:
             buttons_by_category[category] = []
         buttons_by_category[category].append(button)
+    # Sort categories and items for consistent cashier layout
+    buttons_by_category = {
+        category: sorted(group, key=lambda b: (b.label or b.name).lower())
+        for category, group in sorted(buttons_by_category.items(), key=lambda item: item[0].lower())
+    }
     
     # Get auto_reload setting from shared_settings (default to True for backward compatibility)
     auto_reload = event.shared_settings.get("auto_reload_on_add", True) if event.shared_settings else True
@@ -1699,20 +1704,21 @@ def _serialize_teams(teams: Iterable[Team]) -> List[Dict[str, int | str]]:
 
 
 def _build_price_list_categories(items: List[Dict]) -> List[Dict[str, object]]:
-    ordered: List[str] = []
     bucket: Dict[str, List[Dict[str, object]]] = {}
     for item in items:
         category = str(item.get("category") or "Standard").strip() or "Standard"
-        if category not in bucket:
-            bucket[category] = []
-            ordered.append(category)
-        bucket[category].append(
+        bucket.setdefault(category, []).append(
             {
                 "label": item.get("label") or item.get("name") or "",
                 "price": item.get("price", 0),
             }
         )
-    return [{"name": name, "items": bucket.get(name, [])} for name in ordered]
+
+    categories = []
+    for name in sorted(bucket.keys(), key=lambda value: value.lower()):
+        entries = sorted(bucket.get(name, []), key=lambda entry: str(entry.get("label") or "").lower())
+        categories.append({"name": name, "items": entries})
+    return categories
 
 
 def _redirect_target(default: str = "shotcounter") -> str:
