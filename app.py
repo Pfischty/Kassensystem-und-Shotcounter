@@ -244,8 +244,6 @@ class ButtonConfig:
     css_class: str
     color: str | None = None
     category: str = "Standard"
-    show_in_cashier: bool = True
-    show_in_price_list: bool = True
     has_depot: bool = False
     depot_price: int = 2
 
@@ -312,7 +310,6 @@ DEFAULT_PRICE_LIST_SETTINGS: Dict[str, int | float | str | list] = {
     "background_mode": "none",  # none | custom
     "background_color": "#0b1222",
     "background_image": None,
-    "enabled_categories": [],
 }
 
 HEX_COLOR_PATTERN = re.compile(r"^#([0-9a-fA-F]{6}|[0-9a-fA-F]{3})$")
@@ -383,19 +380,6 @@ def _sanitize_leaderboard_layout(value: str | None, fallback: str) -> str:
         if candidate in allowed:
             return candidate
     return fallback
-
-
-def _sanitize_price_list_categories(value: object) -> List[str]:
-    if not isinstance(value, list):
-        return []
-    cleaned: List[str] = []
-    for item in value:
-        if not isinstance(item, str):
-            continue
-        name = item.strip()
-        if name and name not in cleaned:
-            cleaned.append(name)
-    return cleaned
 
 
 def allowed_file(filename: str) -> bool:
@@ -506,7 +490,6 @@ def validate_price_list_settings(raw: dict | None) -> Dict[str, int | float | st
     settings["background_color"] = _sanitize_hex_color(
         incoming.get("background_color"), str(DEFAULT_PRICE_LIST_SETTINGS["background_color"])
     )
-    settings["enabled_categories"] = _sanitize_price_list_categories(incoming.get("enabled_categories"))
 
     if incoming.get("background_image"):
         bg_img = str(incoming["background_image"])
@@ -573,8 +556,6 @@ def resolve_button_config(event: Event | None) -> List[ButtonConfig]:
                     or default_color_lookup.get(item.get("css_class", ""))
                     or "#1f2a44",
                     category=item.get("category", "Standard"),
-                    show_in_cashier=item.get("show_in_cashier") is not False,
-                    show_in_price_list=item.get("show_in_price_list") is not False,
                     has_depot=item.get("has_depot") is True,
                     depot_price=depot_price,
                 )
@@ -630,8 +611,6 @@ def validate_and_normalize_buttons(settings: Dict | None) -> Dict:
                 "css_class": item.get("css_class") or "custom",
                 "color": item.get("color"),
                 "category": item.get("category") or "Standard",
-                "show_in_cashier": item.get("show_in_cashier") is not False,
-                "show_in_price_list": item.get("show_in_price_list") is not False,
                 "has_depot": item.get("has_depot") is True,
             }
         )
@@ -685,8 +664,6 @@ def validate_and_normalize_buttons(settings: Dict | None) -> Dict:
                 "css_class": btn.css_class,
                 "color": btn.color,
                 "category": btn.category,
-                "show_in_cashier": btn.show_in_cashier,
-                "show_in_price_list": btn.show_in_price_list,
                 "has_depot": btn.has_depot,
             }
             for btn in DEFAULT_BUTTONS
@@ -1527,10 +1504,19 @@ def _get_cart_data(event):
     }
 
 
+def _category_is_visible(category_visibility: Dict[str, Dict[str, bool]] | None, category: str, key: str) -> bool:
+    if not isinstance(category_visibility, dict):
+        return True
+    visibility = category_visibility.get(category)
+    if isinstance(visibility, dict):
+        return visibility.get(key, True) is not False
+    return True
+
+
 @app.route("/cashier")
 def cashier():
     event = require_active_event(kassensystem=True)
-    buttons = [btn for btn in resolve_button_config(event) if btn.show_in_cashier]
+    buttons = resolve_button_config(event)
     try:
         kass_settings = validate_and_normalize_buttons(event.kassensystem_settings or {})
     except ValueError:
@@ -1543,8 +1529,7 @@ def cashier():
     buttons_by_category: Dict[str, List[ButtonConfig]] = {}
     for button in buttons:
         category = button.category
-        visibility = category_visibility.get(category) if isinstance(category_visibility, dict) else None
-        if visibility and visibility.get("cashier") is False:
+        if not _category_is_visible(category_visibility, category, "cashier"):
             continue
         if category not in buttons_by_category:
             buttons_by_category[category] = []
@@ -1582,7 +1567,17 @@ def cashier():
 @app.route("/cashier/add")
 def add_item():
     event = require_active_event(kassensystem=True)
-    buttons = [btn for btn in resolve_button_config(event) if btn.show_in_cashier]
+    buttons = resolve_button_config(event)
+    try:
+        kass_settings = validate_and_normalize_buttons(event.kassensystem_settings or {})
+    except ValueError:
+        kass_settings = validate_and_normalize_buttons({})
+    category_visibility = kass_settings.get("category_visibility") or {}
+    buttons = [
+        btn
+        for btn in buttons
+        if _category_is_visible(category_visibility, btn.category, "cashier")
+    ]
     prices = {button.name: button.price_with_depot for button in buttons}
     name = request.args.get("name")
     if name and name in prices:
@@ -1709,23 +1704,19 @@ def price_list():
         kass_settings = validate_and_normalize_buttons({})
 
     items = kass_settings.get("items", []) if isinstance(kass_settings, dict) else []
-    items = [item for item in items if item.get("show_in_price_list") is not False]
     category_order = kass_settings.get("category_order") if isinstance(kass_settings, dict) else None
     category_visibility = kass_settings.get("category_visibility") if isinstance(kass_settings, dict) else {}
     if isinstance(category_visibility, dict) and category_visibility:
         items = [
             item
             for item in items
-            if category_visibility.get(str(item.get("category") or "Standard").strip() or "Standard", {}).get(
+            if _category_is_visible(
+                category_visibility,
+                str(item.get("category") or "Standard").strip() or "Standard",
                 "price_list",
-                True,
             )
         ]
     categories = _build_price_list_categories(items, category_order=category_order)
-
-    enabled = price_settings.get("enabled_categories") or []
-    if enabled:
-        categories = [cat for cat in categories if cat["name"] in enabled]
 
     background_image = price_settings.get("background_image") or None
 

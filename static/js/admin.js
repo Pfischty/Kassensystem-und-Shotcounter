@@ -378,7 +378,6 @@ document.addEventListener('click', (e) => {
         background_mode: "none",
         background_color: "#0b1222",
         background_image: null,
-        enabled_categories: [],
       }
     );
 
@@ -428,8 +427,6 @@ document.addEventListener('click', (e) => {
         css_class: safeItem.css_class || "custom",
         color: sanitizeColor(safeItem.color || ""),
         category: String(safeItem.category ?? defaultCategory),
-        show_in_cashier: safeItem.show_in_cashier !== false,
-        show_in_price_list: safeItem.show_in_price_list !== false,
         has_depot: hasDepot,
       };
     };
@@ -598,11 +595,11 @@ document.addEventListener('click', (e) => {
             const visibility = categoryVisibility && typeof categoryVisibility === "object" ? categoryVisibility[category] : null;
             if (filterKey === "cashier") {
               if (visibility && visibility.cashier === false) return false;
-              return item.show_in_cashier !== false;
+              return true;
             }
             if (filterKey === "price") {
               if (visibility && visibility.price_list === false) return false;
-              return item.show_in_price_list !== false;
+              return true;
             }
             return true;
           })
@@ -1022,6 +1019,10 @@ document.addEventListener('click', (e) => {
           depotToggleWrap.append(depotToggle, depotText);
           depotContainer.append(depotLabel, depotToggleWrap);
 
+          const priceDepotGroup = document.createElement("div");
+          priceDepotGroup.className = "product-field-group";
+          priceDepotGroup.append(priceContainer, depotContainer);
+
           const colorContainer = document.createElement("div");
           colorContainer.className = "stack";
           const colorLabel = document.createElement("label");
@@ -1068,41 +1069,6 @@ document.addEventListener('click', (e) => {
           categoryInput.addEventListener("blur", applyCategorySelection);
           categoryContainer.append(categoryLabel, categoryInput);
 
-          const visibilityContainer = document.createElement("div");
-          visibilityContainer.className = "stack";
-          const visibilityLabel = document.createElement("label");
-          visibilityLabel.textContent = "Sichtbarkeit";
-          const visibilityGroup = document.createElement("div");
-          visibilityGroup.className = "visibility-toggle";
-          const cashierLabel = document.createElement("label");
-          cashierLabel.className = "pill-toggle";
-          const cashierToggle = document.createElement("input");
-          cashierToggle.type = "checkbox";
-          cashierToggle.checked = item.show_in_cashier !== false;
-          cashierToggle.addEventListener("change", () => {
-            item.show_in_cashier = cashierToggle.checked;
-            syncHidden();
-          });
-          const cashierText = document.createElement("span");
-          cashierText.textContent = "Kasse";
-          cashierLabel.append(cashierToggle, cashierText);
-
-          const priceListLabel = document.createElement("label");
-          priceListLabel.className = "pill-toggle";
-          const priceToggle = document.createElement("input");
-          priceToggle.type = "checkbox";
-          priceToggle.checked = item.show_in_price_list !== false;
-          priceToggle.addEventListener("change", () => {
-            item.show_in_price_list = priceToggle.checked;
-            syncHidden();
-          });
-          const priceText = document.createElement("span");
-          priceText.textContent = "Preisliste";
-          priceListLabel.append(priceToggle, priceText);
-
-          visibilityGroup.append(cashierLabel, priceListLabel);
-          visibilityContainer.append(visibilityLabel, visibilityGroup);
-
           const actions = document.createElement("div");
           actions.className = "row-actions";
           const removeBtn = document.createElement("button");
@@ -1127,7 +1093,11 @@ document.addEventListener('click', (e) => {
           });
           actions.appendChild(removeBtn);
 
-          row.append(labelContainer, nameContainer, priceContainer, depotContainer, colorContainer, categoryContainer, visibilityContainer, actions);
+          const colorActionsGroup = document.createElement("div");
+          colorActionsGroup.className = "product-field-group product-field-group--actions";
+          colorActionsGroup.append(colorContainer, actions);
+
+          row.append(labelContainer, nameContainer, priceDepotGroup, categoryContainer, colorActionsGroup);
           list.appendChild(row);
         });
       };
@@ -1268,75 +1238,12 @@ document.addEventListener('click', (e) => {
         next.rotation_seconds = clampNumber(next.rotation_seconds, defaults.rotation_seconds, 2, 120);
         next.background_mode = ["none", "custom"].includes(next.background_mode) ? next.background_mode : defaults.background_mode;
         next.background_color = sanitizeColor(next.background_color || defaults.background_color || fallbackColor);
-        next.enabled_categories = Array.isArray(next.enabled_categories)
-          ? next.enabled_categories.filter((name) => typeof name === "string" && name.trim())
-          : [];
         if (next.background_image && next.background_mode === "none") {
           next.background_mode = "custom";
         }
         return next;
       };
 
-      const getItemsFromEditor = () => {
-        if (productEditor && productEditor.productApi) {
-          const settings = productEditor.productApi.getSettings();
-          return Array.isArray(settings.items) ? settings.items : [];
-        }
-        const fallback = form ? form.querySelector('input[name="kassensystem_settings"]') : null;
-        const parsed = parseJson(fallback ? fallback.value : "", {});
-        return Array.isArray(parsed.items) ? parsed.items : [];
-      };
-
-      const getCategoryOrder = () => {
-        if (productEditor && productEditor.productApi) {
-          const settings = productEditor.productApi.getSettings();
-          return Array.isArray(settings.category_order) ? settings.category_order : [];
-        }
-        const fallback = form ? form.querySelector('input[name="kassensystem_settings"]') : null;
-        const parsed = parseJson(fallback ? fallback.value : "", {});
-        return Array.isArray(parsed.category_order) ? parsed.category_order : [];
-      };
-
-      const getCategoryVisibility = () => {
-        if (productEditor && productEditor.productApi) {
-          const settings = productEditor.productApi.getSettings();
-          return settings.category_visibility && typeof settings.category_visibility === "object" ? settings.category_visibility : {};
-        }
-        const fallback = form ? form.querySelector('input[name="kassensystem_settings"]') : null;
-        const parsed = parseJson(fallback ? fallback.value : "", {});
-        return parsed.category_visibility && typeof parsed.category_visibility === "object" ? parsed.category_visibility : {};
-      };
-
-      const getCategories = () => {
-        const items = getItemsFromEditor();
-        const categories = new Set();
-        categories.add(defaultCategory);
-        const visibility = getCategoryVisibility();
-        items.forEach((item) => {
-          if (item && item.show_in_price_list === false) return;
-          const category = String(item && item.category != null ? item.category : defaultCategory).trim();
-          if (visibility[category] && visibility[category].price_list === false) return;
-          if (category) categories.add(category);
-        });
-        const ordered = [];
-        const order = getCategoryOrder();
-        const available = Array.from(categories);
-        const seen = new Set();
-        order.forEach((name) => {
-          if (typeof name !== "string") return;
-          const cleaned = name.trim();
-          if (cleaned && categories.has(cleaned) && !seen.has(cleaned)) {
-            ordered.push(cleaned);
-            seen.add(cleaned);
-          }
-        });
-        available
-          .sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()))
-          .forEach((name) => {
-            if (!seen.has(name)) ordered.push(name);
-          });
-        return ordered;
-      };
 
       const updateShared = () => {
         if (!sharedInput) return;
@@ -1345,7 +1252,6 @@ document.addEventListener('click', (e) => {
         sharedInput.value = JSON.stringify(shared);
       };
 
-      const errorEl = wrapper.querySelector("[data-price-error]");
       const customBg = wrapper.querySelector("[data-price-custom-bg]");
       const imageSelects = Array.from(wrapper.querySelectorAll("[data-price-image-select]"));
       const imagePreviews = Array.from(wrapper.querySelectorAll("[data-price-image-preview]"));
@@ -1379,57 +1285,6 @@ document.addEventListener('click', (e) => {
         });
       };
 
-      const renderCategories = () => {
-        const container = wrapper.querySelector("[data-price-categories]");
-        if (!container) return;
-        const categories = getCategories();
-        const enabledRaw = settings.enabled_categories.length ? settings.enabled_categories : categories;
-        const enabled = enabledRaw.filter((name) => categories.includes(name));
-        settings.enabled_categories = enabled;
-        container.innerHTML = "";
-
-        categories.forEach((name) => {
-          const label = document.createElement("label");
-          label.style.display = "inline-flex";
-          label.style.alignItems = "center";
-          label.style.gap = "0.4rem";
-          label.style.marginRight = "0.8rem";
-          const checkbox = document.createElement("input");
-          checkbox.type = "checkbox";
-          checkbox.checked = enabled.includes(name);
-          checkbox.addEventListener("change", () => {
-            const selected = Array.from(container.querySelectorAll("input[type='checkbox']"))
-              .filter((el) => el.checked)
-              .map((el) => el.dataset.category || "")
-              .filter(Boolean);
-
-            settings.enabled_categories = selected;
-            if (errorEl) {
-              if (!selected.length) {
-                errorEl.textContent = "Keine Auswahl = alle Kategorien.";
-                errorEl.style.color = "#94a3b8";
-                errorEl.style.display = "block";
-              } else {
-                errorEl.textContent = "";
-                errorEl.style.display = "none";
-              }
-            }
-            updateShared();
-          });
-          checkbox.dataset.category = name;
-          label.appendChild(checkbox);
-          const span = document.createElement("span");
-          span.textContent = name;
-          label.appendChild(span);
-          container.appendChild(label);
-        });
-
-        if (errorEl && !settings.enabled_categories.length) {
-          errorEl.textContent = "Keine Auswahl = alle Kategorien.";
-          errorEl.style.color = "#94a3b8";
-          errorEl.style.display = "block";
-        }
-      };
 
       wrapper.querySelectorAll("[data-price-field]").forEach((input) => {
         const key = input.dataset.priceField;
@@ -1466,26 +1321,17 @@ document.addEventListener('click', (e) => {
         });
       }
 
-      if (productEditor) {
-        productEditor.addEventListener("product-editor:change", () => {
-          renderCategories();
-          updateShared();
-        });
-      }
-
       wrapper.priceSettingsApi = {
         getSettings: () => ({ ...settings }),
         setSettings: (data) => {
           settings = normalizeSettings(data);
           syncInputs();
-          renderCategories();
           updateShared();
         },
       };
 
         settings = normalizeSettings(settings);
         syncInputs();
-        renderCategories();
         updateShared();
       });
     });

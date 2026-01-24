@@ -104,12 +104,33 @@
   .product-editor__list { margin-top: 1rem; display:flex; flex-direction:column; gap:0.75rem; }
   .product-row {
     display:grid;
-    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    grid-template-columns:
+      minmax(200px, 1.3fr)
+      minmax(200px, 1.1fr)
+      minmax(170px, 0.8fr)
+      minmax(180px, 0.9fr)
+      minmax(180px, 0.7fr);
     gap:0.6rem;
     background:#0c1324;
     border:1px solid var(--border);
     border-radius:10px;
     padding:0.75rem;
+    align-items:end;
+  }
+  .product-field-group {
+    display:grid;
+    grid-template-columns: minmax(110px, 1fr) minmax(90px, 1fr);
+    gap:0.6rem;
+    align-items:end;
+  }
+  .product-field-group--actions {
+    grid-template-columns: minmax(120px, 1fr) minmax(110px, 1fr);
+  }
+  .product-field-group input[type="number"] {
+    max-width: 140px;
+  }
+  .product-field-group .row-actions button {
+    padding: 0.45rem 0.6rem;
   }
   .product-row label { font-size: 0.9rem; color: #cbd5e1; display:block; margin-bottom:0.2rem; }
   .product-row .row-actions { display:flex; justify-content:flex-end; align-items:flex-end; }
@@ -342,13 +363,6 @@
             <div class="muted" style="margin-top: 0.3rem;">Erlaubte Formate: PNG, JPG, GIF, WebP. Max. 5 MB.</div>
           </div>
         </div>
-
-        <div class="stack" style="margin-top: 0.8rem;">
-          <span>Kategorien aktivieren</span>
-          <div data-price-categories></div>
-          <div class="hint" data-price-error style="display:none; color:#ef4444;"></div>
-          <div class="muted">Kategorien kommen aus den Kassenartikeln.</div>
-        </div>
       </div>
     </div>
   </div>
@@ -357,7 +371,7 @@
     <div class="product-editor__top">
       <div>
         <strong>Produkte für dieses Event</strong>
-        <div class="muted">Titel, Preis, Kategorie und Sichtbarkeit bearbeiten (Farben werden nur in der Vorschau angezeigt).</div>
+        <div class="muted">Titel, Preis und Kategorie bearbeiten (Farben werden nur in der Vorschau angezeigt).</div>
         <div class="field-inline" style="margin-top:0.45rem;">
           <label class="stack" style="min-width: 180px;">
             <span>Depot-Preis (CHF)</span>
