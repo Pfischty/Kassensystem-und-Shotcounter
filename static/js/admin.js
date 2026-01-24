@@ -353,6 +353,9 @@ document.addEventListener('click', (e) => {
       };
 
       const getSortedItems = (filterKey) => {
+        const orderedCategories = getOrderedCategories(getAllCategories());
+        const categoryIndex = new Map();
+        orderedCategories.forEach((name, idx) => categoryIndex.set(name, idx));
         return items
           .filter((item) => {
             if (!item) return false;
@@ -372,9 +375,8 @@ document.addEventListener('click', (e) => {
           .sort((a, b) => {
             const catA = String(a.category || defaultCategory).trim();
             const catB = String(b.category || defaultCategory).trim();
-            const order = normalizeCategoryOrder(getAllCategories());
-            const idxA = order.indexOf(catA);
-            const idxB = order.indexOf(catB);
+            const idxA = categoryIndex.has(catA) ? categoryIndex.get(catA) : 9999;
+            const idxB = categoryIndex.has(catB) ? categoryIndex.get(catB) : 9999;
             if (idxA !== idxB) {
               return (idxA === -1 ? 9999 : idxA) - (idxB === -1 ? 9999 : idxB);
             }
