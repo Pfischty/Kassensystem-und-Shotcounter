@@ -681,7 +681,9 @@ document.addEventListener('click', (e) => {
         if (!container) return;
         const categories = getCategories();
         const enabledRaw = settings.enabled_categories.length ? settings.enabled_categories : categories;
-        const enabled = enabledRaw.filter((name) => categories.includes(name));
+        // Preserve the category order from items (not from previously saved enabled_categories)
+        const enabledSet = new Set(enabledRaw);
+        const enabled = categories.filter((name) => enabledSet.has(name));
         settings.enabled_categories = enabled;
         container.innerHTML = "";
 
