@@ -707,6 +707,21 @@ document.addEventListener('click', (e) => {
           depotToggleWrap.append(depotToggle, depotText);
           depotContainer.append(depotLabel, depotToggleWrap);
 
+          const colorContainer = document.createElement("div");
+          colorContainer.className = "stack";
+          const colorLabel = document.createElement("label");
+          colorLabel.textContent = "Hintergrundfarbe";
+          const colorInput = document.createElement("input");
+          colorInput.type = "color";
+          colorInput.className = "color-input";
+          colorInput.value = sanitizeColor(item.color);
+          colorInput.addEventListener("input", () => {
+            item.color = sanitizeColor(colorInput.value);
+            renderPreview();
+            syncHidden();
+          });
+          colorContainer.append(colorLabel, colorInput);
+
           const categoryContainer = document.createElement("div");
           categoryContainer.className = "stack";
           const categoryLabel = document.createElement("label");
@@ -792,7 +807,7 @@ document.addEventListener('click', (e) => {
           });
           actions.appendChild(removeBtn);
 
-          row.append(labelContainer, nameContainer, priceContainer, depotContainer, categoryContainer, visibilityContainer, actions);
+          row.append(labelContainer, nameContainer, priceContainer, depotContainer, colorContainer, categoryContainer, visibilityContainer, actions);
           list.appendChild(row);
         });
       };
