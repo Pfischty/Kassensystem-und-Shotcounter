@@ -42,14 +42,40 @@
   .product-preview-card.dragging { opacity: 0.6; transform: scale(0.98); }
   .product-preview-card.drag-over { outline: 2px dashed rgba(255,255,255,0.5); }
   .product-editor__list { margin-top: 1rem; display:flex; flex-direction:column; gap:0.75rem; }
+  .product-category { margin-top: 0.8rem; }
+  .product-category__header { display:flex; justify-content:space-between; align-items:center; gap:0.6rem; margin:0.2rem 0 0.4rem; }
+  .product-category__list { display:flex; flex-direction:column; gap:0.75rem; }
   .product-row {
     display:grid;
-    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    grid-template-columns:
+      minmax(200px, 1.3fr)
+      minmax(200px, 1.1fr)
+      minmax(170px, 0.8fr)
+      minmax(180px, 0.9fr)
+      minmax(180px, 0.7fr);
     gap:0.6rem;
     background:#0c1324;
     border:1px solid var(--border);
     border-radius:10px;
     padding:0.75rem;
+    align-items:end;
+    cursor: grab;
+  }
+  .product-row.is-dragging { opacity: 0.6; cursor: grabbing; }
+  .product-field-group {
+    display:grid;
+    grid-template-columns: minmax(110px, 1fr) minmax(90px, 1fr);
+    gap:0.6rem;
+    align-items:end;
+  }
+  .product-field-group--actions {
+    grid-template-columns: minmax(120px, 1fr) minmax(110px, 1fr);
+  }
+  .product-field-group input[type="number"] {
+    max-width: 140px;
+  }
+  .product-field-group .row-actions button {
+    padding: 0.45rem 0.6rem;
   }
   .product-row label { font-size: 0.9rem; color: #cbd5e1; display:block; margin-bottom:0.2rem; }
   .product-row .row-actions { display:flex; justify-content:flex-end; align-items:flex-end; }
@@ -338,12 +364,6 @@
               </label>
             </div>
             <div class="muted" style="margin-top: 0.4rem;">Hintergrundbild kann nach dem Speichern hochgeladen werden.</div>
-            <div class="stack" style="margin-top: 0.8rem;">
-              <span>Kategorien aktivieren</span>
-              <div data-price-categories></div>
-              <div class="hint" data-price-error style="display:none; color:#ef4444;"></div>
-              <div class="muted">Kategorien kommen aus den Kassenartikeln.</div>
-            </div>
           </div>
         </div>
       </div>

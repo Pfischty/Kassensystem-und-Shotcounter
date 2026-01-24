@@ -156,7 +156,7 @@
               <a href="{{ url_for('add_item') }}?name={{ button.name }}" class="cashier-add-link" data-item-name="{{ button.name }}" style="text-decoration:none;">
                 <div class="cashier-tile" style="background: {{ button.color or '#1f2a44' }};">
                   <div style="font-weight:700;">{{ button.label }}</div>
-                  <div style="opacity:0.8;">{{ button.price }} CHF</div>
+                  <div style="opacity:0.8;">{{ button.price_with_depot }} CHF</div>
                 </div>
               </a>
             {% endfor %}
@@ -169,7 +169,7 @@
           <a href="{{ url_for('add_item') }}?name={{ button.name }}" class="cashier-add-link" data-item-name="{{ button.name }}" style="text-decoration:none;">
             <div class="cashier-tile" style="background: {{ button.color or '#1f2a44' }};">
               <div style="font-weight:700;">{{ button.label }}</div>
-              <div style="opacity:0.8;">{{ button.price }} CHF</div>
+              <div style="opacity:0.8;">{{ button.price_with_depot }} CHF</div>
             </div>
           </a>
         {% endfor %}

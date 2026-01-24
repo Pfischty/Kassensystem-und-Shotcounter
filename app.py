@@ -244,8 +244,14 @@ class ButtonConfig:
     css_class: str
     color: str | None = None
     category: str = "Standard"
-    show_in_cashier: bool = True
-    show_in_price_list: bool = True
+    has_depot: bool = False
+    depot_price: int = 2
+    priority: int | None = None
+
+    @property
+    def price_with_depot(self) -> int:
+        depot = self.depot_price if self.has_depot else 0
+        return int(self.price) + int(depot)
 
 
 DEFAULT_BUTTONS: List[ButtonConfig] = [
@@ -305,7 +311,6 @@ DEFAULT_PRICE_LIST_SETTINGS: Dict[str, int | float | str | list] = {
     "background_mode": "none",  # none | custom
     "background_color": "#0b1222",
     "background_image": None,
-    "enabled_categories": [],
 }
 
 HEX_COLOR_PATTERN = re.compile(r"^#([0-9a-fA-F]{6}|[0-9a-fA-F]{3})$")
@@ -376,19 +381,6 @@ def _sanitize_leaderboard_layout(value: str | None, fallback: str) -> str:
         if candidate in allowed:
             return candidate
     return fallback
-
-
-def _sanitize_price_list_categories(value: object) -> List[str]:
-    if not isinstance(value, list):
-        return []
-    cleaned: List[str] = []
-    for item in value:
-        if not isinstance(item, str):
-            continue
-        name = item.strip()
-        if name and name not in cleaned:
-            cleaned.append(name)
-    return cleaned
 
 
 def allowed_file(filename: str) -> bool:
@@ -499,13 +491,14 @@ def validate_price_list_settings(raw: dict | None) -> Dict[str, int | float | st
     settings["background_color"] = _sanitize_hex_color(
         incoming.get("background_color"), str(DEFAULT_PRICE_LIST_SETTINGS["background_color"])
     )
-    settings["enabled_categories"] = _sanitize_price_list_categories(incoming.get("enabled_categories"))
 
     if incoming.get("background_image"):
         bg_img = str(incoming["background_image"])
         filepath = Path(app.config["UPLOAD_FOLDER"]) / bg_img
         if filepath.exists() and filepath.is_file():
             settings["background_image"] = bg_img
+            if settings.get("background_mode") == "none":
+                settings["background_mode"] = "custom"
     return settings
 
 
@@ -540,13 +533,25 @@ def require_active_event(*, kassensystem: bool = False, shotcounter: bool = Fals
 
 def resolve_button_config(event: Event | None) -> List[ButtonConfig]:
     raw_items: Iterable[dict] | None = None
+    depot_price = 2
     if event and isinstance(event.kassensystem_settings, dict):
         raw_items = event.kassensystem_settings.get("items")
+        try:
+            depot_price = int(event.kassensystem_settings.get("depot_price", 2))
+        except (TypeError, ValueError):
+            depot_price = 2
+    if depot_price < 0:
+        depot_price = 0
     normalized: List[ButtonConfig] = []
     default_color_lookup = {btn.css_class: btn.color for btn in DEFAULT_BUTTONS}
     items_source = raw_items if raw_items else [btn.__dict__ for btn in DEFAULT_BUTTONS]
     for item in items_source:
         try:
+            raw_priority = item.get("priority") if isinstance(item, dict) else None
+            try:
+                priority = int(raw_priority) if raw_priority is not None else None
+            except (TypeError, ValueError):
+                priority = None
             normalized.append(
                 ButtonConfig(
                     name=item["name"],
@@ -557,8 +562,9 @@ def resolve_button_config(event: Event | None) -> List[ButtonConfig]:
                     or default_color_lookup.get(item.get("css_class", ""))
                     or "#1f2a44",
                     category=item.get("category", "Standard"),
-                    show_in_cashier=item.get("show_in_cashier") is not False,
-                    show_in_price_list=item.get("show_in_price_list") is not False,
+                    has_depot=item.get("has_depot") is True,
+                    depot_price=depot_price,
+                    priority=priority,
                 )
             )
         except (KeyError, TypeError, ValueError):
@@ -574,6 +580,13 @@ def validate_and_normalize_buttons(settings: Dict | None) -> Dict:
 
     raw_items = settings.get("items")
     items = raw_items if isinstance(raw_items, list) else []
+
+    try:
+        depot_price = int(settings.get("depot_price", 2))
+    except (TypeError, ValueError):
+        depot_price = 2
+    if depot_price < 0:
+        depot_price = 0
 
     normalized: List[Dict] = []
     seen_names: set[str] = set()
@@ -597,6 +610,12 @@ def validate_and_normalize_buttons(settings: Dict | None) -> Dict:
         except (TypeError, ValueError):
             price = 0
 
+        raw_priority = item.get("priority")
+        try:
+            priority = int(raw_priority) if raw_priority is not None else None
+        except (TypeError, ValueError):
+            priority = None
+
         normalized.append(
             {
                 "name": name,
@@ -605,14 +624,49 @@ def validate_and_normalize_buttons(settings: Dict | None) -> Dict:
                 "css_class": item.get("css_class") or "custom",
                 "color": item.get("color"),
                 "category": item.get("category") or "Standard",
-                "show_in_cashier": item.get("show_in_cashier") is not False,
-                "show_in_price_list": item.get("show_in_price_list") is not False,
+                "has_depot": item.get("has_depot") is True,
+                "priority": priority,
             }
         )
 
     if duplicates:
         dup_list = ", ".join(sorted(set(duplicates)))
         raise ValueError(f"Doppelte Produktnamen gefunden: {dup_list}")
+
+    raw_order = settings.get("category_order")
+    category_order: List[str] = []
+    if isinstance(raw_order, list):
+        for entry in raw_order:
+            if not isinstance(entry, str):
+                continue
+            name = entry.strip()
+            if name and name not in category_order:
+                category_order.append(name)
+
+    raw_visibility = settings.get("category_visibility")
+    category_visibility: Dict[str, Dict[str, bool]] = {}
+    if isinstance(raw_visibility, dict):
+        for key, value in raw_visibility.items():
+            if not isinstance(key, str):
+                continue
+            name = key.strip()
+            if not name:
+                continue
+            if isinstance(value, dict):
+                category_visibility[name] = {
+                    "cashier": value.get("cashier") is not False,
+                    "price_list": value.get("price_list") is not False,
+                }
+            else:
+                category_visibility[name] = {"cashier": True, "price_list": True}
+
+    # Append any missing categories in item order
+    for item in normalized:
+        category = str(item.get("category") or "Standard").strip() or "Standard"
+        if category not in category_order:
+            category_order.append(category)
+        if category not in category_visibility:
+            category_visibility[category] = {"cashier": True, "price_list": True}
 
     # If no items provided, use DEFAULT_BUTTONS
     if not normalized:
@@ -624,13 +678,15 @@ def validate_and_normalize_buttons(settings: Dict | None) -> Dict:
                 "css_class": btn.css_class,
                 "color": btn.color,
                 "category": btn.category,
-                "show_in_cashier": btn.show_in_cashier,
-                "show_in_price_list": btn.show_in_price_list,
+                "has_depot": btn.has_depot,
             }
             for btn in DEFAULT_BUTTONS
         ]
 
-    sanitized = {k: v for k, v in settings.items() if k != "items"}
+    sanitized = {k: v for k, v in settings.items() if k not in {"items", "depot_price"}}
+    sanitized["depot_price"] = depot_price
+    sanitized["category_order"] = category_order
+    sanitized["category_visibility"] = category_visibility
     sanitized["items"] = normalized
     return sanitized
 
@@ -1448,7 +1504,7 @@ def _get_cart_data(event):
     """Helper function to get cart data for an event."""
     buttons = resolve_button_config(event)
     items = session.get(cart_key(event), [])
-    prices = {button.name: button.price for button in buttons}
+    prices = {button.name: button.price_with_depot for button in buttons}
     total = sum(prices.get(item, 0) for item in items)
     grouped = Counter(items).items()
     detailed_items = [
@@ -1462,19 +1518,56 @@ def _get_cart_data(event):
     }
 
 
+def _category_is_visible(category_visibility: Dict[str, Dict[str, bool]] | None, category: str, key: str) -> bool:
+    if not isinstance(category_visibility, dict):
+        return True
+    visibility = category_visibility.get(category)
+    if isinstance(visibility, dict):
+        return visibility.get(key, True) is not False
+    return True
+
+
 @app.route("/cashier")
 def cashier():
     event = require_active_event(kassensystem=True)
-    buttons = [btn for btn in resolve_button_config(event) if btn.show_in_cashier]
+    buttons = resolve_button_config(event)
+    try:
+        kass_settings = validate_and_normalize_buttons(event.kassensystem_settings or {})
+    except ValueError:
+        kass_settings = validate_and_normalize_buttons({})
+    category_order = kass_settings.get("category_order") or []
+    category_visibility = kass_settings.get("category_visibility") or {}
     cart_data = _get_cart_data(event)
     
     # Group buttons by category
-    buttons_by_category = {}
+    buttons_by_category: Dict[str, List[ButtonConfig]] = {}
     for button in buttons:
         category = button.category
+        if not _category_is_visible(category_visibility, category, "cashier"):
+            continue
         if category not in buttons_by_category:
             buttons_by_category[category] = []
         buttons_by_category[category].append(button)
+    # Sort categories and items for consistent cashier layout
+    ordered_categories: List[str] = []
+    seen: set[str] = set()
+    for name in category_order:
+        if name in buttons_by_category and name not in seen:
+            ordered_categories.append(name)
+            seen.add(name)
+    for name in sorted(buttons_by_category.keys(), key=lambda value: value.lower()):
+        if name not in seen:
+            ordered_categories.append(name)
+
+    def _button_sort_key(button: ButtonConfig) -> tuple[int, str]:
+        priority = button.priority if isinstance(button.priority, int) else 9999
+        label = (button.label or button.name or "").lower()
+        return priority, label
+
+    buttons_by_category = {
+        category: sorted(group, key=_button_sort_key)
+        for category, group in ((name, buttons_by_category[name]) for name in ordered_categories)
+    }
     
     # Get auto_reload setting from shared_settings (default to True for backward compatibility)
     auto_reload = event.shared_settings.get("auto_reload_on_add", True) if event.shared_settings else True
@@ -1493,8 +1586,18 @@ def cashier():
 @app.route("/cashier/add")
 def add_item():
     event = require_active_event(kassensystem=True)
-    buttons = [btn for btn in resolve_button_config(event) if btn.show_in_cashier]
-    prices = {button.name: button.price for button in buttons}
+    buttons = resolve_button_config(event)
+    try:
+        kass_settings = validate_and_normalize_buttons(event.kassensystem_settings or {})
+    except ValueError:
+        kass_settings = validate_and_normalize_buttons({})
+    category_visibility = kass_settings.get("category_visibility") or {}
+    buttons = [
+        btn
+        for btn in buttons
+        if _category_is_visible(category_visibility, btn.category, "cashier")
+    ]
+    prices = {button.name: button.price_with_depot for button in buttons}
     name = request.args.get("name")
     if name and name in prices:
         items = session.get(cart_key(event), [])
@@ -1537,7 +1640,7 @@ def remove_last():
 def checkout():
     event = require_active_event(kassensystem=True)
     items = session.get(cart_key(event), [])
-    prices = {btn.name: btn.price for btn in resolve_button_config(event)}
+    prices = {btn.name: btn.price_with_depot for btn in resolve_button_config(event)}
     if items:
         total = sum(prices.get(item, 0) for item in items)
         order = Order(event_id=event.id, total=total)
@@ -1620,12 +1723,19 @@ def price_list():
         kass_settings = validate_and_normalize_buttons({})
 
     items = kass_settings.get("items", []) if isinstance(kass_settings, dict) else []
-    items = [item for item in items if item.get("show_in_price_list") is not False]
-    categories = _build_price_list_categories(items)
-
-    enabled = price_settings.get("enabled_categories") or []
-    if enabled:
-        categories = [cat for cat in categories if cat["name"] in enabled]
+    category_order = kass_settings.get("category_order") if isinstance(kass_settings, dict) else None
+    category_visibility = kass_settings.get("category_visibility") if isinstance(kass_settings, dict) else {}
+    if isinstance(category_visibility, dict) and category_visibility:
+        items = [
+            item
+            for item in items
+            if _category_is_visible(
+                category_visibility,
+                str(item.get("category") or "Standard").strip() or "Standard",
+                "price_list",
+            )
+        ]
+    categories = _build_price_list_categories(items, category_order=category_order)
 
     background_image = price_settings.get("background_image") or None
 
@@ -1672,21 +1782,43 @@ def _serialize_teams(teams: Iterable[Team]) -> List[Dict[str, int | str]]:
     return [{"id": team.id, "name": team.name, "shots": team.shots} for team in teams]
 
 
-def _build_price_list_categories(items: List[Dict]) -> List[Dict[str, object]]:
-    ordered: List[str] = []
+def _build_price_list_categories(items: List[Dict], category_order: List[str] | None = None) -> List[Dict[str, object]]:
     bucket: Dict[str, List[Dict[str, object]]] = {}
     for item in items:
         category = str(item.get("category") or "Standard").strip() or "Standard"
-        if category not in bucket:
-            bucket[category] = []
-            ordered.append(category)
-        bucket[category].append(
+        bucket.setdefault(category, []).append(
             {
                 "label": item.get("label") or item.get("name") or "",
                 "price": item.get("price", 0),
+                "priority": item.get("priority"),
             }
         )
-    return [{"name": name, "items": bucket.get(name, [])} for name in ordered]
+
+    ordered_names: List[str] = []
+    seen: set[str] = set()
+    if isinstance(category_order, list):
+        for name in category_order:
+            if not isinstance(name, str):
+                continue
+            cleaned = name.strip()
+            if cleaned and cleaned in bucket and cleaned not in seen:
+                ordered_names.append(cleaned)
+                seen.add(cleaned)
+    for name in sorted(bucket.keys(), key=lambda value: value.lower()):
+        if name not in seen:
+            ordered_names.append(name)
+
+    categories = []
+    for name in ordered_names:
+        entries = sorted(
+            bucket.get(name, []),
+            key=lambda entry: (
+                entry.get("priority") if isinstance(entry.get("priority"), int) else 9999,
+                str(entry.get("label") or "").lower(),
+            ),
+        )
+        categories.append({"name": name, "items": entries})
+    return categories
 
 
 def _redirect_target(default: str = "shotcounter") -> str:

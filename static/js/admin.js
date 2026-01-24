@@ -47,6 +47,241 @@ document.addEventListener('click', (e) => {
     }
   };
 
+  const confirmAction = (() => {
+    let modal;
+    let messageEl;
+    let okBtn;
+    let cancelBtn;
+    let resolver;
+    let cleanupKeydown;
+
+    const close = (result) => {
+      if (!modal) return;
+      modal.style.display = "none";
+      document.body.style.overflow = "";
+      if (cleanupKeydown) cleanupKeydown();
+      const resolve = resolver;
+      resolver = null;
+      if (resolve) resolve(result);
+    };
+
+    const ensureModal = () => {
+      if (modal) return;
+      modal = document.createElement("div");
+      modal.setAttribute("data-confirm-modal", "");
+      Object.assign(modal.style, {
+        position: "fixed",
+        inset: "0",
+        display: "none",
+        alignItems: "center",
+        justifyContent: "center",
+        background: "rgba(0,0,0,0.65)",
+        zIndex: "2000",
+        padding: "1rem",
+      });
+
+      const box = document.createElement("div");
+      Object.assign(box.style, {
+        background: "var(--card)",
+        border: "1px solid var(--border)",
+        borderRadius: "12px",
+        padding: "1rem 1.2rem",
+        maxWidth: "420px",
+        width: "100%",
+        boxShadow: "0 10px 40px rgba(0,0,0,0.45)",
+      });
+
+      const title = document.createElement("div");
+      title.textContent = "Bestätigen";
+      title.style.fontWeight = "700";
+      title.style.marginBottom = "0.5rem";
+
+      messageEl = document.createElement("div");
+      messageEl.style.marginBottom = "0.9rem";
+
+      const actions = document.createElement("div");
+      Object.assign(actions.style, { display: "flex", gap: "0.6rem", justifyContent: "flex-end" });
+
+      cancelBtn = document.createElement("button");
+      cancelBtn.type = "button";
+      cancelBtn.className = "secondary";
+      cancelBtn.textContent = "Abbrechen";
+
+      okBtn = document.createElement("button");
+      okBtn.type = "button";
+      okBtn.className = "danger";
+      okBtn.textContent = "Bestätigen";
+
+      actions.append(cancelBtn, okBtn);
+      box.append(title, messageEl, actions);
+      modal.appendChild(box);
+      document.body.appendChild(modal);
+
+      modal.addEventListener("click", (event) => {
+        if (event.target === modal) close(false);
+      });
+      cancelBtn.addEventListener("click", () => close(false));
+      okBtn.addEventListener("click", () => close(true));
+    };
+
+    return (message, options = {}) => {
+      ensureModal();
+      if (!modal || !messageEl || !okBtn) return Promise.resolve(false);
+      messageEl.textContent = message || "Bestätigen?";
+      okBtn.textContent = options.okText || "Bestätigen";
+      okBtn.className = options.okClass || "danger";
+      modal.style.display = "flex";
+      document.body.style.overflow = "hidden";
+      return new Promise((resolve) => {
+        resolver = resolve;
+        const onKeyDown = (event) => {
+          if (event.key === "Escape") close(false);
+        };
+        document.addEventListener("keydown", onKeyDown);
+        cleanupKeydown = () => document.removeEventListener("keydown", onKeyDown);
+      });
+    };
+  })();
+
+  const promptAction = (() => {
+    let modal;
+    let messageEl;
+    let inputEl;
+    let okBtn;
+    let cancelBtn;
+    let resolver;
+    let cleanupKeydown;
+
+    const close = (result) => {
+      if (!modal) return;
+      modal.style.display = "none";
+      document.body.style.overflow = "";
+      if (cleanupKeydown) cleanupKeydown();
+      const resolve = resolver;
+      resolver = null;
+      if (resolve) resolve(result);
+    };
+
+    const ensureModal = () => {
+      if (modal) return;
+      modal = document.createElement("div");
+      modal.setAttribute("data-prompt-modal", "");
+      Object.assign(modal.style, {
+        position: "fixed",
+        inset: "0",
+        display: "none",
+        alignItems: "center",
+        justifyContent: "center",
+        background: "rgba(0,0,0,0.65)",
+        zIndex: "2000",
+        padding: "1rem",
+      });
+
+      const box = document.createElement("div");
+      Object.assign(box.style, {
+        background: "var(--card)",
+        border: "1px solid var(--border)",
+        borderRadius: "12px",
+        padding: "1rem 1.2rem",
+        maxWidth: "420px",
+        width: "100%",
+        boxShadow: "0 10px 40px rgba(0,0,0,0.45)",
+      });
+
+      const title = document.createElement("div");
+      title.textContent = "Eingabe";
+      title.style.fontWeight = "700";
+      title.style.marginBottom = "0.5rem";
+
+      messageEl = document.createElement("div");
+      messageEl.style.marginBottom = "0.7rem";
+
+      inputEl = document.createElement("input");
+      inputEl.type = "text";
+      inputEl.style.width = "100%";
+      inputEl.style.marginBottom = "0.9rem";
+
+      const actions = document.createElement("div");
+      Object.assign(actions.style, { display: "flex", gap: "0.6rem", justifyContent: "flex-end" });
+
+      cancelBtn = document.createElement("button");
+      cancelBtn.type = "button";
+      cancelBtn.className = "secondary";
+      cancelBtn.textContent = "Abbrechen";
+
+      okBtn = document.createElement("button");
+      okBtn.type = "button";
+      okBtn.className = "primary";
+      okBtn.textContent = "OK";
+
+      actions.append(cancelBtn, okBtn);
+      box.append(title, messageEl, inputEl, actions);
+      modal.appendChild(box);
+      document.body.appendChild(modal);
+
+      modal.addEventListener("click", (event) => {
+        if (event.target === modal) close(null);
+      });
+      cancelBtn.addEventListener("click", () => close(null));
+      okBtn.addEventListener("click", () => close(String(inputEl.value || "").trim()));
+    };
+
+    return (message, initialValue = "") =>
+      new Promise((resolve) => {
+        ensureModal();
+        resolver = resolve;
+        messageEl.textContent = message || "";
+        inputEl.value = String(initialValue || "");
+        modal.style.display = "flex";
+        document.body.style.overflow = "hidden";
+
+        const keyHandler = (event) => {
+          if (event.key === "Escape") {
+            close(null);
+          }
+          if (event.key === "Enter") {
+            close(String(inputEl.value || "").trim());
+          }
+        };
+        cleanupKeydown = () => document.removeEventListener("keydown", keyHandler);
+        document.addEventListener("keydown", keyHandler);
+        setTimeout(() => inputEl.focus(), 0);
+      });
+  })();
+
+  safeRun("confirm-handlers", () => {
+    document.addEventListener(
+      "click",
+      async (event) => {
+        const trigger = event.target.closest("[data-confirm]");
+        if (!trigger) return;
+        const message = trigger.getAttribute("data-confirm");
+        if (!message) return;
+        event.preventDefault();
+        const okText = trigger.getAttribute("data-confirm-text") || "Bestätigen";
+        const okClass = trigger.getAttribute("data-confirm-class") || "danger";
+        const confirmed = await confirmAction(message, { okText, okClass });
+        if (!confirmed) return;
+
+        const formId = trigger.getAttribute("form");
+        if (formId) {
+          const form = document.getElementById(formId);
+          if (form) form.submit();
+          return;
+        }
+        const form = trigger.closest("form");
+        if (form) {
+          form.submit();
+          return;
+        }
+        if (trigger.tagName === "A" && trigger.href) {
+          window.location.href = trigger.href;
+        }
+      },
+      true
+    );
+  });
+
   safeRun("modals", () => {
     // Modal functionality
     const openModal = (modalId) => {
@@ -143,7 +378,6 @@ document.addEventListener('click', (e) => {
         background_mode: "none",
         background_color: "#0b1222",
         background_image: null,
-        enabled_categories: [],
       }
     );
 
@@ -172,6 +406,17 @@ document.addEventListener('click', (e) => {
       return Math.min(max, Math.max(min, parsed));
     };
 
+    const normalizeDepotPrice = (value) => {
+      const parsed = Number(value);
+      if (!Number.isFinite(parsed)) return 2;
+      return Math.max(0, Math.round(parsed));
+    };
+
+    const getItemPriority = (item) => {
+      const value = Number(item?.priority);
+      return Number.isFinite(value) ? Math.round(value) : null;
+    };
+
     const normalizeItem = (item, index) => {
       const safeItem = item || {};
       const rawLabel = safeItem.label ?? safeItem.name ?? "";
@@ -179,6 +424,8 @@ document.addEventListener('click', (e) => {
       const rawName = safeItem.name ?? label ?? "produkt-" + (index + 1);
       const name = String(rawName).trim();
       const price = Number.isFinite(Number(safeItem.price)) ? Number(safeItem.price) : 0;
+      const hasDepot = safeItem.has_depot === true;
+      const priority = getItemPriority(safeItem);
       return {
         name,
         label,
@@ -186,8 +433,8 @@ document.addEventListener('click', (e) => {
         css_class: safeItem.css_class || "custom",
         color: sanitizeColor(safeItem.color || ""),
         category: String(safeItem.category ?? defaultCategory),
-        show_in_cashier: safeItem.show_in_cashier !== false,
-        show_in_price_list: safeItem.show_in_price_list !== false,
+        has_depot: hasDepot,
+        priority: priority ?? null,
       };
     };
 
@@ -254,11 +501,15 @@ document.addEventListener('click', (e) => {
         const form = wrapper.closest("form");
         const statusEl = form ? form.querySelector('[data-form-status]') : null;
         const addButton = wrapper.querySelector("[data-add-product]");
-        const preview = wrapper.querySelector("[data-product-preview]");
+        const cashierPreview = wrapper.querySelector("[data-product-preview='cashier']");
+        const pricePreview = wrapper.querySelector("[data-product-preview='price']");
         const list = wrapper.querySelector("[data-product-list]");
+        const categoryOrderList = wrapper.querySelector("[data-category-order-list]");
+        const addCategoryBtn = wrapper.querySelector("[data-add-category]");
         const hidden = wrapper.querySelector('input[name="kassensystem_settings"]');
         const importInput = wrapper.querySelector("[data-product-import]");
         const exportButton = wrapper.querySelector("[data-product-export]");
+        const depotInput = form ? form.querySelector("[data-depot-price]") : null;
 
       let baseSettings = {};
       try { baseSettings = JSON.parse(hidden.value || "{}"); } catch (err) { baseSettings = {}; }
@@ -274,60 +525,223 @@ document.addEventListener('click', (e) => {
       } catch (err) { parsedItems = []; }
 
       let items = Array.isArray(parsedItems) ? parsedItems.map(normalizeItem) : [];
+      let depotPrice = normalizeDepotPrice(baseSettings.depot_price);
+      let categoryOrder = Array.isArray(baseSettings.category_order)
+        ? baseSettings.category_order.map((name) => String(name || "").trim()).filter(Boolean)
+        : [];
+      let categoryVisibility =
+        baseSettings.category_visibility && typeof baseSettings.category_visibility === "object"
+          ? { ...baseSettings.category_visibility }
+          : {};
+      let pendingCategoryOrder = null;
       if (!items.length) {
         items = [normalizeItem({ name: "Produkt", label: "Neues Produkt", price: 0, color: fallbackColor }, 0)];
       }
 
+      if (depotInput) {
+        depotInput.value = depotPrice;
+        depotInput.addEventListener("input", () => {
+          depotPrice = normalizeDepotPrice(depotInput.value);
+          depotInput.value = depotPrice;
+          renderPreview();
+          syncHidden();
+        });
+      }
+
+      const normalizeCategoryOrder = (categories) => {
+        const clean = [];
+        (categoryOrder || []).forEach((name) => {
+          const trimmed = String(name || "").trim();
+          if (trimmed && categories.includes(trimmed) && !clean.includes(trimmed)) {
+            clean.push(trimmed);
+          }
+        });
+        categories.forEach((name) => {
+          if (name && !clean.includes(name)) {
+            clean.push(name);
+          }
+        });
+        categoryOrder = clean;
+        return clean;
+      };
+
+      const normalizeCategoryVisibility = (categories) => {
+        const next = {};
+        categories.forEach((name) => {
+          const existing = categoryVisibility && typeof categoryVisibility === "object" ? categoryVisibility[name] || {} : {};
+          next[name] = {
+            cashier: existing.cashier !== false,
+            price_list: existing.price_list !== false,
+          };
+        });
+        categoryVisibility = next;
+        return next;
+      };
+
+      const syncCategoryOrderFromDom = () => {
+        if (!categoryOrderList) return;
+        const nextOrder = Array.from(
+          categoryOrderList.querySelectorAll(".category-order__item")
+        )
+          .map((row) => row.dataset.categoryName)
+          .filter(Boolean);
+        if (nextOrder.length) {
+          categoryOrder = nextOrder;
+        }
+      };
+
       const syncHidden = () => {
-        hidden.value = JSON.stringify({ ...baseSettings, items });
+        syncCategoryOrderFromDom();
         const categories = getAllCategories();
+        normalizeCategoryOrder(categories);
+        normalizeCategoryVisibility(categories);
+        hidden.value = JSON.stringify({
+          ...baseSettings,
+          depot_price: depotPrice,
+          category_order: categoryOrder,
+          category_visibility: categoryVisibility,
+          items,
+        });
         wrapper.dispatchEvent(new CustomEvent("product-editor:change", { detail: { categories } }));
       };
 
-      const renderPreview = () => {
-        preview.innerHTML = "";
-        let dragIndex = null;
-
-        items.forEach((item, index) => {
-          const card = document.createElement("div");
-          card.className = "product-preview-card";
-          card.draggable = true;
-          card.style.background = sanitizeColor(item.color);
-          card.dataset.index = index;
-          card.innerHTML = `<small>${item.price} CHF</small><div style="font-weight:700;">${item.label}</div>`;
-
-          card.addEventListener("dragstart", () => {
-            dragIndex = index;
-            card.classList.add("dragging");
-          });
-          card.addEventListener("dragend", () => card.classList.remove("dragging"));
-          card.addEventListener("dragover", (ev) => {
-            ev.preventDefault();
-            card.classList.add("drag-over");
-          });
-          card.addEventListener("dragleave", () => card.classList.remove("drag-over"));
-          card.addEventListener("drop", (ev) => {
-            ev.preventDefault();
-            card.classList.remove("drag-over");
-            const targetIndex = Number(card.dataset.index);
-            if (Number.isNaN(targetIndex) || dragIndex === null || dragIndex === targetIndex) {
-              return;
-            }
-            const [moved] = items.splice(dragIndex, 1);
-            items.splice(targetIndex, 0, moved);
-            renderList();
-            renderPreview();
-            syncHidden();
-          });
-
-          preview.appendChild(card);
+      const getNextPriority = (categoryName) => {
+        const normalizedCategory = String(categoryName || defaultCategory).trim() || defaultCategory;
+        const inCategory = items.filter((item) => {
+          const current = String(item?.category || defaultCategory).trim() || defaultCategory;
+          return current === normalizedCategory;
         });
+        const priorities = inCategory
+          .map((item) => getItemPriority(item))
+          .filter((value) => value !== null);
+        if (priorities.length) {
+          return Math.max(...priorities) + 1;
+        }
+        return inCategory.length;
+      };
+
+      const getSortedItems = (filterKey) => {
+        const orderedCategories = getOrderedCategories(getAllCategories());
+        const categoryIndex = new Map();
+        orderedCategories.forEach((name, idx) => categoryIndex.set(name, idx));
+        return items
+          .filter((item) => {
+            if (!item) return false;
+            const category = String(item.category || defaultCategory).trim() || defaultCategory;
+            const visibility = categoryVisibility && typeof categoryVisibility === "object" ? categoryVisibility[category] : null;
+            if (filterKey === "cashier") {
+              if (visibility && visibility.cashier === false) return false;
+              return true;
+            }
+            if (filterKey === "price") {
+              if (visibility && visibility.price_list === false) return false;
+              return true;
+            }
+            return true;
+          })
+          .slice()
+          .sort((a, b) => {
+            const catA = String(a.category || defaultCategory).trim();
+            const catB = String(b.category || defaultCategory).trim();
+            const idxA = categoryIndex.has(catA) ? categoryIndex.get(catA) : 9999;
+            const idxB = categoryIndex.has(catB) ? categoryIndex.get(catB) : 9999;
+            if (idxA !== idxB) {
+              return (idxA === -1 ? 9999 : idxA) - (idxB === -1 ? 9999 : idxB);
+            }
+            const priorityA = getItemPriority(a);
+            const priorityB = getItemPriority(b);
+            if (priorityA !== null || priorityB !== null) {
+              const safeA = priorityA ?? Number.MAX_SAFE_INTEGER;
+              const safeB = priorityB ?? Number.MAX_SAFE_INTEGER;
+              if (safeA !== safeB) return safeA - safeB;
+            }
+            const labelA = String(a.label || a.name || "").toLowerCase();
+            const labelB = String(b.label || b.name || "").toLowerCase();
+            if (labelA < labelB) return -1;
+            if (labelA > labelB) return 1;
+            return 0;
+          });
+      };
+
+      const renderCashierPreview = () => {
+        if (!cashierPreview) return;
+        cashierPreview.innerHTML = "";
+        const sorted = getSortedItems("cashier");
+        if (!sorted.length) {
+          cashierPreview.innerHTML = "<div class='muted'>Keine Produkte sichtbar.</div>";
+          return;
+        }
+        const bucket = new Map();
+        sorted.forEach((item) => {
+          const category = String(item.category || defaultCategory).trim() || defaultCategory;
+          if (!bucket.has(category)) bucket.set(category, []);
+          bucket.get(category).push(item);
+        });
+        const orderedCategories = getOrderedCategories(Array.from(bucket.keys()));
+        orderedCategories.forEach((category) => {
+          const categoryItems = bucket.get(category) || [];
+          const section = document.createElement("div");
+          section.className = "price-preview-category";
+          const title = document.createElement("h4");
+          title.textContent = category;
+          section.appendChild(title);
+          const list = document.createElement("div");
+          list.style.display = "grid";
+          list.style.gridTemplateColumns = "repeat(auto-fill, minmax(150px, 1fr))";
+          list.style.gap = "0.6rem";
+          categoryItems.forEach((item) => {
+            const displayPrice = Number(item.price || 0) + (item.has_depot ? Number(depotPrice || 0) : 0);
+            const card = document.createElement("div");
+            card.className = "product-preview-card";
+            card.style.background = sanitizeColor(item.color);
+            card.innerHTML = `<small>${displayPrice} CHF${item.has_depot ? " (inkl. Depot)" : ""}</small><div style=\"font-weight:700;\">${item.label}</div>`;
+            list.appendChild(card);
+          });
+          section.appendChild(list);
+          cashierPreview.appendChild(section);
+        });
+      };
+
+      const renderPricePreview = () => {
+        if (!pricePreview) return;
+        pricePreview.innerHTML = "";
+        const sorted = getSortedItems("price");
+        if (!sorted.length) {
+          pricePreview.innerHTML = "<div class='muted'>Keine Produkte sichtbar.</div>";
+          return;
+        }
+        const bucket = new Map();
+        sorted.forEach((item) => {
+          const category = String(item.category || defaultCategory).trim() || defaultCategory;
+          if (!bucket.has(category)) bucket.set(category, []);
+          bucket.get(category).push(item);
+        });
+        const orderedCategories = getOrderedCategories(Array.from(bucket.keys()));
+        orderedCategories.forEach((category) => {
+          const categoryItems = bucket.get(category) || [];
+          const section = document.createElement("div");
+          section.className = "price-preview-category";
+          const title = document.createElement("h4");
+          title.textContent = category;
+          section.appendChild(title);
+          categoryItems.forEach((item) => {
+            const row = document.createElement("div");
+            row.className = "price-preview-item";
+            row.innerHTML = `<span>${item.label || ""}</span><span>${Number(item.price || 0)} CHF</span>`;
+            section.appendChild(row);
+          });
+          pricePreview.appendChild(section);
+        });
+      };
+
+      const renderPreview = () => {
+        renderCashierPreview();
+        renderPricePreview();
       };
 
       const getAllCategories = () => {
         // Collect unique categories from all items in current editor
         const categories = new Set();
-        categories.add(defaultCategory); // Always include default
         items.forEach(item => {
           const rawCategory = item ? item.category : "";
           const category = String(rawCategory ?? "").trim();
@@ -335,8 +749,306 @@ document.addEventListener('click', (e) => {
             categories.add(category);
           }
         });
+        categoryOrder.forEach((name) => {
+          const trimmed = String(name || "").trim();
+          if (trimmed) categories.add(trimmed);
+        });
+        Object.keys(categoryVisibility || {}).forEach((name) => {
+          const trimmed = String(name || "").trim();
+          if (trimmed) categories.add(trimmed);
+        });
         return Array.from(categories).sort();
       };
+
+      const getOrderedCategories = (categories) => normalizeCategoryOrder(categories);
+
+      const renderCategoryOrder = () => {
+        if (!categoryOrderList) return;
+        const categories = getAllCategories();
+        const ordered = getOrderedCategories(categories);
+        const usage = {};
+        items.forEach((item) => {
+          const category = String(item?.category || defaultCategory).trim() || defaultCategory;
+          usage[category] = (usage[category] || 0) + 1;
+        });
+        normalizeCategoryVisibility(categories);
+        categoryOrderList.innerHTML = "";
+
+        const refreshCategoryOrderControls = () => {
+          const rows = Array.from(categoryOrderList.children);
+          rows.forEach((row, idx) => {
+            const up = row.querySelector('[data-action="move-up"]');
+            const down = row.querySelector('[data-action="move-down"]');
+            if (up) up.disabled = idx === 0;
+            if (down) down.disabled = idx >= rows.length - 1;
+          });
+        };
+
+        if (!categoryOrderList.dataset.dragReady) {
+          categoryOrderList.dataset.dragReady = "true";
+
+          const getDragAfterElement = (container, y) => {
+            const draggableElements = Array.from(
+              container.querySelectorAll(".category-order__item:not(.is-dragging)")
+            );
+            return draggableElements.reduce(
+              (closest, child) => {
+                const box = child.getBoundingClientRect();
+                const offset = y - box.top - box.height / 2;
+                if (offset < 0 && offset > closest.offset) {
+                  return { offset, element: child };
+                }
+                return closest;
+              },
+              { offset: Number.NEGATIVE_INFINITY, element: null }
+            ).element;
+          };
+
+          const updateOrderFromDom = () => {
+            const nextOrder = Array.from(
+              categoryOrderList.querySelectorAll(".category-order__item")
+            )
+              .map((row) => row.dataset.categoryName)
+              .filter(Boolean);
+            if (!nextOrder.length) return;
+            pendingCategoryOrder = nextOrder;
+            categoryOrder = nextOrder;
+            renderPreview();
+            syncHidden();
+            refreshCategoryOrderControls();
+          };
+
+          categoryOrderList.addEventListener("dragover", (event) => {
+            event.preventDefault();
+            const dragging = categoryOrderList.querySelector(".category-order__item.is-dragging");
+            if (!dragging) return;
+            const afterElement = getDragAfterElement(categoryOrderList, event.clientY);
+            if (!afterElement) {
+              categoryOrderList.appendChild(dragging);
+            } else {
+              categoryOrderList.insertBefore(dragging, afterElement);
+            }
+            updateOrderFromDom();
+          });
+
+          categoryOrderList.addEventListener("drop", (event) => {
+            event.preventDefault();
+            if (pendingCategoryOrder && pendingCategoryOrder.length) {
+              categoryOrder = pendingCategoryOrder;
+              pendingCategoryOrder = null;
+              renderPreview();
+              syncHidden();
+            } else {
+              updateOrderFromDom();
+            }
+            refreshCategoryOrderControls();
+          });
+        }
+
+        const renameCategory = (oldName, newNameRaw) => {
+          const newName = String(newNameRaw || "").trim();
+          if (!newName || newName === oldName) return;
+          if (categories.includes(newName)) return;
+
+          items.forEach((item) => {
+            const category = String(item.category || defaultCategory).trim() || defaultCategory;
+            if (category === oldName) {
+              item.category = newName;
+            }
+          });
+
+          categoryOrder = categoryOrder.map((name) => (name === oldName ? newName : name));
+          if (categoryVisibility[oldName]) {
+            categoryVisibility[newName] = categoryVisibility[oldName];
+            delete categoryVisibility[oldName];
+          }
+
+          renderList();
+          renderPreview();
+          renderCategoryOrder();
+          syncHidden();
+        };
+
+        ordered.forEach((name, index) => {
+          const row = document.createElement("div");
+          row.className = "category-order__item";
+          row.dataset.categoryName = name;
+          row.draggable = true;
+          row.addEventListener("dragstart", (event) => {
+            row.classList.add("is-dragging");
+            categoryOrderList.classList.add("is-dragging");
+            event.dataTransfer.effectAllowed = "move";
+            event.dataTransfer.setData("text/plain", name);
+          });
+          row.addEventListener("dragend", () => {
+            row.classList.remove("is-dragging");
+            categoryOrderList.classList.remove("is-dragging");
+            if (pendingCategoryOrder && pendingCategoryOrder.length) {
+              categoryOrder = pendingCategoryOrder;
+              pendingCategoryOrder = null;
+              renderPreview();
+              syncHidden();
+              refreshCategoryOrderControls();
+            } else {
+              updateOrderFromDom();
+            }
+          });
+          const nameWrap = document.createElement("div");
+          nameWrap.className = "category-order__name";
+          const nameInput = document.createElement("input");
+          nameInput.value = name;
+          nameInput.readOnly = true;
+          nameInput.title = "Zum Umbenennen die Aktion verwenden.";
+          nameWrap.appendChild(nameInput);
+
+          const toggles = document.createElement("div");
+          toggles.className = "visibility-toggle";
+
+          const cashierLabel = document.createElement("label");
+          cashierLabel.className = "pill-toggle";
+          const cashierToggle = document.createElement("input");
+          cashierToggle.type = "checkbox";
+          cashierToggle.checked = !(categoryVisibility[name] && categoryVisibility[name].cashier === false);
+          cashierToggle.addEventListener("change", () => {
+            // Use current name from input to handle renames
+            const currentName = nameInput.value.trim() || name;
+            categoryVisibility[currentName] = {
+              cashier: cashierToggle.checked,
+              price_list: !(categoryVisibility[currentName] && categoryVisibility[currentName].price_list === false),
+            };
+            renderPreview();
+            syncHidden();
+          });
+          const cashierText = document.createElement("span");
+          cashierText.textContent = "Kasse";
+          cashierLabel.append(cashierToggle, cashierText);
+
+          const priceLabel = document.createElement("label");
+          priceLabel.className = "pill-toggle";
+          const priceToggle = document.createElement("input");
+          priceToggle.type = "checkbox";
+          priceToggle.checked = !(categoryVisibility[name] && categoryVisibility[name].price_list === false);
+          priceToggle.addEventListener("change", () => {
+            // Use current name from input to handle renames
+            const currentName = nameInput.value.trim() || name;
+            categoryVisibility[currentName] = {
+              cashier: !(categoryVisibility[currentName] && categoryVisibility[currentName].cashier === false),
+              price_list: priceToggle.checked,
+            };
+            renderPreview();
+            syncHidden();
+          });
+          const priceText = document.createElement("span");
+          priceText.textContent = "Preisliste";
+          priceLabel.append(priceToggle, priceText);
+
+          toggles.append(cashierLabel, priceLabel);
+
+          const actions = document.createElement("div");
+          actions.className = "category-order__actions";
+
+          const upBtn = document.createElement("button");
+          upBtn.type = "button";
+          upBtn.className = "secondary";
+          upBtn.textContent = "↑";
+          upBtn.dataset.action = "move-up";
+          upBtn.disabled = index === 0;
+          upBtn.addEventListener("click", () => {
+            // Get current index from the DOM to avoid stale closure
+            const currentIndex = Array.from(categoryOrderList.children).indexOf(row);
+            if (currentIndex <= 0) return;
+            const moved = categoryOrder.splice(currentIndex, 1)[0];
+            categoryOrder.splice(currentIndex - 1, 0, moved);
+            renderCategoryOrder();
+            renderPreview();
+            syncHidden();
+          });
+
+          const downBtn = document.createElement("button");
+          downBtn.type = "button";
+          downBtn.className = "secondary";
+          downBtn.textContent = "↓";
+          downBtn.dataset.action = "move-down";
+          downBtn.disabled = index >= ordered.length - 1;
+          downBtn.addEventListener("click", () => {
+            // Get current index from the DOM to avoid stale closure
+            const currentIndex = Array.from(categoryOrderList.children).indexOf(row);
+            if (currentIndex >= categoryOrder.length - 1) return;
+            const moved = categoryOrder.splice(currentIndex, 1)[0];
+            categoryOrder.splice(currentIndex + 1, 0, moved);
+            renderCategoryOrder();
+            renderPreview();
+            syncHidden();
+          });
+
+          const deleteBtn = document.createElement("button");
+          deleteBtn.type = "button";
+          deleteBtn.className = "danger";
+          deleteBtn.textContent = "Löschen";
+          const hasItems = (usage[name] || 0) > 0;
+          deleteBtn.disabled = hasItems;
+          if (hasItems) {
+            deleteBtn.title = "Nur leere Kategorien können gelöscht werden.";
+          }
+          deleteBtn.addEventListener("click", async () => {
+            if (deleteBtn.disabled) return;
+            const currentName = nameInput.value.trim() || name;
+            if (!currentName) return;
+            const confirmed = await confirmAction(`Kategorie "${currentName}" wirklich löschen?`, {
+              okText: "Löschen",
+              okClass: "danger",
+            });
+            if (!confirmed) return;
+            categoryOrder = categoryOrder.filter((entry) => entry !== currentName);
+            if (categoryVisibility[currentName]) {
+              delete categoryVisibility[currentName];
+            }
+            renderList();
+            renderCategoryOrder();
+            renderPreview();
+            syncHidden();
+          });
+
+          const renameBtn = document.createElement("button");
+          renameBtn.type = "button";
+          renameBtn.className = "secondary";
+          renameBtn.textContent = "Umbenennen";
+          renameBtn.addEventListener("click", async () => {
+            const currentName = nameInput.value.trim() || name;
+            if (!currentName) return;
+            const nextName = await promptAction("Kategorie umbenennen:", currentName);
+            if (!nextName) return;
+            renameCategory(currentName, nextName);
+          });
+
+          actions.append(upBtn, downBtn, renameBtn, deleteBtn);
+          row.append(nameWrap, toggles, actions);
+          categoryOrderList.appendChild(row);
+        });
+
+        refreshCategoryOrderControls();
+      };
+
+      const addCategory = (nameRaw) => {
+        const name = String(nameRaw || "").trim();
+        if (!name) return;
+        const categories = getAllCategories();
+        if (categories.includes(name)) return;
+        categoryOrder.push(name);
+        categoryVisibility[name] = { cashier: true, price_list: true };
+        renderList();
+        renderCategoryOrder();
+        renderPreview();
+        syncHidden();
+      };
+
+      if (addCategoryBtn) {
+        addCategoryBtn.addEventListener("click", async () => {
+          const name = await promptAction("Neue Kategorie:");
+          if (!name) return;
+          addCategory(name);
+        });
+      }
 
       const renderList = () => {
         list.innerHTML = "";
@@ -355,9 +1067,117 @@ document.addEventListener('click', (e) => {
         });
         list.appendChild(datalist);
 
-        items.forEach((item, index) => {
-          const row = document.createElement("div");
-          row.className = "product-row";
+        const orderedCategories = getOrderedCategories(categories);
+
+        const sortItemsWithinCategory = (groupItems) =>
+          groupItems.slice().sort((a, b) => {
+            const priorityA = getItemPriority(a);
+            const priorityB = getItemPriority(b);
+            if (priorityA !== null || priorityB !== null) {
+              const safeA = priorityA ?? Number.MAX_SAFE_INTEGER;
+              const safeB = priorityB ?? Number.MAX_SAFE_INTEGER;
+              if (safeA !== safeB) return safeA - safeB;
+            }
+            const labelA = String(a.label || a.name || "").toLowerCase();
+            const labelB = String(b.label || b.name || "").toLowerCase();
+            if (labelA < labelB) return -1;
+            if (labelA > labelB) return 1;
+            return 0;
+          });
+
+        let draggingRow = null;
+        let draggingCategory = null;
+
+        const getDragAfterElement = (container, y) => {
+          const draggableElements = Array.from(
+            container.querySelectorAll(".product-row:not(.is-dragging)")
+          );
+          return draggableElements.reduce(
+            (closest, child) => {
+              const box = child.getBoundingClientRect();
+              const offset = y - box.top - box.height / 2;
+              if (offset < 0 && offset > closest.offset) {
+                return { offset, element: child };
+              }
+              return closest;
+            },
+            { offset: Number.NEGATIVE_INFINITY, element: null }
+          ).element;
+        };
+
+        const applyItemOrderFromDom = (container, categoryName) => {
+          const rows = Array.from(container.querySelectorAll(".product-row"));
+          rows.forEach((row, idx) => {
+            const itemName = row.dataset.itemName;
+            const item = items.find((candidate) => candidate && candidate.name === itemName);
+            if (item) {
+              item.priority = idx;
+              item.category = categoryName;
+            }
+          });
+          renderPreview();
+          syncHidden();
+        };
+
+        orderedCategories.forEach((category) => {
+          const groupItems = items.filter((item) => {
+            const itemCategory = String(item?.category || defaultCategory).trim() || defaultCategory;
+            return itemCategory === category;
+          });
+          if (!groupItems.length) return;
+
+          const groupWrap = document.createElement("div");
+          groupWrap.className = "product-category";
+
+          const groupHeader = document.createElement("div");
+          groupHeader.className = "product-category__header";
+          groupHeader.innerHTML = `<strong>${category}</strong><span class="muted">Drag & Drop zum Sortieren</span>`;
+
+          const groupList = document.createElement("div");
+          groupList.className = "product-category__list";
+          groupList.dataset.category = category;
+
+          groupList.addEventListener("dragover", (event) => {
+            event.preventDefault();
+            if (!draggingRow || draggingCategory !== category) return;
+            const afterElement = getDragAfterElement(groupList, event.clientY);
+            if (!afterElement) {
+              groupList.appendChild(draggingRow);
+            } else {
+              groupList.insertBefore(draggingRow, afterElement);
+            }
+          });
+
+          groupList.addEventListener("drop", (event) => {
+            event.preventDefault();
+            if (!draggingRow || draggingCategory !== category) return;
+            applyItemOrderFromDom(groupList, category);
+          });
+
+          const sortedItems = sortItemsWithinCategory(groupItems);
+
+          sortedItems.forEach((item) => {
+            const row = document.createElement("div");
+            row.className = "product-row";
+            row.dataset.itemName = item.name;
+            row.dataset.category = category;
+            row.draggable = true;
+
+            row.addEventListener("dragstart", (event) => {
+              draggingRow = row;
+              draggingCategory = category;
+              row.classList.add("is-dragging");
+              event.dataTransfer.effectAllowed = "move";
+              event.dataTransfer.setData("text/plain", item.name || "");
+            });
+
+            row.addEventListener("dragend", () => {
+              row.classList.remove("is-dragging");
+              if (draggingRow === row) {
+                draggingRow = null;
+                draggingCategory = null;
+              }
+            });
 
           const nameContainer = document.createElement("div");
           nameContainer.className = "stack";
@@ -368,6 +1188,7 @@ document.addEventListener('click', (e) => {
           nameInput.placeholder = "unique-key";
           nameInput.addEventListener("input", () => {
             item.name = nameInput.value.trim();
+            row.dataset.itemName = item.name;
             syncHidden();
           });
           nameContainer.append(nameLabel, nameInput);
@@ -406,6 +1227,33 @@ document.addEventListener('click', (e) => {
           });
           priceContainer.append(priceLabel, priceInput);
 
+          const depotContainer = document.createElement("div");
+          depotContainer.className = "stack";
+          const depotLabel = document.createElement("label");
+          depotLabel.textContent = "Depot";
+          const depotToggleWrap = document.createElement("div");
+          depotToggleWrap.style.display = "flex";
+          depotToggleWrap.style.alignItems = "center";
+          depotToggleWrap.style.gap = "0.5rem";
+
+          const depotToggle = document.createElement("input");
+          depotToggle.type = "checkbox";
+          depotToggle.checked = item.has_depot === true;
+          depotToggle.addEventListener("change", () => {
+            item.has_depot = depotToggle.checked;
+            renderPreview();
+            syncHidden();
+          });
+
+          const depotText = document.createElement("span");
+          depotText.textContent = "Aktiv";
+          depotToggleWrap.append(depotToggle, depotText);
+          depotContainer.append(depotLabel, depotToggleWrap);
+
+          const priceDepotGroup = document.createElement("div");
+          priceDepotGroup.className = "product-field-group";
+          priceDepotGroup.append(priceContainer, depotContainer);
+
           const colorContainer = document.createElement("div");
           colorContainer.className = "stack";
           const colorLabel = document.createElement("label");
@@ -428,61 +1276,32 @@ document.addEventListener('click', (e) => {
           const categoryInput = document.createElement("input");
           categoryInput.setAttribute("list", datalistId);
           categoryInput.value = String(item.category ?? defaultCategory);
-          categoryInput.placeholder = "Wählen oder neue Kategorie eingeben";
-          categoryInput.addEventListener("input", () => {
-            item.category = categoryInput.value.trim() || defaultCategory;
-            syncHidden();
-          });
-          categoryInput.addEventListener("change", () => {
-            // Commit category selection/new entry and update datalist
-            const newCategory = categoryInput.value.trim() || defaultCategory;
-            item.category = newCategory;
-            syncHidden();
-
-            if (newCategory && newCategory !== defaultCategory) {
-              const categories = getAllCategories();
-              if (!categories.includes(newCategory)) {
-                // Re-render list to update datalist with new category
-                renderList();
-              }
+          categoryInput.placeholder = "Kategorie wählen";
+          const applyCategorySelection = () => {
+            const raw = categoryInput.value.trim();
+            const categories = getAllCategories();
+            if (!categories.includes(defaultCategory)) {
+              categories.push(defaultCategory);
             }
-          });
+            const nextCategory = raw || defaultCategory;
+            if (categories.includes(nextCategory)) {
+              const nextPriority = getNextPriority(nextCategory);
+              item.category = nextCategory;
+              item.priority = nextPriority;
+              categoryInput.value = nextCategory;
+              renderList();
+              renderPreview();
+              renderCategoryOrder();
+              syncHidden();
+              return;
+            }
+
+            categoryInput.value = String(item.category ?? defaultCategory);
+            alert("Neue Kategorien bitte über '+ Kategorie' anlegen.");
+          };
+          categoryInput.addEventListener("change", applyCategorySelection);
+          categoryInput.addEventListener("blur", applyCategorySelection);
           categoryContainer.append(categoryLabel, categoryInput);
-
-          const visibilityContainer = document.createElement("div");
-          visibilityContainer.className = "stack";
-          const visibilityLabel = document.createElement("label");
-          visibilityLabel.textContent = "Sichtbarkeit";
-          const visibilityGroup = document.createElement("div");
-          visibilityGroup.className = "visibility-toggle";
-          const cashierLabel = document.createElement("label");
-          cashierLabel.className = "pill-toggle";
-          const cashierToggle = document.createElement("input");
-          cashierToggle.type = "checkbox";
-          cashierToggle.checked = item.show_in_cashier !== false;
-          cashierToggle.addEventListener("change", () => {
-            item.show_in_cashier = cashierToggle.checked;
-            syncHidden();
-          });
-          const cashierText = document.createElement("span");
-          cashierText.textContent = "Kasse";
-          cashierLabel.append(cashierToggle, cashierText);
-
-          const priceListLabel = document.createElement("label");
-          priceListLabel.className = "pill-toggle";
-          const priceToggle = document.createElement("input");
-          priceToggle.type = "checkbox";
-          priceToggle.checked = item.show_in_price_list !== false;
-          priceToggle.addEventListener("change", () => {
-            item.show_in_price_list = priceToggle.checked;
-            syncHidden();
-          });
-          const priceText = document.createElement("span");
-          priceText.textContent = "Preisliste";
-          priceListLabel.append(priceToggle, priceText);
-
-          visibilityGroup.append(cashierLabel, priceListLabel);
-          visibilityContainer.append(visibilityLabel, visibilityGroup);
 
           const actions = document.createElement("div");
           actions.className = "row-actions";
@@ -491,23 +1310,39 @@ document.addEventListener('click', (e) => {
           removeBtn.className = "danger";
           removeBtn.textContent = "Entfernen";
           removeBtn.addEventListener("click", () => {
-            items.splice(index, 1);
+            const itemIndex = items.indexOf(item);
+            if (itemIndex >= 0) {
+              items.splice(itemIndex, 1);
+            } else {
+              const byName = items.findIndex((candidate) => candidate && candidate.name === item.name);
+              if (byName >= 0) items.splice(byName, 1);
+            }
             if (!items.length) {
               items.push(normalizeItem({ name: "produkt", label: "Produkt", price: 0, color: fallbackColor }, 0));
             }
             renderList();
             renderPreview();
+            renderCategoryOrder();
             syncHidden();
           });
           actions.appendChild(removeBtn);
 
-          row.append(labelContainer, nameContainer, priceContainer, colorContainer, categoryContainer, visibilityContainer, actions);
-          list.appendChild(row);
+          const colorActionsGroup = document.createElement("div");
+          colorActionsGroup.className = "product-field-group product-field-group--actions";
+          colorActionsGroup.append(colorContainer, actions);
+
+          row.append(labelContainer, nameContainer, priceDepotGroup, categoryContainer, colorActionsGroup);
+          groupList.appendChild(row);
+          });
+
+          groupWrap.append(groupHeader, groupList);
+          list.appendChild(groupWrap);
         });
       };
 
       if (addButton) {
         addButton.addEventListener("click", () => {
+          const nextPriority = getNextPriority(defaultCategory);
           items.push(
             normalizeItem(
               {
@@ -519,8 +1354,10 @@ document.addEventListener('click', (e) => {
               items.length
             )
           );
+          items[items.length - 1].priority = nextPriority;
           renderList();
           renderPreview();
+          renderCategoryOrder();
           syncHidden();
         });
       }
@@ -543,10 +1380,18 @@ document.addEventListener('click', (e) => {
             }
             const importedItems = Array.isArray(data && data.items) ? data.items : Array.isArray(data) ? data : [];
             baseSettings = data && typeof data === "object" && !Array.isArray(data) ? { ...data } : {};
+            categoryOrder = Array.isArray(baseSettings.category_order)
+              ? baseSettings.category_order.map((name) => String(name || "").trim()).filter(Boolean)
+              : [];
+            categoryVisibility =
+              baseSettings.category_visibility && typeof baseSettings.category_visibility === "object"
+                ? { ...baseSettings.category_visibility }
+                : {};
             items = (importedItems || []).map((it, idx) => normalizeItem(it, idx));
             if (!items.length) items = [normalizeItem({ name: "Produkt", label: "Neues Produkt", price: 0, color: fallbackColor }, 0)];
             renderList();
             renderPreview();
+            renderCategoryOrder();
             syncHidden();
             if (statusEl) {
               statusEl.style.display = 'inline';
@@ -561,7 +1406,14 @@ document.addEventListener('click', (e) => {
 
       if (exportButton) {
         exportButton.addEventListener("click", () => {
-          const blob = new Blob([hidden.value || "{}"], { type: "application/json" });
+          const data = {
+            ...baseSettings,
+            depot_price: depotPrice,
+            category_order: categoryOrder,
+            category_visibility: categoryVisibility,
+            items,
+          };
+          const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
           const url = URL.createObjectURL(blob);
           const a = document.createElement("a");
           a.href = url;
@@ -572,19 +1424,45 @@ document.addEventListener('click', (e) => {
       }
 
       wrapper.productApi = {
-        getSettings: () => parseJson(hidden.value, { items: items }),
+        getSettings: () => {
+          syncCategoryOrderFromDom();
+          return {
+            ...baseSettings,
+            depot_price: depotPrice,
+            category_order: categoryOrder,
+            category_visibility: categoryVisibility,
+            items,
+          };
+        },
+        syncCategoryOrder: () => {
+          syncCategoryOrderFromDom();
+          syncHidden();
+        },
         setSettings: (data) => {
           const importedItems = Array.isArray(data && data.items) ? data.items : [];
           baseSettings = data && typeof data === "object" && !Array.isArray(data) ? { ...data } : {};
+          depotPrice = normalizeDepotPrice(baseSettings.depot_price);
+          categoryOrder = Array.isArray(baseSettings.category_order)
+            ? baseSettings.category_order.map((name) => String(name || "").trim()).filter(Boolean)
+            : [];
+          categoryVisibility =
+            baseSettings.category_visibility && typeof baseSettings.category_visibility === "object"
+              ? { ...baseSettings.category_visibility }
+              : {};
+          if (depotInput) {
+            depotInput.value = depotPrice;
+          }
           items = importedItems.length ? importedItems.map((it, idx) => normalizeItem(it, idx)) : [normalizeItem({ name: "Produkt", label: "Produkt", price: 0, color: fallbackColor }, 0)];
           renderList();
           renderPreview();
+          renderCategoryOrder();
           syncHidden();
         },
       };
 
         renderList();
         renderPreview();
+        renderCategoryOrder();
         syncHidden();
       });
     });
@@ -607,33 +1485,12 @@ document.addEventListener('click', (e) => {
         next.rotation_seconds = clampNumber(next.rotation_seconds, defaults.rotation_seconds, 2, 120);
         next.background_mode = ["none", "custom"].includes(next.background_mode) ? next.background_mode : defaults.background_mode;
         next.background_color = sanitizeColor(next.background_color || defaults.background_color || fallbackColor);
-        next.enabled_categories = Array.isArray(next.enabled_categories)
-          ? next.enabled_categories.filter((name) => typeof name === "string" && name.trim())
-          : [];
+        if (next.background_image && next.background_mode === "none") {
+          next.background_mode = "custom";
+        }
         return next;
       };
 
-      const getItemsFromEditor = () => {
-        if (productEditor && productEditor.productApi) {
-          const settings = productEditor.productApi.getSettings();
-          return Array.isArray(settings.items) ? settings.items : [];
-        }
-        const fallback = form ? form.querySelector('input[name="kassensystem_settings"]') : null;
-        const parsed = parseJson(fallback ? fallback.value : "", {});
-        return Array.isArray(parsed.items) ? parsed.items : [];
-      };
-
-      const getCategories = () => {
-        const items = getItemsFromEditor();
-        const categories = new Set();
-        categories.add(defaultCategory);
-        items.forEach((item) => {
-          if (item && item.show_in_price_list === false) return;
-          const category = String(item && item.category != null ? item.category : defaultCategory).trim();
-          if (category) categories.add(category);
-        });
-        return Array.from(categories);
-      };
 
       const updateShared = () => {
         if (!sharedInput) return;
@@ -642,7 +1499,6 @@ document.addEventListener('click', (e) => {
         sharedInput.value = JSON.stringify(shared);
       };
 
-      const errorEl = wrapper.querySelector("[data-price-error]");
       const customBg = wrapper.querySelector("[data-price-custom-bg]");
       const imageSelects = Array.from(wrapper.querySelectorAll("[data-price-image-select]"));
       const imagePreviews = Array.from(wrapper.querySelectorAll("[data-price-image-preview]"));
@@ -676,59 +1532,6 @@ document.addEventListener('click', (e) => {
         });
       };
 
-      const renderCategories = () => {
-        const container = wrapper.querySelector("[data-price-categories]");
-        if (!container) return;
-        const categories = getCategories();
-        const enabledRaw = settings.enabled_categories.length ? settings.enabled_categories : categories;
-        // Preserve the category order from items (not from previously saved enabled_categories)
-        const enabledSet = new Set(enabledRaw);
-        const enabled = categories.filter((name) => enabledSet.has(name));
-        settings.enabled_categories = enabled;
-        container.innerHTML = "";
-
-        categories.forEach((name) => {
-          const label = document.createElement("label");
-          label.style.display = "inline-flex";
-          label.style.alignItems = "center";
-          label.style.gap = "0.4rem";
-          label.style.marginRight = "0.8rem";
-          const checkbox = document.createElement("input");
-          checkbox.type = "checkbox";
-          checkbox.checked = enabled.includes(name);
-          checkbox.addEventListener("change", () => {
-            const selected = Array.from(container.querySelectorAll("input[type='checkbox']"))
-              .filter((el) => el.checked)
-              .map((el) => el.dataset.category || "")
-              .filter(Boolean);
-
-            settings.enabled_categories = selected;
-            if (errorEl) {
-              if (!selected.length) {
-                errorEl.textContent = "Keine Auswahl = alle Kategorien.";
-                errorEl.style.color = "#94a3b8";
-                errorEl.style.display = "block";
-              } else {
-                errorEl.textContent = "";
-                errorEl.style.display = "none";
-              }
-            }
-            updateShared();
-          });
-          checkbox.dataset.category = name;
-          label.appendChild(checkbox);
-          const span = document.createElement("span");
-          span.textContent = name;
-          label.appendChild(span);
-          container.appendChild(label);
-        });
-
-        if (errorEl && !settings.enabled_categories.length) {
-          errorEl.textContent = "Keine Auswahl = alle Kategorien.";
-          errorEl.style.color = "#94a3b8";
-          errorEl.style.display = "block";
-        }
-      };
 
       wrapper.querySelectorAll("[data-price-field]").forEach((input) => {
         const key = input.dataset.priceField;
@@ -765,26 +1568,17 @@ document.addEventListener('click', (e) => {
         });
       }
 
-      if (productEditor) {
-        productEditor.addEventListener("product-editor:change", () => {
-          renderCategories();
-          updateShared();
-        });
-      }
-
       wrapper.priceSettingsApi = {
         getSettings: () => ({ ...settings }),
         setSettings: (data) => {
           settings = normalizeSettings(data);
           syncInputs();
-          renderCategories();
           updateShared();
         },
       };
 
         settings = normalizeSettings(settings);
         syncInputs();
-        renderCategories();
         updateShared();
       });
     });
@@ -945,6 +1739,10 @@ document.addEventListener('click', (e) => {
           if (priceSettingsWrapper && priceSettingsWrapper.priceSettingsApi) {
             priceSettingsWrapper.priceSettingsApi.getSettings();
           }
+
+          if (productEditor && productEditor.productApi && productEditor.productApi.syncCategoryOrder) {
+            productEditor.productApi.syncCategoryOrder();
+          }
         });
       }
 
@@ -983,6 +1781,12 @@ document.addEventListener('click', (e) => {
           }
 
           sharedInput.value = JSON.stringify(currentSettings);
+        }
+
+        const productEditor = this.querySelector('[data-product-editor]');
+        const kassInput = this.querySelector('input[name="kassensystem_settings"]');
+        if (productEditor && productEditor.productApi && kassInput) {
+          kassInput.value = JSON.stringify(productEditor.productApi.getSettings());
         }
 
         // Form will now submit naturally
@@ -1242,9 +2046,11 @@ document.addEventListener('click', (e) => {
     const messageDiv = document.getElementById('git-update-message');
     if (!messageDiv) return;
 
-    if (!confirm('Möchten Sie wirklich das System aktualisieren? Der Service wird dabei neu gestartet.')) {
-      return;
-    }
+    const confirmed = await confirmAction(
+      'Möchten Sie wirklich das System aktualisieren? Der Service wird dabei neu gestartet.',
+      { okText: "Aktualisieren", okClass: "primary" }
+    );
+    if (!confirmed) return;
 
     messageDiv.innerHTML = '<p class="muted">Update wird durchgeführt...</p>';
 

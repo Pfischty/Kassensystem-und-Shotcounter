@@ -27,6 +27,77 @@
     gap: 0.6rem;
     grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
   }
+  .product-editor__preview[data-product-preview="cashier"] {
+    display: flex;
+    flex-direction: column;
+    gap: 0.8rem;
+  }
+  .product-editor__preview[data-product-preview="cashier"] .price-preview-category {
+    width: 100%;
+  }
+  .category-order {
+    margin-top: 0.8rem;
+    padding: 0.75rem;
+    border: 1px dashed var(--border);
+    border-radius: 10px;
+    background: rgba(255,255,255,0.02);
+  }
+  .category-order__list {
+    margin-top: 0.6rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+  }
+  .category-order__item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.6rem;
+    padding: 0.35rem 0.6rem;
+    border-radius: 8px;
+    background: rgba(255,255,255,0.04);
+    border: 1px solid var(--border);
+    cursor: grab;
+  }
+  .category-order__item.is-dragging {
+    opacity: 0.6;
+    cursor: grabbing;
+  }
+  .category-order__list.is-dragging {
+    background: rgba(255,255,255,0.03);
+    border-radius: 8px;
+  }
+  .category-order__name {
+    flex: 1;
+    min-width: 120px;
+    max-width: 220px;
+  }
+  .category-order__name input {
+    width: 100%;
+  }
+  .category-order__actions { display: flex; gap: 0.35rem; }
+  .product-editor__previews {
+    display: grid;
+    gap: 1rem;
+    margin-top: 0.8rem;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  }
+  .product-preview-block {
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 0.75rem;
+    background: rgba(255,255,255,0.02);
+  }
+  .product-preview-title { font-weight: 700; margin-bottom: 0.5rem; }
+  .product-editor__preview--list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+  }
+  .price-preview-category { border-top: 1px dashed var(--border); padding-top: 0.5rem; }
+  .price-preview-category:first-child { border-top: none; padding-top: 0; }
+  .price-preview-category h4 { margin: 0 0 0.35rem 0; font-size: 0.95rem; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.04em; }
+  .price-preview-item { display:flex; justify-content:space-between; font-size: 0.95rem; }
   .product-preview-card {
     border-radius: 12px;
     padding: 0.85rem;
@@ -40,14 +111,40 @@
   .product-preview-card.dragging { opacity: 0.6; transform: scale(0.98); }
   .product-preview-card.drag-over { outline: 2px dashed rgba(255,255,255,0.5); }
   .product-editor__list { margin-top: 1rem; display:flex; flex-direction:column; gap:0.75rem; }
+  .product-category { margin-top: 0.8rem; }
+  .product-category__header { display:flex; justify-content:space-between; align-items:center; gap:0.6rem; margin:0.2rem 0 0.4rem; }
+  .product-category__list { display:flex; flex-direction:column; gap:0.75rem; }
   .product-row {
     display:grid;
-    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    grid-template-columns:
+      minmax(200px, 1.3fr)
+      minmax(200px, 1.1fr)
+      minmax(170px, 0.8fr)
+      minmax(180px, 0.9fr)
+      minmax(180px, 0.7fr);
     gap:0.6rem;
     background:#0c1324;
     border:1px solid var(--border);
     border-radius:10px;
     padding:0.75rem;
+    align-items:end;
+    cursor: grab;
+  }
+  .product-row.is-dragging { opacity: 0.6; cursor: grabbing; }
+  .product-field-group {
+    display:grid;
+    grid-template-columns: minmax(110px, 1fr) minmax(90px, 1fr);
+    gap:0.6rem;
+    align-items:end;
+  }
+  .product-field-group--actions {
+    grid-template-columns: minmax(120px, 1fr) minmax(110px, 1fr);
+  }
+  .product-field-group input[type="number"] {
+    max-width: 140px;
+  }
+  .product-field-group .row-actions button {
+    padding: 0.45rem 0.6rem;
   }
   .product-row label { font-size: 0.9rem; color: #cbd5e1; display:block; margin-bottom:0.2rem; }
   .product-row .row-actions { display:flex; justify-content:flex-end; align-items:flex-end; }
@@ -170,7 +267,9 @@
             type="submit"
             class="danger"
             form="bg-delete-{{ event.id }}"
-            onclick="return confirm('Hintergrundbild wirklich entfernen?');"
+                data-confirm="Hintergrundbild wirklich entfernen?"
+                data-confirm-text="Entfernen"
+                data-confirm-class="danger"
           >Bild entfernen</button>
         </div>
       {% endif %}
@@ -258,7 +357,9 @@
                 type="submit"
                 class="danger"
                 form="pl-delete-{{ event.id }}"
-                onclick="return confirm('Preisliste-Hintergrundbild wirklich entfernen?');"
+                data-confirm="Preisliste-Hintergrundbild wirklich entfernen?"
+                data-confirm-text="Entfernen"
+                data-confirm-class="danger"
               >Bild entfernen</button>
             </div>
           {% endif %}
@@ -276,13 +377,6 @@
             <div class="muted" style="margin-top: 0.3rem;">Erlaubte Formate: PNG, JPG, GIF, WebP. Max. 5 MB.</div>
           </div>
         </div>
-
-        <div class="stack" style="margin-top: 0.8rem;">
-          <span>Kategorien aktivieren</span>
-          <div data-price-categories></div>
-          <div class="hint" data-price-error style="display:none; color:#ef4444;"></div>
-          <div class="muted">Kategorien kommen aus den Kassenartikeln.</div>
-        </div>
       </div>
     </div>
   </div>
@@ -291,7 +385,14 @@
     <div class="product-editor__top">
       <div>
         <strong>Produkte für dieses Event</strong>
-        <div class="muted">Titel, Preis, Farbe bearbeiten. Reihenfolge per Drag & Drop ändern.</div>
+        <div class="muted">Titel, Preis und Kategorie bearbeiten (Farben werden nur in der Vorschau angezeigt).</div>
+        <div class="field-inline" style="margin-top:0.45rem;">
+          <label class="stack" style="min-width: 180px;">
+            <span>Depot-Preis (CHF)</span>
+            <input type="number" step="1" min="0" data-depot-price>
+          </label>
+          <span class="muted">Depot gilt global, pro Produkt nur aktivierbar.</span>
+        </div>
       </div>
       <div class="inline-actions">
         <label class="secondary" style="padding:0.45rem 0.65rem; cursor:pointer;">
@@ -302,7 +403,26 @@
         <button type="button" class="secondary" data-add-product>+ Produkt</button>
       </div>
     </div>
-    <div class="product-editor__preview" data-product-preview></div>
+    <div class="product-editor__previews">
+      <div class="product-preview-block">
+        <div class="product-preview-title">Kasse Vorschau (sichtbare Produkte)</div>
+        <div class="product-editor__preview" data-product-preview="cashier"></div>
+      </div>
+      <div class="product-preview-block">
+        <div class="product-preview-title">Preisliste Vorschau (sortiert)</div>
+        <div class="product-editor__preview product-editor__preview--list" data-product-preview="price"></div>
+      </div>
+    </div>
+    <div class="category-order" data-category-order>
+      <div class="field-inline" style="justify-content: space-between; align-items: center;">
+        <div>
+          <strong>Kategorieneinstellungen</strong>
+          <div class="muted">Reihenfolge + Aktivierung je Kategorie für Kasse & Preisliste.</div>
+        </div>
+        <button type="button" class="secondary" data-add-category>+ Kategorie</button>
+      </div>
+      <div class="category-order__list" data-category-order-list></div>
+    </div>
     <div class="product-editor__list" data-product-list></div>
     <input type="hidden" name="kassensystem_settings" value='{{ kass_settings.get(event.id, {"items": event_buttons.get(event.id, default_buttons)}) | tojson }}'>
   </div>

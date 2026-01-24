@@ -288,9 +288,7 @@ def test_product_editor_preserves_data(client):
                 "price": 8,
                 "css_class": "custom-beer",
                 "color": "#ff0000",
-                "category": "Alkohol",
-                "show_in_cashier": True,
-                "show_in_price_list": True
+                "category": "Alkohol"
             },
             {
                 "name": "CustomWater",
@@ -298,9 +296,7 @@ def test_product_editor_preserves_data(client):
                 "price": 4,
                 "css_class": "custom-water",
                 "color": "#0000ff",
-                "category": "Getränke",
-                "show_in_cashier": True,
-                "show_in_price_list": False
+                "category": "Getränke"
             }
         ]
     }
@@ -333,7 +329,6 @@ def test_product_editor_preserves_data(client):
         
         water = next((item for item in items if item["name"] == "CustomWater"), None)
         assert water is not None
-        assert water["show_in_price_list"] is False
     
     # Now update the event with modified products
     updated_products = {
@@ -344,9 +339,7 @@ def test_product_editor_preserves_data(client):
                 "price": 9,
                 "css_class": "custom-beer",
                 "color": "#00ff00",
-                "category": "Alkoholische Getränke",
-                "show_in_cashier": True,
-                "show_in_price_list": True
+                "category": "Alkoholische Getränke"
             },
             {
                 "name": "CustomWater",
@@ -354,9 +347,7 @@ def test_product_editor_preserves_data(client):
                 "price": 4,
                 "css_class": "custom-water",
                 "color": "#0000ff",
-                "category": "Getränke",
-                "show_in_cashier": True,
-                "show_in_price_list": False
+                "category": "Getränke"
             },
             {
                 "name": "NewSoda",
@@ -364,9 +355,7 @@ def test_product_editor_preserves_data(client):
                 "price": 5,
                 "css_class": "new-soda",
                 "color": "#ffff00",
-                "category": "Getränke",
-                "show_in_cashier": True,
-                "show_in_price_list": True
+                "category": "Getränke"
             }
         ]
     }
