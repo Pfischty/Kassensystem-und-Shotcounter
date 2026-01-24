@@ -266,6 +266,7 @@ document.addEventListener('click', (e) => {
         const pricePreview = wrapper.querySelector("[data-product-preview='price']");
         const list = wrapper.querySelector("[data-product-list]");
         const categoryOrderList = wrapper.querySelector("[data-category-order-list]");
+        const addCategoryBtn = wrapper.querySelector("[data-add-category]");
         const hidden = wrapper.querySelector('input[name="kassensystem_settings"]');
         const importInput = wrapper.querySelector("[data-product-import]");
         const exportButton = wrapper.querySelector("[data-product-export]");
@@ -464,13 +465,20 @@ document.addEventListener('click', (e) => {
       const getAllCategories = () => {
         // Collect unique categories from all items in current editor
         const categories = new Set();
-        categories.add(defaultCategory); // Always include default
         items.forEach(item => {
           const rawCategory = item ? item.category : "";
           const category = String(rawCategory ?? "").trim();
           if (category) {
             categories.add(category);
           }
+        });
+        categoryOrder.forEach((name) => {
+          const trimmed = String(name || "").trim();
+          if (trimmed) categories.add(trimmed);
+        });
+        Object.keys(categoryVisibility || {}).forEach((name) => {
+          const trimmed = String(name || "").trim();
+          if (trimmed) categories.add(trimmed);
         });
         return Array.from(categories).sort();
       };
@@ -598,6 +606,26 @@ document.addEventListener('click', (e) => {
           categoryOrderList.appendChild(row);
         });
       };
+
+      const addCategory = (nameRaw) => {
+        const name = String(nameRaw || "").trim();
+        if (!name) return;
+        const categories = getAllCategories();
+        if (categories.includes(name)) return;
+        categoryOrder.push(name);
+        categoryVisibility[name] = { cashier: true, price_list: true };
+        renderCategoryOrder();
+        renderPreview();
+        syncHidden();
+      };
+
+      if (addCategoryBtn) {
+        addCategoryBtn.addEventListener("click", () => {
+          const name = prompt("Neue Kategorie:");
+          if (!name) return;
+          addCategory(name);
+        });
+      }
 
       const renderList = () => {
         list.innerHTML = "";
@@ -876,7 +904,14 @@ document.addEventListener('click', (e) => {
 
       if (exportButton) {
         exportButton.addEventListener("click", () => {
-          const blob = new Blob([hidden.value || "{}"], { type: "application/json" });
+          const data = {
+            ...baseSettings,
+            depot_price: depotPrice,
+            category_order: categoryOrder,
+            category_visibility: categoryVisibility,
+            items,
+          };
+          const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
           const url = URL.createObjectURL(blob);
           const a = document.createElement("a");
           a.href = url;
@@ -887,7 +922,13 @@ document.addEventListener('click', (e) => {
       }
 
       wrapper.productApi = {
-        getSettings: () => parseJson(hidden.value, { items: items }),
+        getSettings: () => ({
+          ...baseSettings,
+          depot_price: depotPrice,
+          category_order: categoryOrder,
+          category_visibility: categoryVisibility,
+          items,
+        }),
         setSettings: (data) => {
           const importedItems = Array.isArray(data && data.items) ? data.items : [];
           baseSettings = data && typeof data === "object" && !Array.isArray(data) ? { ...data } : {};
