@@ -57,6 +57,15 @@
     border-radius: 8px;
     background: rgba(255,255,255,0.04);
     border: 1px solid var(--border);
+    cursor: grab;
+  }
+  .category-order__item.is-dragging {
+    opacity: 0.6;
+    cursor: grabbing;
+  }
+  .category-order__list.is-dragging {
+    background: rgba(255,255,255,0.03);
+    border-radius: 8px;
   }
   .category-order__name {
     flex: 1;

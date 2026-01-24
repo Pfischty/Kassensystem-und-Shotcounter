@@ -526,6 +526,7 @@ document.addEventListener('click', (e) => {
         baseSettings.category_visibility && typeof baseSettings.category_visibility === "object"
           ? { ...baseSettings.category_visibility }
           : {};
+      let pendingCategoryOrder = null;
       if (!items.length) {
         items = [normalizeItem({ name: "Produkt", label: "Neues Produkt", price: 0, color: fallbackColor }, 0)];
       }
@@ -731,6 +732,77 @@ document.addEventListener('click', (e) => {
         normalizeCategoryVisibility(categories);
         categoryOrderList.innerHTML = "";
 
+        const refreshCategoryOrderControls = () => {
+          const rows = Array.from(categoryOrderList.children);
+          rows.forEach((row, idx) => {
+            const up = row.querySelector('[data-action="move-up"]');
+            const down = row.querySelector('[data-action="move-down"]');
+            if (up) up.disabled = idx === 0;
+            if (down) down.disabled = idx >= rows.length - 1;
+          });
+        };
+
+        if (!categoryOrderList.dataset.dragReady) {
+          categoryOrderList.dataset.dragReady = "true";
+
+          const getDragAfterElement = (container, y) => {
+            const draggableElements = Array.from(
+              container.querySelectorAll(".category-order__item:not(.is-dragging)")
+            );
+            return draggableElements.reduce(
+              (closest, child) => {
+                const box = child.getBoundingClientRect();
+                const offset = y - box.top - box.height / 2;
+                if (offset < 0 && offset > closest.offset) {
+                  return { offset, element: child };
+                }
+                return closest;
+              },
+              { offset: Number.NEGATIVE_INFINITY, element: null }
+            ).element;
+          };
+
+          const updateOrderFromDom = () => {
+            const nextOrder = Array.from(
+              categoryOrderList.querySelectorAll(".category-order__item")
+            )
+              .map((row) => row.dataset.categoryName)
+              .filter(Boolean);
+            if (!nextOrder.length) return;
+            pendingCategoryOrder = nextOrder;
+            categoryOrder = nextOrder;
+            renderPreview();
+            syncHidden();
+            refreshCategoryOrderControls();
+          };
+
+          categoryOrderList.addEventListener("dragover", (event) => {
+            event.preventDefault();
+            const dragging = categoryOrderList.querySelector(".category-order__item.is-dragging");
+            if (!dragging) return;
+            const afterElement = getDragAfterElement(categoryOrderList, event.clientY);
+            if (!afterElement) {
+              categoryOrderList.appendChild(dragging);
+            } else {
+              categoryOrderList.insertBefore(dragging, afterElement);
+            }
+            updateOrderFromDom();
+          });
+
+          categoryOrderList.addEventListener("drop", (event) => {
+            event.preventDefault();
+            if (pendingCategoryOrder && pendingCategoryOrder.length) {
+              categoryOrder = pendingCategoryOrder;
+              pendingCategoryOrder = null;
+              renderPreview();
+              syncHidden();
+            } else {
+              updateOrderFromDom();
+            }
+            refreshCategoryOrderControls();
+          });
+        }
+
         const renameCategory = (oldName, newNameRaw) => {
           const newName = String(newNameRaw || "").trim();
           if (!newName || newName === oldName) return;
@@ -758,6 +830,27 @@ document.addEventListener('click', (e) => {
         ordered.forEach((name, index) => {
           const row = document.createElement("div");
           row.className = "category-order__item";
+          row.dataset.categoryName = name;
+          row.draggable = true;
+          row.addEventListener("dragstart", (event) => {
+            row.classList.add("is-dragging");
+            categoryOrderList.classList.add("is-dragging");
+            event.dataTransfer.effectAllowed = "move";
+            event.dataTransfer.setData("text/plain", name);
+          });
+          row.addEventListener("dragend", () => {
+            row.classList.remove("is-dragging");
+            categoryOrderList.classList.remove("is-dragging");
+            if (pendingCategoryOrder && pendingCategoryOrder.length) {
+              categoryOrder = pendingCategoryOrder;
+              pendingCategoryOrder = null;
+              renderPreview();
+              syncHidden();
+              refreshCategoryOrderControls();
+            } else {
+              updateOrderFromDom();
+            }
+          });
           const nameWrap = document.createElement("div");
           nameWrap.className = "category-order__name";
           const nameInput = document.createElement("input");
@@ -816,6 +909,7 @@ document.addEventListener('click', (e) => {
           upBtn.type = "button";
           upBtn.className = "secondary";
           upBtn.textContent = "↑";
+          upBtn.dataset.action = "move-up";
           upBtn.disabled = index === 0;
           upBtn.addEventListener("click", () => {
             // Get current index from the DOM to avoid stale closure
@@ -832,6 +926,7 @@ document.addEventListener('click', (e) => {
           downBtn.type = "button";
           downBtn.className = "secondary";
           downBtn.textContent = "↓";
+          downBtn.dataset.action = "move-down";
           downBtn.disabled = index >= ordered.length - 1;
           downBtn.addEventListener("click", () => {
             // Get current index from the DOM to avoid stale closure
@@ -888,6 +983,8 @@ document.addEventListener('click', (e) => {
           row.append(nameWrap, toggles, actions);
           categoryOrderList.appendChild(row);
         });
+
+        refreshCategoryOrderControls();
       };
 
       const addCategory = (nameRaw) => {
