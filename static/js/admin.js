@@ -659,20 +659,8 @@ document.addEventListener('click', (e) => {
           nameWrap.className = "category-order__name";
           const nameInput = document.createElement("input");
           nameInput.value = name;
-          // Store the original name as data attribute to track renames
-          nameInput.dataset.originalName = name;
-          nameInput.addEventListener("change", () => {
-            const oldName = nameInput.dataset.originalName;
-            renameCategory(oldName, nameInput.value);
-            // Update the original name after successful rename
-            nameInput.dataset.originalName = nameInput.value;
-          });
-          nameInput.addEventListener("blur", () => {
-            const oldName = nameInput.dataset.originalName;
-            renameCategory(oldName, nameInput.value);
-            // Update the original name after successful rename
-            nameInput.dataset.originalName = nameInput.value;
-          });
+          nameInput.readOnly = true;
+          nameInput.title = "Zum Umbenennen die Aktion verwenden.";
           nameWrap.appendChild(nameInput);
 
           const toggles = document.createElement("div");
@@ -781,7 +769,19 @@ document.addEventListener('click', (e) => {
             syncHidden();
           });
 
-          actions.append(upBtn, downBtn, deleteBtn);
+          const renameBtn = document.createElement("button");
+          renameBtn.type = "button";
+          renameBtn.className = "secondary";
+          renameBtn.textContent = "Umbenennen";
+          renameBtn.addEventListener("click", () => {
+            const currentName = nameInput.value.trim() || name;
+            if (!currentName) return;
+            const nextName = prompt("Kategorie umbenennen:", currentName);
+            if (nextName === null) return;
+            renameCategory(currentName, nextName);
+          });
+
+          actions.append(upBtn, downBtn, renameBtn, deleteBtn);
           row.append(nameWrap, toggles, actions);
           categoryOrderList.appendChild(row);
         });
@@ -794,6 +794,7 @@ document.addEventListener('click', (e) => {
         if (categories.includes(name)) return;
         categoryOrder.push(name);
         categoryVisibility[name] = { cashier: true, price_list: true };
+        renderList();
         renderCategoryOrder();
         renderPreview();
         syncHidden();
@@ -937,29 +938,28 @@ document.addEventListener('click', (e) => {
           const categoryInput = document.createElement("input");
           categoryInput.setAttribute("list", datalistId);
           categoryInput.value = String(item.category ?? defaultCategory);
-          categoryInput.placeholder = "Wählen oder neue Kategorie eingeben";
-          categoryInput.addEventListener("input", () => {
-            item.category = categoryInput.value.trim() || defaultCategory;
-            renderPreview();
-            renderCategoryOrder();
-            syncHidden();
-          });
-          categoryInput.addEventListener("change", () => {
-            // Commit category selection/new entry and update datalist
-            const newCategory = categoryInput.value.trim() || defaultCategory;
-            item.category = newCategory;
-            renderPreview();
-            renderCategoryOrder();
-            syncHidden();
-
-            if (newCategory && newCategory !== defaultCategory) {
-              const categories = getAllCategories();
-              if (!categories.includes(newCategory)) {
-                // Re-render list to update datalist with new category
-                renderList();
-              }
+          categoryInput.placeholder = "Kategorie wählen";
+          const applyCategorySelection = () => {
+            const raw = categoryInput.value.trim();
+            const categories = getAllCategories();
+            if (!categories.includes(defaultCategory)) {
+              categories.push(defaultCategory);
             }
-          });
+            const nextCategory = raw || defaultCategory;
+            if (categories.includes(nextCategory)) {
+              item.category = nextCategory;
+              categoryInput.value = nextCategory;
+              renderPreview();
+              renderCategoryOrder();
+              syncHidden();
+              return;
+            }
+
+            categoryInput.value = String(item.category ?? defaultCategory);
+            alert("Neue Kategorien bitte über '+ Kategorie' anlegen.");
+          };
+          categoryInput.addEventListener("change", applyCategorySelection);
+          categoryInput.addEventListener("blur", applyCategorySelection);
           categoryContainer.append(categoryLabel, categoryInput);
 
           const visibilityContainer = document.createElement("div");
