@@ -172,6 +172,12 @@ document.addEventListener('click', (e) => {
       return Math.min(max, Math.max(min, parsed));
     };
 
+    const normalizeDepotPrice = (value) => {
+      const parsed = Number(value);
+      if (!Number.isFinite(parsed)) return 2;
+      return Math.max(0, Math.round(parsed));
+    };
+
     const normalizeItem = (item, index) => {
       const safeItem = item || {};
       const rawLabel = safeItem.label ?? safeItem.name ?? "";
@@ -179,6 +185,7 @@ document.addEventListener('click', (e) => {
       const rawName = safeItem.name ?? label ?? "produkt-" + (index + 1);
       const name = String(rawName).trim();
       const price = Number.isFinite(Number(safeItem.price)) ? Number(safeItem.price) : 0;
+      const hasDepot = safeItem.has_depot === true;
       return {
         name,
         label,
@@ -188,6 +195,7 @@ document.addEventListener('click', (e) => {
         category: String(safeItem.category ?? defaultCategory),
         show_in_cashier: safeItem.show_in_cashier !== false,
         show_in_price_list: safeItem.show_in_price_list !== false,
+        has_depot: hasDepot,
       };
     };
 
@@ -259,6 +267,7 @@ document.addEventListener('click', (e) => {
         const hidden = wrapper.querySelector('input[name="kassensystem_settings"]');
         const importInput = wrapper.querySelector("[data-product-import]");
         const exportButton = wrapper.querySelector("[data-product-export]");
+        const depotInput = form ? form.querySelector("[data-depot-price]") : null;
 
       let baseSettings = {};
       try { baseSettings = JSON.parse(hidden.value || "{}"); } catch (err) { baseSettings = {}; }
@@ -274,12 +283,23 @@ document.addEventListener('click', (e) => {
       } catch (err) { parsedItems = []; }
 
       let items = Array.isArray(parsedItems) ? parsedItems.map(normalizeItem) : [];
+      let depotPrice = normalizeDepotPrice(baseSettings.depot_price);
       if (!items.length) {
         items = [normalizeItem({ name: "Produkt", label: "Neues Produkt", price: 0, color: fallbackColor }, 0)];
       }
 
+      if (depotInput) {
+        depotInput.value = depotPrice;
+        depotInput.addEventListener("input", () => {
+          depotPrice = normalizeDepotPrice(depotInput.value);
+          depotInput.value = depotPrice;
+          renderPreview();
+          syncHidden();
+        });
+      }
+
       const syncHidden = () => {
-        hidden.value = JSON.stringify({ ...baseSettings, items });
+        hidden.value = JSON.stringify({ ...baseSettings, depot_price: depotPrice, items });
         const categories = getAllCategories();
         wrapper.dispatchEvent(new CustomEvent("product-editor:change", { detail: { categories } }));
       };
@@ -289,12 +309,13 @@ document.addEventListener('click', (e) => {
         let dragIndex = null;
 
         items.forEach((item, index) => {
+          const displayPrice = Number(item.price || 0) + (item.has_depot ? Number(depotPrice || 0) : 0);
           const card = document.createElement("div");
           card.className = "product-preview-card";
           card.draggable = true;
           card.style.background = sanitizeColor(item.color);
           card.dataset.index = index;
-          card.innerHTML = `<small>${item.price} CHF</small><div style="font-weight:700;">${item.label}</div>`;
+          card.innerHTML = `<small>${displayPrice} CHF${item.has_depot ? " (inkl. Depot)" : ""}</small><div style="font-weight:700;">${item.label}</div>`;
 
           card.addEventListener("dragstart", () => {
             dragIndex = index;
@@ -406,6 +427,29 @@ document.addEventListener('click', (e) => {
           });
           priceContainer.append(priceLabel, priceInput);
 
+          const depotContainer = document.createElement("div");
+          depotContainer.className = "stack";
+          const depotLabel = document.createElement("label");
+          depotLabel.textContent = "Depot";
+          const depotToggleWrap = document.createElement("div");
+          depotToggleWrap.style.display = "flex";
+          depotToggleWrap.style.alignItems = "center";
+          depotToggleWrap.style.gap = "0.5rem";
+
+          const depotToggle = document.createElement("input");
+          depotToggle.type = "checkbox";
+          depotToggle.checked = item.has_depot === true;
+          depotToggle.addEventListener("change", () => {
+            item.has_depot = depotToggle.checked;
+            renderPreview();
+            syncHidden();
+          });
+
+          const depotText = document.createElement("span");
+          depotText.textContent = "Aktiv";
+          depotToggleWrap.append(depotToggle, depotText);
+          depotContainer.append(depotLabel, depotToggleWrap);
+
           const colorContainer = document.createElement("div");
           colorContainer.className = "stack";
           const colorLabel = document.createElement("label");
@@ -501,7 +545,7 @@ document.addEventListener('click', (e) => {
           });
           actions.appendChild(removeBtn);
 
-          row.append(labelContainer, nameContainer, priceContainer, colorContainer, categoryContainer, visibilityContainer, actions);
+          row.append(labelContainer, nameContainer, priceContainer, depotContainer, colorContainer, categoryContainer, visibilityContainer, actions);
           list.appendChild(row);
         });
       };
@@ -576,6 +620,10 @@ document.addEventListener('click', (e) => {
         setSettings: (data) => {
           const importedItems = Array.isArray(data && data.items) ? data.items : [];
           baseSettings = data && typeof data === "object" && !Array.isArray(data) ? { ...data } : {};
+          depotPrice = normalizeDepotPrice(baseSettings.depot_price);
+          if (depotInput) {
+            depotInput.value = depotPrice;
+          }
           items = importedItems.length ? importedItems.map((it, idx) => normalizeItem(it, idx)) : [normalizeItem({ name: "Produkt", label: "Produkt", price: 0, color: fallbackColor }, 0)];
           renderList();
           renderPreview();

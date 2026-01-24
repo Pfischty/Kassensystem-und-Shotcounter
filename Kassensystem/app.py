@@ -85,7 +85,23 @@ def load_button_config() -> dict:
 
 button_config = load_button_config()
 ITEM_BUTTONS = button_config.get("items", DEFAULT_CONFIG["items"])
-PRICES = {item["name"]: item["price"] for item in ITEM_BUTTONS}
+try:
+  DEPOT_PRICE = int(button_config.get("depot_price", 2))
+except (TypeError, ValueError):
+  DEPOT_PRICE = 2
+if DEPOT_PRICE < 0:
+  DEPOT_PRICE = 0
+
+
+def _price_with_depot(item: dict) -> int:
+  try:
+    base = int(item.get("price", 0))
+  except (TypeError, ValueError):
+    base = 0
+  return base + (DEPOT_PRICE if item.get("has_depot") is True else 0)
+
+
+PRICES = {item["name"]: _price_with_depot(item) for item in ITEM_BUTTONS}
 
 # ---------------------------------------------------------------------------
 # HTML-Vorlagen

@@ -246,6 +246,13 @@ class ButtonConfig:
     category: str = "Standard"
     show_in_cashier: bool = True
     show_in_price_list: bool = True
+    has_depot: bool = False
+    depot_price: int = 2
+
+    @property
+    def price_with_depot(self) -> int:
+        depot = self.depot_price if self.has_depot else 0
+        return int(self.price) + int(depot)
 
 
 DEFAULT_BUTTONS: List[ButtonConfig] = [
@@ -540,8 +547,15 @@ def require_active_event(*, kassensystem: bool = False, shotcounter: bool = Fals
 
 def resolve_button_config(event: Event | None) -> List[ButtonConfig]:
     raw_items: Iterable[dict] | None = None
+    depot_price = 2
     if event and isinstance(event.kassensystem_settings, dict):
         raw_items = event.kassensystem_settings.get("items")
+        try:
+            depot_price = int(event.kassensystem_settings.get("depot_price", 2))
+        except (TypeError, ValueError):
+            depot_price = 2
+    if depot_price < 0:
+        depot_price = 0
     normalized: List[ButtonConfig] = []
     default_color_lookup = {btn.css_class: btn.color for btn in DEFAULT_BUTTONS}
     items_source = raw_items if raw_items else [btn.__dict__ for btn in DEFAULT_BUTTONS]
@@ -559,6 +573,8 @@ def resolve_button_config(event: Event | None) -> List[ButtonConfig]:
                     category=item.get("category", "Standard"),
                     show_in_cashier=item.get("show_in_cashier") is not False,
                     show_in_price_list=item.get("show_in_price_list") is not False,
+                    has_depot=item.get("has_depot") is True,
+                    depot_price=depot_price,
                 )
             )
         except (KeyError, TypeError, ValueError):
@@ -574,6 +590,13 @@ def validate_and_normalize_buttons(settings: Dict | None) -> Dict:
 
     raw_items = settings.get("items")
     items = raw_items if isinstance(raw_items, list) else []
+
+    try:
+        depot_price = int(settings.get("depot_price", 2))
+    except (TypeError, ValueError):
+        depot_price = 2
+    if depot_price < 0:
+        depot_price = 0
 
     normalized: List[Dict] = []
     seen_names: set[str] = set()
@@ -607,6 +630,7 @@ def validate_and_normalize_buttons(settings: Dict | None) -> Dict:
                 "category": item.get("category") or "Standard",
                 "show_in_cashier": item.get("show_in_cashier") is not False,
                 "show_in_price_list": item.get("show_in_price_list") is not False,
+                "has_depot": item.get("has_depot") is True,
             }
         )
 
@@ -626,11 +650,13 @@ def validate_and_normalize_buttons(settings: Dict | None) -> Dict:
                 "category": btn.category,
                 "show_in_cashier": btn.show_in_cashier,
                 "show_in_price_list": btn.show_in_price_list,
+                "has_depot": btn.has_depot,
             }
             for btn in DEFAULT_BUTTONS
         ]
 
-    sanitized = {k: v for k, v in settings.items() if k != "items"}
+    sanitized = {k: v for k, v in settings.items() if k not in {"items", "depot_price"}}
+    sanitized["depot_price"] = depot_price
     sanitized["items"] = normalized
     return sanitized
 
@@ -1448,7 +1474,7 @@ def _get_cart_data(event):
     """Helper function to get cart data for an event."""
     buttons = resolve_button_config(event)
     items = session.get(cart_key(event), [])
-    prices = {button.name: button.price for button in buttons}
+    prices = {button.name: button.price_with_depot for button in buttons}
     total = sum(prices.get(item, 0) for item in items)
     grouped = Counter(items).items()
     detailed_items = [
@@ -1494,7 +1520,7 @@ def cashier():
 def add_item():
     event = require_active_event(kassensystem=True)
     buttons = [btn for btn in resolve_button_config(event) if btn.show_in_cashier]
-    prices = {button.name: button.price for button in buttons}
+    prices = {button.name: button.price_with_depot for button in buttons}
     name = request.args.get("name")
     if name and name in prices:
         items = session.get(cart_key(event), [])
@@ -1537,7 +1563,7 @@ def remove_last():
 def checkout():
     event = require_active_event(kassensystem=True)
     items = session.get(cart_key(event), [])
-    prices = {btn.name: btn.price for btn in resolve_button_config(event)}
+    prices = {btn.name: btn.price_with_depot for btn in resolve_button_config(event)}
     if items:
         total = sum(prices.get(item, 0) for item in items)
         order = Order(event_id=event.id, total=total)
