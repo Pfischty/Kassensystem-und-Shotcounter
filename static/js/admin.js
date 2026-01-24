@@ -1271,6 +1271,9 @@ document.addEventListener('click', (e) => {
         next.enabled_categories = Array.isArray(next.enabled_categories)
           ? next.enabled_categories.filter((name) => typeof name === "string" && name.trim())
           : [];
+        if (next.background_image && next.background_mode === "none") {
+          next.background_mode = "custom";
+        }
         return next;
       };
 

@@ -513,6 +513,8 @@ def validate_price_list_settings(raw: dict | None) -> Dict[str, int | float | st
         filepath = Path(app.config["UPLOAD_FOLDER"]) / bg_img
         if filepath.exists() and filepath.is_file():
             settings["background_image"] = bg_img
+            if settings.get("background_mode") == "none":
+                settings["background_mode"] = "custom"
     return settings
 
 
