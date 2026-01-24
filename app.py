@@ -638,6 +638,41 @@ def validate_and_normalize_buttons(settings: Dict | None) -> Dict:
         dup_list = ", ".join(sorted(set(duplicates)))
         raise ValueError(f"Doppelte Produktnamen gefunden: {dup_list}")
 
+    raw_order = settings.get("category_order")
+    category_order: List[str] = []
+    if isinstance(raw_order, list):
+        for entry in raw_order:
+            if not isinstance(entry, str):
+                continue
+            name = entry.strip()
+            if name and name not in category_order:
+                category_order.append(name)
+
+    raw_visibility = settings.get("category_visibility")
+    category_visibility: Dict[str, Dict[str, bool]] = {}
+    if isinstance(raw_visibility, dict):
+        for key, value in raw_visibility.items():
+            if not isinstance(key, str):
+                continue
+            name = key.strip()
+            if not name:
+                continue
+            if isinstance(value, dict):
+                category_visibility[name] = {
+                    "cashier": value.get("cashier") is not False,
+                    "price_list": value.get("price_list") is not False,
+                }
+            else:
+                category_visibility[name] = {"cashier": True, "price_list": True}
+
+    # Append any missing categories in item order
+    for item in normalized:
+        category = str(item.get("category") or "Standard").strip() or "Standard"
+        if category not in category_order:
+            category_order.append(category)
+        if category not in category_visibility:
+            category_visibility[category] = {"cashier": True, "price_list": True}
+
     # If no items provided, use DEFAULT_BUTTONS
     if not normalized:
         normalized = [
@@ -657,6 +692,8 @@ def validate_and_normalize_buttons(settings: Dict | None) -> Dict:
 
     sanitized = {k: v for k, v in settings.items() if k not in {"items", "depot_price"}}
     sanitized["depot_price"] = depot_price
+    sanitized["category_order"] = category_order
+    sanitized["category_visibility"] = category_visibility
     sanitized["items"] = normalized
     return sanitized
 
@@ -1492,19 +1529,38 @@ def _get_cart_data(event):
 def cashier():
     event = require_active_event(kassensystem=True)
     buttons = [btn for btn in resolve_button_config(event) if btn.show_in_cashier]
+    try:
+        kass_settings = validate_and_normalize_buttons(event.kassensystem_settings or {})
+    except ValueError:
+        kass_settings = validate_and_normalize_buttons({})
+    category_order = kass_settings.get("category_order") or []
+    category_visibility = kass_settings.get("category_visibility") or {}
     cart_data = _get_cart_data(event)
     
     # Group buttons by category
     buttons_by_category: Dict[str, List[ButtonConfig]] = {}
     for button in buttons:
         category = button.category
+        visibility = category_visibility.get(category) if isinstance(category_visibility, dict) else None
+        if visibility and visibility.get("cashier") is False:
+            continue
         if category not in buttons_by_category:
             buttons_by_category[category] = []
         buttons_by_category[category].append(button)
     # Sort categories and items for consistent cashier layout
+    ordered_categories: List[str] = []
+    seen: set[str] = set()
+    for name in category_order:
+        if name in buttons_by_category and name not in seen:
+            ordered_categories.append(name)
+            seen.add(name)
+    for name in sorted(buttons_by_category.keys(), key=lambda value: value.lower()):
+        if name not in seen:
+            ordered_categories.append(name)
+
     buttons_by_category = {
         category: sorted(group, key=lambda b: (b.label or b.name).lower())
-        for category, group in sorted(buttons_by_category.items(), key=lambda item: item[0].lower())
+        for category, group in ((name, buttons_by_category[name]) for name in ordered_categories)
     }
     
     # Get auto_reload setting from shared_settings (default to True for backward compatibility)
@@ -1652,7 +1708,18 @@ def price_list():
 
     items = kass_settings.get("items", []) if isinstance(kass_settings, dict) else []
     items = [item for item in items if item.get("show_in_price_list") is not False]
-    categories = _build_price_list_categories(items)
+    category_order = kass_settings.get("category_order") if isinstance(kass_settings, dict) else None
+    category_visibility = kass_settings.get("category_visibility") if isinstance(kass_settings, dict) else {}
+    if isinstance(category_visibility, dict) and category_visibility:
+        items = [
+            item
+            for item in items
+            if category_visibility.get(str(item.get("category") or "Standard").strip() or "Standard", {}).get(
+                "price_list",
+                True,
+            )
+        ]
+    categories = _build_price_list_categories(items, category_order=category_order)
 
     enabled = price_settings.get("enabled_categories") or []
     if enabled:
@@ -1703,7 +1770,7 @@ def _serialize_teams(teams: Iterable[Team]) -> List[Dict[str, int | str]]:
     return [{"id": team.id, "name": team.name, "shots": team.shots} for team in teams]
 
 
-def _build_price_list_categories(items: List[Dict]) -> List[Dict[str, object]]:
+def _build_price_list_categories(items: List[Dict], category_order: List[str] | None = None) -> List[Dict[str, object]]:
     bucket: Dict[str, List[Dict[str, object]]] = {}
     for item in items:
         category = str(item.get("category") or "Standard").strip() or "Standard"
@@ -1714,8 +1781,22 @@ def _build_price_list_categories(items: List[Dict]) -> List[Dict[str, object]]:
             }
         )
 
-    categories = []
+    ordered_names: List[str] = []
+    seen: set[str] = set()
+    if isinstance(category_order, list):
+        for name in category_order:
+            if not isinstance(name, str):
+                continue
+            cleaned = name.strip()
+            if cleaned and cleaned in bucket and cleaned not in seen:
+                ordered_names.append(cleaned)
+                seen.add(cleaned)
     for name in sorted(bucket.keys(), key=lambda value: value.lower()):
+        if name not in seen:
+            ordered_names.append(name)
+
+    categories = []
+    for name in ordered_names:
         entries = sorted(bucket.get(name, []), key=lambda entry: str(entry.get("label") or "").lower())
         categories.append({"name": name, "items": entries})
     return categories

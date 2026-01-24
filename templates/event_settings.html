@@ -35,6 +35,38 @@
   .product-editor__preview[data-product-preview="cashier"] .price-preview-category {
     width: 100%;
   }
+  .category-order {
+    margin-top: 0.8rem;
+    padding: 0.75rem;
+    border: 1px dashed var(--border);
+    border-radius: 10px;
+    background: rgba(255,255,255,0.02);
+  }
+  .category-order__list {
+    margin-top: 0.6rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+  }
+  .category-order__item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.6rem;
+    padding: 0.35rem 0.6rem;
+    border-radius: 8px;
+    background: rgba(255,255,255,0.04);
+    border: 1px solid var(--border);
+  }
+  .category-order__name {
+    flex: 1;
+    min-width: 120px;
+    max-width: 220px;
+  }
+  .category-order__name input {
+    width: 100%;
+  }
+  .category-order__actions { display: flex; gap: 0.35rem; }
   .product-editor__previews {
     display: grid;
     gap: 1rem;
@@ -348,6 +380,11 @@
         <div class="product-preview-title">Preisliste Vorschau (sortiert)</div>
         <div class="product-editor__preview product-editor__preview--list" data-product-preview="price"></div>
       </div>
+    </div>
+    <div class="category-order" data-category-order>
+      <strong>Kategorieneinstellungen</strong>
+      <div class="muted">Reihenfolge + Aktivierung je Kategorie für Kasse & Preisliste.</div>
+      <div class="category-order__list" data-category-order-list></div>
     </div>
     <div class="product-editor__list" data-product-list></div>
     <input type="hidden" name="kassensystem_settings" value='{{ kass_settings.get(event.id, {"items": event_buttons.get(event.id, default_buttons)}) | tojson }}'>

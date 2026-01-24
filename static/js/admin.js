@@ -265,6 +265,7 @@ document.addEventListener('click', (e) => {
         const cashierPreview = wrapper.querySelector("[data-product-preview='cashier']");
         const pricePreview = wrapper.querySelector("[data-product-preview='price']");
         const list = wrapper.querySelector("[data-product-list]");
+        const categoryOrderList = wrapper.querySelector("[data-category-order-list]");
         const hidden = wrapper.querySelector('input[name="kassensystem_settings"]');
         const importInput = wrapper.querySelector("[data-product-import]");
         const exportButton = wrapper.querySelector("[data-product-export]");
@@ -285,6 +286,13 @@ document.addEventListener('click', (e) => {
 
       let items = Array.isArray(parsedItems) ? parsedItems.map(normalizeItem) : [];
       let depotPrice = normalizeDepotPrice(baseSettings.depot_price);
+      let categoryOrder = Array.isArray(baseSettings.category_order)
+        ? baseSettings.category_order.map((name) => String(name || "").trim()).filter(Boolean)
+        : [];
+      let categoryVisibility =
+        baseSettings.category_visibility && typeof baseSettings.category_visibility === "object"
+          ? { ...baseSettings.category_visibility }
+          : {};
       if (!items.length) {
         items = [normalizeItem({ name: "Produkt", label: "Neues Produkt", price: 0, color: fallbackColor }, 0)];
       }
@@ -299,9 +307,47 @@ document.addEventListener('click', (e) => {
         });
       }
 
+      const normalizeCategoryOrder = (categories) => {
+        const clean = [];
+        (categoryOrder || []).forEach((name) => {
+          const trimmed = String(name || "").trim();
+          if (trimmed && categories.includes(trimmed) && !clean.includes(trimmed)) {
+            clean.push(trimmed);
+          }
+        });
+        categories.forEach((name) => {
+          if (name && !clean.includes(name)) {
+            clean.push(name);
+          }
+        });
+        categoryOrder = clean;
+        return clean;
+      };
+
+      const normalizeCategoryVisibility = (categories) => {
+        const next = {};
+        categories.forEach((name) => {
+          const existing = categoryVisibility && typeof categoryVisibility === "object" ? categoryVisibility[name] || {} : {};
+          next[name] = {
+            cashier: existing.cashier !== false,
+            price_list: existing.price_list !== false,
+          };
+        });
+        categoryVisibility = next;
+        return next;
+      };
+
       const syncHidden = () => {
-        hidden.value = JSON.stringify({ ...baseSettings, depot_price: depotPrice, items });
         const categories = getAllCategories();
+        normalizeCategoryOrder(categories);
+        normalizeCategoryVisibility(categories);
+        hidden.value = JSON.stringify({
+          ...baseSettings,
+          depot_price: depotPrice,
+          category_order: categoryOrder,
+          category_visibility: categoryVisibility,
+          items,
+        });
         wrapper.dispatchEvent(new CustomEvent("product-editor:change", { detail: { categories } }));
       };
 
@@ -309,16 +355,28 @@ document.addEventListener('click', (e) => {
         return items
           .filter((item) => {
             if (!item) return false;
-            if (filterKey === "cashier") return item.show_in_cashier !== false;
-            if (filterKey === "price") return item.show_in_price_list !== false;
+            const category = String(item.category || defaultCategory).trim() || defaultCategory;
+            const visibility = categoryVisibility && typeof categoryVisibility === "object" ? categoryVisibility[category] : null;
+            if (filterKey === "cashier") {
+              if (visibility && visibility.cashier === false) return false;
+              return item.show_in_cashier !== false;
+            }
+            if (filterKey === "price") {
+              if (visibility && visibility.price_list === false) return false;
+              return item.show_in_price_list !== false;
+            }
             return true;
           })
           .slice()
           .sort((a, b) => {
-            const catA = String(a.category || defaultCategory).toLowerCase();
-            const catB = String(b.category || defaultCategory).toLowerCase();
-            if (catA < catB) return -1;
-            if (catA > catB) return 1;
+            const catA = String(a.category || defaultCategory).trim();
+            const catB = String(b.category || defaultCategory).trim();
+            const order = normalizeCategoryOrder(getAllCategories());
+            const idxA = order.indexOf(catA);
+            const idxB = order.indexOf(catB);
+            if (idxA !== idxB) {
+              return (idxA === -1 ? 9999 : idxA) - (idxB === -1 ? 9999 : idxB);
+            }
             const labelA = String(a.label || a.name || "").toLowerCase();
             const labelB = String(b.label || b.name || "").toLowerCase();
             if (labelA < labelB) return -1;
@@ -341,7 +399,9 @@ document.addEventListener('click', (e) => {
           if (!bucket.has(category)) bucket.set(category, []);
           bucket.get(category).push(item);
         });
-        Array.from(bucket.entries()).forEach(([category, categoryItems]) => {
+        const orderedCategories = getOrderedCategories(Array.from(bucket.keys()));
+        orderedCategories.forEach((category) => {
+          const categoryItems = bucket.get(category) || [];
           const section = document.createElement("div");
           section.className = "price-preview-category";
           const title = document.createElement("h4");
@@ -378,7 +438,9 @@ document.addEventListener('click', (e) => {
           if (!bucket.has(category)) bucket.set(category, []);
           bucket.get(category).push(item);
         });
-        Array.from(bucket.entries()).forEach(([category, categoryItems]) => {
+        const orderedCategories = getOrderedCategories(Array.from(bucket.keys()));
+        orderedCategories.forEach((category) => {
+          const categoryItems = bucket.get(category) || [];
           const section = document.createElement("div");
           section.className = "price-preview-category";
           const title = document.createElement("h4");
@@ -413,6 +475,130 @@ document.addEventListener('click', (e) => {
         return Array.from(categories).sort();
       };
 
+      const getOrderedCategories = (categories) => normalizeCategoryOrder(categories);
+
+      const renderCategoryOrder = () => {
+        if (!categoryOrderList) return;
+        const categories = getAllCategories();
+        const ordered = getOrderedCategories(categories);
+        normalizeCategoryVisibility(categories);
+        categoryOrderList.innerHTML = "";
+
+        const renameCategory = (oldName, newNameRaw) => {
+          const newName = String(newNameRaw || "").trim();
+          if (!newName || newName === oldName) return;
+          if (categories.includes(newName)) return;
+
+          items.forEach((item) => {
+            const category = String(item.category || defaultCategory).trim() || defaultCategory;
+            if (category === oldName) {
+              item.category = newName;
+            }
+          });
+
+          categoryOrder = categoryOrder.map((name) => (name === oldName ? newName : name));
+          if (categoryVisibility[oldName]) {
+            categoryVisibility[newName] = categoryVisibility[oldName];
+            delete categoryVisibility[oldName];
+          }
+
+          renderList();
+          renderPreview();
+          renderCategoryOrder();
+          syncHidden();
+        };
+
+        ordered.forEach((name, index) => {
+          const row = document.createElement("div");
+          row.className = "category-order__item";
+          const nameWrap = document.createElement("div");
+          nameWrap.className = "category-order__name";
+          const nameInput = document.createElement("input");
+          nameInput.value = name;
+          nameInput.addEventListener("change", () => {
+            renameCategory(name, nameInput.value);
+          });
+          nameInput.addEventListener("blur", () => {
+            renameCategory(name, nameInput.value);
+          });
+          nameWrap.appendChild(nameInput);
+
+          const toggles = document.createElement("div");
+          toggles.className = "visibility-toggle";
+
+          const cashierLabel = document.createElement("label");
+          cashierLabel.className = "pill-toggle";
+          const cashierToggle = document.createElement("input");
+          cashierToggle.type = "checkbox";
+          cashierToggle.checked = !(categoryVisibility[name] && categoryVisibility[name].cashier === false);
+          cashierToggle.addEventListener("change", () => {
+            categoryVisibility[name] = {
+              cashier: cashierToggle.checked,
+              price_list: !(categoryVisibility[name] && categoryVisibility[name].price_list === false),
+            };
+            renderPreview();
+            syncHidden();
+          });
+          const cashierText = document.createElement("span");
+          cashierText.textContent = "Kasse";
+          cashierLabel.append(cashierToggle, cashierText);
+
+          const priceLabel = document.createElement("label");
+          priceLabel.className = "pill-toggle";
+          const priceToggle = document.createElement("input");
+          priceToggle.type = "checkbox";
+          priceToggle.checked = !(categoryVisibility[name] && categoryVisibility[name].price_list === false);
+          priceToggle.addEventListener("change", () => {
+            categoryVisibility[name] = {
+              cashier: !(categoryVisibility[name] && categoryVisibility[name].cashier === false),
+              price_list: priceToggle.checked,
+            };
+            renderPreview();
+            syncHidden();
+          });
+          const priceText = document.createElement("span");
+          priceText.textContent = "Preisliste";
+          priceLabel.append(priceToggle, priceText);
+
+          toggles.append(cashierLabel, priceLabel);
+
+          const actions = document.createElement("div");
+          actions.className = "category-order__actions";
+
+          const upBtn = document.createElement("button");
+          upBtn.type = "button";
+          upBtn.className = "secondary";
+          upBtn.textContent = "↑";
+          upBtn.disabled = index === 0;
+          upBtn.addEventListener("click", () => {
+            if (index <= 0) return;
+            const moved = categoryOrder.splice(index, 1)[0];
+            categoryOrder.splice(index - 1, 0, moved);
+            renderCategoryOrder();
+            renderPreview();
+            syncHidden();
+          });
+
+          const downBtn = document.createElement("button");
+          downBtn.type = "button";
+          downBtn.className = "secondary";
+          downBtn.textContent = "↓";
+          downBtn.disabled = index >= ordered.length - 1;
+          downBtn.addEventListener("click", () => {
+            if (index >= ordered.length - 1) return;
+            const moved = categoryOrder.splice(index, 1)[0];
+            categoryOrder.splice(index + 1, 0, moved);
+            renderCategoryOrder();
+            renderPreview();
+            syncHidden();
+          });
+
+          actions.append(upBtn, downBtn);
+          row.append(nameWrap, toggles, actions);
+          categoryOrderList.appendChild(row);
+        });
+      };
+
       const renderList = () => {
         list.innerHTML = "";
 
@@ -430,7 +616,24 @@ document.addEventListener('click', (e) => {
         });
         list.appendChild(datalist);
 
-        items.forEach((item, index) => {
+        const orderedCategories = getOrderedCategories(categories);
+        const categoryIndex = new Map();
+        orderedCategories.forEach((name, idx) => categoryIndex.set(name, idx));
+
+        const sortedItems = items.slice().sort((a, b) => {
+          const catA = String(a.category || defaultCategory).trim() || defaultCategory;
+          const catB = String(b.category || defaultCategory).trim() || defaultCategory;
+          const idxA = categoryIndex.has(catA) ? categoryIndex.get(catA) : 9999;
+          const idxB = categoryIndex.has(catB) ? categoryIndex.get(catB) : 9999;
+          if (idxA !== idxB) return idxA - idxB;
+          const labelA = String(a.label || a.name || "").toLowerCase();
+          const labelB = String(b.label || b.name || "").toLowerCase();
+          if (labelA < labelB) return -1;
+          if (labelA > labelB) return 1;
+          return 0;
+        });
+
+        sortedItems.forEach((item, index) => {
           const row = document.createElement("div");
           row.className = "product-row";
 
@@ -514,12 +717,16 @@ document.addEventListener('click', (e) => {
           categoryInput.placeholder = "Wählen oder neue Kategorie eingeben";
           categoryInput.addEventListener("input", () => {
             item.category = categoryInput.value.trim() || defaultCategory;
+            renderPreview();
+            renderCategoryOrder();
             syncHidden();
           });
           categoryInput.addEventListener("change", () => {
             // Commit category selection/new entry and update datalist
             const newCategory = categoryInput.value.trim() || defaultCategory;
             item.category = newCategory;
+            renderPreview();
+            renderCategoryOrder();
             syncHidden();
 
             if (newCategory && newCategory !== defaultCategory) {
@@ -580,6 +787,7 @@ document.addEventListener('click', (e) => {
             }
             renderList();
             renderPreview();
+            renderCategoryOrder();
             syncHidden();
           });
           actions.appendChild(removeBtn);
@@ -604,6 +812,7 @@ document.addEventListener('click', (e) => {
           );
           renderList();
           renderPreview();
+          renderCategoryOrder();
           syncHidden();
         });
       }
@@ -626,10 +835,18 @@ document.addEventListener('click', (e) => {
             }
             const importedItems = Array.isArray(data && data.items) ? data.items : Array.isArray(data) ? data : [];
             baseSettings = data && typeof data === "object" && !Array.isArray(data) ? { ...data } : {};
+            categoryOrder = Array.isArray(baseSettings.category_order)
+              ? baseSettings.category_order.map((name) => String(name || "").trim()).filter(Boolean)
+              : [];
+            categoryVisibility =
+              baseSettings.category_visibility && typeof baseSettings.category_visibility === "object"
+                ? { ...baseSettings.category_visibility }
+                : {};
             items = (importedItems || []).map((it, idx) => normalizeItem(it, idx));
             if (!items.length) items = [normalizeItem({ name: "Produkt", label: "Neues Produkt", price: 0, color: fallbackColor }, 0)];
             renderList();
             renderPreview();
+            renderCategoryOrder();
             syncHidden();
             if (statusEl) {
               statusEl.style.display = 'inline';
@@ -660,18 +877,27 @@ document.addEventListener('click', (e) => {
           const importedItems = Array.isArray(data && data.items) ? data.items : [];
           baseSettings = data && typeof data === "object" && !Array.isArray(data) ? { ...data } : {};
           depotPrice = normalizeDepotPrice(baseSettings.depot_price);
+          categoryOrder = Array.isArray(baseSettings.category_order)
+            ? baseSettings.category_order.map((name) => String(name || "").trim()).filter(Boolean)
+            : [];
+          categoryVisibility =
+            baseSettings.category_visibility && typeof baseSettings.category_visibility === "object"
+              ? { ...baseSettings.category_visibility }
+              : {};
           if (depotInput) {
             depotInput.value = depotPrice;
           }
           items = importedItems.length ? importedItems.map((it, idx) => normalizeItem(it, idx)) : [normalizeItem({ name: "Produkt", label: "Produkt", price: 0, color: fallbackColor }, 0)];
           renderList();
           renderPreview();
+          renderCategoryOrder();
           syncHidden();
         },
       };
 
         renderList();
         renderPreview();
+        renderCategoryOrder();
         syncHidden();
       });
     });
@@ -710,16 +936,55 @@ document.addEventListener('click', (e) => {
         return Array.isArray(parsed.items) ? parsed.items : [];
       };
 
+      const getCategoryOrder = () => {
+        if (productEditor && productEditor.productApi) {
+          const settings = productEditor.productApi.getSettings();
+          return Array.isArray(settings.category_order) ? settings.category_order : [];
+        }
+        const fallback = form ? form.querySelector('input[name="kassensystem_settings"]') : null;
+        const parsed = parseJson(fallback ? fallback.value : "", {});
+        return Array.isArray(parsed.category_order) ? parsed.category_order : [];
+      };
+
+      const getCategoryVisibility = () => {
+        if (productEditor && productEditor.productApi) {
+          const settings = productEditor.productApi.getSettings();
+          return settings.category_visibility && typeof settings.category_visibility === "object" ? settings.category_visibility : {};
+        }
+        const fallback = form ? form.querySelector('input[name="kassensystem_settings"]') : null;
+        const parsed = parseJson(fallback ? fallback.value : "", {});
+        return parsed.category_visibility && typeof parsed.category_visibility === "object" ? parsed.category_visibility : {};
+      };
+
       const getCategories = () => {
         const items = getItemsFromEditor();
         const categories = new Set();
         categories.add(defaultCategory);
+        const visibility = getCategoryVisibility();
         items.forEach((item) => {
           if (item && item.show_in_price_list === false) return;
           const category = String(item && item.category != null ? item.category : defaultCategory).trim();
+          if (visibility[category] && visibility[category].price_list === false) return;
           if (category) categories.add(category);
         });
-        return Array.from(categories);
+        const ordered = [];
+        const order = getCategoryOrder();
+        const available = Array.from(categories);
+        const seen = new Set();
+        order.forEach((name) => {
+          if (typeof name !== "string") return;
+          const cleaned = name.trim();
+          if (cleaned && categories.has(cleaned) && !seen.has(cleaned)) {
+            ordered.push(cleaned);
+            seen.add(cleaned);
+          }
+        });
+        available
+          .sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()))
+          .forEach((name) => {
+            if (!seen.has(name)) ordered.push(name);
+          });
+        return ordered;
       };
 
       const updateShared = () => {
