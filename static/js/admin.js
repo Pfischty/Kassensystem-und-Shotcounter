@@ -468,8 +468,8 @@ document.addEventListener('click', (e) => {
           cashierText.textContent = "Kasse";
           cashierLabel.append(cashierToggle, cashierText);
 
-          const priceLabel = document.createElement("label");
-          priceLabel.className = "pill-toggle";
+          const priceListLabel = document.createElement("label");
+          priceListLabel.className = "pill-toggle";
           const priceToggle = document.createElement("input");
           priceToggle.type = "checkbox";
           priceToggle.checked = item.show_in_price_list !== false;
@@ -479,9 +479,9 @@ document.addEventListener('click', (e) => {
           });
           const priceText = document.createElement("span");
           priceText.textContent = "Preisliste";
-          priceLabel.append(priceToggle, priceText);
+          priceListLabel.append(priceToggle, priceText);
 
-          visibilityGroup.append(cashierLabel, priceLabel);
+          visibilityGroup.append(cashierLabel, priceListLabel);
           visibilityContainer.append(visibilityLabel, visibilityGroup);
 
           const actions = document.createElement("div");
