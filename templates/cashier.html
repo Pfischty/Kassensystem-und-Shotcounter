@@ -2,7 +2,6 @@
 {% block title %}Kasse{% endblock %}
 {% block header %}{% endblock %}
 {% block content %}
-<h1>Kassensystem – {{ event.name }}</h1>
 
 <style>
   .cashier-page {
@@ -44,7 +43,8 @@
   .action-buttons button { padding:0.9rem 1.1rem; font-size:1rem; }
   .checkout-btn { padding:1.25rem 1.65rem; font-size:1.1rem; min-height:72px; }
   .summary-card { display:flex; flex-direction:column; gap:0.45rem; min-height: 200px; }
-  .summary-top { display:flex; align-items:center; justify-content:flex-start; flex-wrap: wrap; gap: .4rem; }
+  .summary-top { display:flex; align-items:center; justify-content:space-between; flex-wrap: wrap; gap: .4rem; }
+  .event-name { margin-left:auto; font-weight:600; color:#e2e8f0; }
   .summary-meta { display:flex; align-items:center; gap:0.5rem; flex-wrap:wrap; }
   .summary-body { display:flex; gap:0.6rem; align-items:stretch; }
   .order-list-wrap {
@@ -120,6 +120,7 @@
         <div class="badge badge-blue">Aktives Event</div>
         <div style="font-size:1.3rem;">Total: <strong data-cart-total>{{ total }}</strong> CHF</div>
       </div>
+      <div class="event-name">{{ event.name }}</div>
     </div>
 
     <div class="summary-body">
