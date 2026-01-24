@@ -232,7 +232,9 @@
             type="submit"
             class="danger"
             form="bg-delete-{{ event.id }}"
-            onclick="return confirm('Hintergrundbild wirklich entfernen?');"
+                data-confirm="Hintergrundbild wirklich entfernen?"
+                data-confirm-text="Entfernen"
+                data-confirm-class="danger"
           >Bild entfernen</button>
         </div>
       {% endif %}
@@ -320,7 +322,9 @@
                 type="submit"
                 class="danger"
                 form="pl-delete-{{ event.id }}"
-                onclick="return confirm('Preisliste-Hintergrundbild wirklich entfernen?');"
+                data-confirm="Preisliste-Hintergrundbild wirklich entfernen?"
+                data-confirm-text="Entfernen"
+                data-confirm-class="danger"
               >Bild entfernen</button>
             </div>
           {% endif %}

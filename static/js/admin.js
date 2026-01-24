@@ -47,6 +47,135 @@ document.addEventListener('click', (e) => {
     }
   };
 
+  const confirmAction = (() => {
+    let modal;
+    let messageEl;
+    let okBtn;
+    let cancelBtn;
+    let resolver;
+    let cleanupKeydown;
+
+    const close = (result) => {
+      if (!modal) return;
+      modal.style.display = "none";
+      document.body.style.overflow = "";
+      if (cleanupKeydown) cleanupKeydown();
+      const resolve = resolver;
+      resolver = null;
+      if (resolve) resolve(result);
+    };
+
+    const ensureModal = () => {
+      if (modal) return;
+      modal = document.createElement("div");
+      modal.setAttribute("data-confirm-modal", "");
+      Object.assign(modal.style, {
+        position: "fixed",
+        inset: "0",
+        display: "none",
+        alignItems: "center",
+        justifyContent: "center",
+        background: "rgba(0,0,0,0.65)",
+        zIndex: "2000",
+        padding: "1rem",
+      });
+
+      const box = document.createElement("div");
+      Object.assign(box.style, {
+        background: "var(--card)",
+        border: "1px solid var(--border)",
+        borderRadius: "12px",
+        padding: "1rem 1.2rem",
+        maxWidth: "420px",
+        width: "100%",
+        boxShadow: "0 10px 40px rgba(0,0,0,0.45)",
+      });
+
+      const title = document.createElement("div");
+      title.textContent = "Bestätigen";
+      title.style.fontWeight = "700";
+      title.style.marginBottom = "0.5rem";
+
+      messageEl = document.createElement("div");
+      messageEl.style.marginBottom = "0.9rem";
+
+      const actions = document.createElement("div");
+      Object.assign(actions.style, { display: "flex", gap: "0.6rem", justifyContent: "flex-end" });
+
+      cancelBtn = document.createElement("button");
+      cancelBtn.type = "button";
+      cancelBtn.className = "secondary";
+      cancelBtn.textContent = "Abbrechen";
+
+      okBtn = document.createElement("button");
+      okBtn.type = "button";
+      okBtn.className = "danger";
+      okBtn.textContent = "Bestätigen";
+
+      actions.append(cancelBtn, okBtn);
+      box.append(title, messageEl, actions);
+      modal.appendChild(box);
+      document.body.appendChild(modal);
+
+      modal.addEventListener("click", (event) => {
+        if (event.target === modal) close(false);
+      });
+      cancelBtn.addEventListener("click", () => close(false));
+      okBtn.addEventListener("click", () => close(true));
+    };
+
+    return (message, options = {}) => {
+      ensureModal();
+      if (!modal || !messageEl || !okBtn) return Promise.resolve(false);
+      messageEl.textContent = message || "Bestätigen?";
+      okBtn.textContent = options.okText || "Bestätigen";
+      okBtn.className = options.okClass || "danger";
+      modal.style.display = "flex";
+      document.body.style.overflow = "hidden";
+      return new Promise((resolve) => {
+        resolver = resolve;
+        const onKeyDown = (event) => {
+          if (event.key === "Escape") close(false);
+        };
+        document.addEventListener("keydown", onKeyDown);
+        cleanupKeydown = () => document.removeEventListener("keydown", onKeyDown);
+      });
+    };
+  })();
+
+  safeRun("confirm-handlers", () => {
+    document.addEventListener(
+      "click",
+      async (event) => {
+        const trigger = event.target.closest("[data-confirm]");
+        if (!trigger) return;
+        const message = trigger.getAttribute("data-confirm");
+        if (!message) return;
+        event.preventDefault();
+        const okText = trigger.getAttribute("data-confirm-text") || "Bestätigen";
+        const okClass = trigger.getAttribute("data-confirm-class") || "danger";
+        const confirmed = await confirmAction(message, { okText, okClass });
+        if (!confirmed) return;
+
+        const formId = trigger.getAttribute("form");
+        if (formId) {
+          const form = document.getElementById(formId);
+          if (form) form.submit();
+          return;
+        }
+        const form = trigger.closest("form");
+        if (form) {
+          form.submit();
+          return;
+        }
+        if (trigger.tagName === "A" && trigger.href) {
+          window.location.href = trigger.href;
+        }
+      },
+      true
+    );
+  });
+
   safeRun("modals", () => {
     // Modal functionality
     const openModal = (modalId) => {
@@ -491,6 +620,11 @@ document.addEventListener('click', (e) => {
         if (!categoryOrderList) return;
         const categories = getAllCategories();
         const ordered = getOrderedCategories(categories);
+        const usage = {};
+        items.forEach((item) => {
+          const category = String(item?.category || defaultCategory).trim() || defaultCategory;
+          usage[category] = (usage[category] || 0) + 1;
+        });
         normalizeCategoryVisibility(categories);
         categoryOrderList.innerHTML = "";
 
@@ -619,7 +753,35 @@ document.addEventListener('click', (e) => {
             syncHidden();
           });
 
-          actions.append(upBtn, downBtn);
+          const deleteBtn = document.createElement("button");
+          deleteBtn.type = "button";
+          deleteBtn.className = "danger";
+          deleteBtn.textContent = "Löschen";
+          const hasItems = (usage[name] || 0) > 0;
+          deleteBtn.disabled = hasItems;
+          if (hasItems) {
+            deleteBtn.title = "Nur leere Kategorien können gelöscht werden.";
+          }
+          deleteBtn.addEventListener("click", async () => {
+            if (deleteBtn.disabled) return;
+            const currentName = nameInput.value.trim() || name;
+            if (!currentName) return;
+            const confirmed = await confirmAction(`Kategorie "${currentName}" wirklich löschen?`, {
+              okText: "Löschen",
+              okClass: "danger",
+            });
+            if (!confirmed) return;
+            categoryOrder = categoryOrder.filter((entry) => entry !== currentName);
+            if (categoryVisibility[currentName]) {
+              delete categoryVisibility[currentName];
+            }
+            renderList();
+            renderCategoryOrder();
+            renderPreview();
+            syncHidden();
+          });
+
+          actions.append(upBtn, downBtn, deleteBtn);
           row.append(nameWrap, toggles, actions);
           categoryOrderList.appendChild(row);
         });
@@ -1666,9 +1828,11 @@ document.addEventListener('click', (e) => {
     const messageDiv = document.getElementById('git-update-message');
     if (!messageDiv) return;
 
-    if (!confirm('Möchten Sie wirklich das System aktualisieren? Der Service wird dabei neu gestartet.')) {
-      return;
-    }
+    const confirmed = await confirmAction(
+      'Möchten Sie wirklich das System aktualisieren? Der Service wird dabei neu gestartet.',
+      { okText: "Aktualisieren", okClass: "primary" }
+    );
+    if (!confirmed) return;
 
     messageDiv.innerHTML = '<p class="muted">Update wird durchgeführt...</p>';
 
