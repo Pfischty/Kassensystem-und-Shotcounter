@@ -264,7 +264,14 @@ document.addEventListener('click', (e) => {
       try { baseSettings = JSON.parse(hidden.value || "{}"); } catch (err) { baseSettings = {}; }
 
       let parsedItems = [];
-      try { parsedItems = JSON.parse(wrapper.dataset.items || "[]"); } catch (err) { parsedItems = []; }
+      try {
+        // First try to read from saved data (hidden input), then fallback to template data
+        if (baseSettings.items && Array.isArray(baseSettings.items)) {
+          parsedItems = baseSettings.items;
+        } else {
+          parsedItems = JSON.parse(wrapper.dataset.items || "[]");
+        }
+      } catch (err) { parsedItems = []; }
 
       let items = Array.isArray(parsedItems) ? parsedItems.map(normalizeItem) : [];
       if (!items.length) {

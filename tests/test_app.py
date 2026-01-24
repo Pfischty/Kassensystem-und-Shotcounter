@@ -275,3 +275,128 @@ def test_event_category_update(client):
         assert wasser is not None
         assert wasser["category"] == "Getränke"
 
+
+def test_product_editor_preserves_data(client):
+    """Test that product data is preserved when updating event settings."""
+    
+    # Create an event with custom products
+    custom_products = {
+        "items": [
+            {
+                "name": "CustomBeer",
+                "label": "Custom Bier",
+                "price": 8,
+                "css_class": "custom-beer",
+                "color": "#ff0000",
+                "category": "Alkohol",
+                "show_in_cashier": True,
+                "show_in_price_list": True
+            },
+            {
+                "name": "CustomWater",
+                "label": "Custom Wasser",
+                "price": 4,
+                "css_class": "custom-water",
+                "color": "#0000ff",
+                "category": "Getränke",
+                "show_in_cashier": True,
+                "show_in_price_list": False
+            }
+        ]
+    }
+    
+    client.post(
+        "/admin/events",
+        data={
+            "name": "Product Test Event",
+            "kassensystem_enabled": "on",
+            "shotcounter_enabled": "on",
+            "kassensystem_settings": json.dumps(custom_products),
+        },
+    )
+    
+    with app.app_context():
+        event = Event.query.filter_by(name="Product Test Event").first()
+        assert event is not None
+        event_id = event.id
+        
+        # Verify initial products
+        items = event.kassensystem_settings.get("items", [])
+        assert len(items) == 2
+        
+        beer = next((item for item in items if item["name"] == "CustomBeer"), None)
+        assert beer is not None
+        assert beer["label"] == "Custom Bier"
+        assert beer["price"] == 8
+        assert beer["color"] == "#ff0000"
+        assert beer["category"] == "Alkohol"
+        
+        water = next((item for item in items if item["name"] == "CustomWater"), None)
+        assert water is not None
+        assert water["show_in_price_list"] is False
+    
+    # Now update the event with modified products
+    updated_products = {
+        "items": [
+            {
+                "name": "CustomBeer",
+                "label": "Updated Bier",
+                "price": 9,
+                "css_class": "custom-beer",
+                "color": "#00ff00",
+                "category": "Alkoholische Getränke",
+                "show_in_cashier": True,
+                "show_in_price_list": True
+            },
+            {
+                "name": "CustomWater",
+                "label": "Custom Wasser",
+                "price": 4,
+                "css_class": "custom-water",
+                "color": "#0000ff",
+                "category": "Getränke",
+                "show_in_cashier": True,
+                "show_in_price_list": False
+            },
+            {
+                "name": "NewSoda",
+                "label": "Neue Cola",
+                "price": 5,
+                "css_class": "new-soda",
+                "color": "#ffff00",
+                "category": "Getränke",
+                "show_in_cashier": True,
+                "show_in_price_list": True
+            }
+        ]
+    }
+    
+    client.post(
+        f"/admin/events/{event_id}/update",
+        data={
+            "kassensystem_enabled": "on",
+            "shotcounter_enabled": "on",
+            "kassensystem_settings": json.dumps(updated_products),
+        },
+    )
+    
+    # Verify products were updated correctly
+    with app.app_context():
+        updated_event = Event.query.get(event_id)
+        items = updated_event.kassensystem_settings.get("items", [])
+        assert len(items) == 3
+        
+        # Check updated beer
+        beer = next((item for item in items if item["name"] == "CustomBeer"), None)
+        assert beer is not None
+        assert beer["label"] == "Updated Bier"
+        assert beer["price"] == 9
+        assert beer["color"] == "#00ff00"
+        assert beer["category"] == "Alkoholische Getränke"
+        
+        # Check new soda was added
+        soda = next((item for item in items if item["name"] == "NewSoda"), None)
+        assert soda is not None
+        assert soda["label"] == "Neue Cola"
+        assert soda["price"] == 5
+
