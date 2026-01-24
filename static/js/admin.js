@@ -525,11 +525,19 @@ document.addEventListener('click', (e) => {
           nameWrap.className = "category-order__name";
           const nameInput = document.createElement("input");
           nameInput.value = name;
+          // Store the original name as data attribute to track renames
+          nameInput.dataset.originalName = name;
           nameInput.addEventListener("change", () => {
-            renameCategory(name, nameInput.value);
+            const oldName = nameInput.dataset.originalName;
+            renameCategory(oldName, nameInput.value);
+            // Update the original name after successful rename
+            nameInput.dataset.originalName = nameInput.value;
           });
           nameInput.addEventListener("blur", () => {
-            renameCategory(name, nameInput.value);
+            const oldName = nameInput.dataset.originalName;
+            renameCategory(oldName, nameInput.value);
+            // Update the original name after successful rename
+            nameInput.dataset.originalName = nameInput.value;
           });
           nameWrap.appendChild(nameInput);
 
@@ -542,9 +550,11 @@ document.addEventListener('click', (e) => {
           cashierToggle.type = "checkbox";
           cashierToggle.checked = !(categoryVisibility[name] && categoryVisibility[name].cashier === false);
           cashierToggle.addEventListener("change", () => {
-            categoryVisibility[name] = {
+            // Use current name from input to handle renames
+            const currentName = nameInput.value.trim() || name;
+            categoryVisibility[currentName] = {
               cashier: cashierToggle.checked,
-              price_list: !(categoryVisibility[name] && categoryVisibility[name].price_list === false),
+              price_list: !(categoryVisibility[currentName] && categoryVisibility[currentName].price_list === false),
             };
             renderPreview();
             syncHidden();
@@ -559,8 +569,10 @@ document.addEventListener('click', (e) => {
           priceToggle.type = "checkbox";
           priceToggle.checked = !(categoryVisibility[name] && categoryVisibility[name].price_list === false);
           priceToggle.addEventListener("change", () => {
-            categoryVisibility[name] = {
-              cashier: !(categoryVisibility[name] && categoryVisibility[name].cashier === false),
+            // Use current name from input to handle renames
+            const currentName = nameInput.value.trim() || name;
+            categoryVisibility[currentName] = {
+              cashier: !(categoryVisibility[currentName] && categoryVisibility[currentName].cashier === false),
               price_list: priceToggle.checked,
             };
             renderPreview();
@@ -581,9 +593,11 @@ document.addEventListener('click', (e) => {
           upBtn.textContent = "↑";
           upBtn.disabled = index === 0;
           upBtn.addEventListener("click", () => {
-            if (index <= 0) return;
-            const moved = categoryOrder.splice(index, 1)[0];
-            categoryOrder.splice(index - 1, 0, moved);
+            // Get current index from the DOM to avoid stale closure
+            const currentIndex = Array.from(categoryOrderList.children).indexOf(row);
+            if (currentIndex <= 0) return;
+            const moved = categoryOrder.splice(currentIndex, 1)[0];
+            categoryOrder.splice(currentIndex - 1, 0, moved);
             renderCategoryOrder();
             renderPreview();
             syncHidden();
@@ -595,9 +609,11 @@ document.addEventListener('click', (e) => {
           downBtn.textContent = "↓";
           downBtn.disabled = index >= ordered.length - 1;
           downBtn.addEventListener("click", () => {
-            if (index >= ordered.length - 1) return;
-            const moved = categoryOrder.splice(index, 1)[0];
-            categoryOrder.splice(index + 1, 0, moved);
+            // Get current index from the DOM to avoid stale closure
+            const currentIndex = Array.from(categoryOrderList.children).indexOf(row);
+            if (currentIndex >= categoryOrder.length - 1) return;
+            const moved = categoryOrder.splice(currentIndex, 1)[0];
+            categoryOrder.splice(currentIndex + 1, 0, moved);
             renderCategoryOrder();
             renderPreview();
             syncHidden();
