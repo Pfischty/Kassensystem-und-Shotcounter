@@ -1,0 +1,78 @@
+{% extends "base.html" %}
+{% block title %}Bilderverwaltung{% endblock %}
+{% block content %}
+<h1>Bilderverwaltung</h1>
+
+<style>
+  .muted { color: #94a3b8; font-size: 0.95rem; }
+  .stack { display:flex; flex-direction:column; gap:0.35rem; }
+  .field-inline { display:flex; gap:0.6rem; flex-wrap:wrap; align-items:center; }
+  .button-link { display:inline-block; background: #334155; color: var(--text); border: 1px solid var(--border); border-radius: 8px; padding: 0.5rem 0.75rem; font-weight: 700; }
+  .image-grid { display:grid; gap:1rem; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); margin-top: 0.6rem; }
+  .image-card { border:1px solid var(--border); border-radius:12px; padding:0.8rem; background: rgba(255,255,255,0.02); display:flex; flex-direction:column; gap:0.6rem; }
+  .image-card img { width:100%; max-height: 160px; object-fit: cover; border-radius: 8px; border: 1px solid var(--border); }
+  .image-card .filename { font-family: monospace; font-size: 0.85rem; color: #cbd5e1; word-break: break-all; }
+  .pill { padding: 0.2rem 0.55rem; border-radius: 999px; background: rgba(255,255,255,0.06); border: 1px solid var(--border); font-size: 0.85rem; }
+</style>
+
+<div class="field-inline" style="margin-bottom: 1rem;">
+  <a class="button-link" href="{{ url_for('admin') }}">← Zurück</a>
+</div>
+
+<div class="card">
+  <h2>Neues Bild hochladen</h2>
+  <form method="post" action="{{ url_for('admin_images_upload') }}" enctype="multipart/form-data">
+    <div class="field-inline" style="margin-top: 0.4rem;">
+      <label class="stack" style="min-width: 240px;">
+        <span>Datei</span>
+        <input type="file" name="image_file" accept="image/png,image/jpeg,image/gif,image/webp" required>
+      </label>
+      <button type="submit" class="primary">Hochladen</button>
+    </div>
+    <div class="muted" style="margin-top: 0.4rem;">Erlaubte Formate: PNG, JPG, GIF, WebP.</div>
+  </form>
+</div>
+
+<div class="card" style="margin-top: 1rem;">
+  <h2>Alle Bilder</h2>
+  {% if not managed_images %}
+    <p class="muted">Noch keine Bilder vorhanden.</p>
+  {% else %}
+    <div class="image-grid">
+      {% for image in managed_images %}
+        <div class="image-card">
+          <img src="{{ image.url }}" alt="{{ image.filename }}">
+          <div class="filename">{{ image.filename }}</div>
+          {% if image.usage %}
+            <div class="field-inline" style="flex-wrap: wrap;">
+              {% for entry in image.usage %}
+                <span class="pill">{{ entry }}</span>
+              {% endfor %}
+            </div>
+          {% else %}
+            <div class="muted">Keine Zuordnung</div>
+          {% endif %}
+          <form method="post" action="{{ url_for('admin_images_rename') }}">
+            <input type="hidden" name="filename" value="{{ image.filename }}">
+            <div class="field-inline">
+              <input type="text" name="new_name" value="{{ image.base }}" placeholder="Neuer Name" required>
+              <button type="submit" class="secondary">Umbenennen</button>
+            </div>
+          </form>
+          <form method="post" action="{{ url_for('admin_images_delete') }}">
+            <input type="hidden" name="filename" value="{{ image.filename }}">
+            <button
+              type="submit"
+              class="danger"
+              data-confirm="Bild wirklich löschen? Verknüpfungen in Events werden entfernt."
+              data-confirm-text="Löschen"
+              data-confirm-class="danger"
+            >Löschen</button>
+          </form>
+        </div>
+      {% endfor %}
+    </div>
+  {% endif %}
+</div>
+<script src="{{ url_for('static', filename='js/admin.js', v='5') }}" defer></script>
+{% endblock %}

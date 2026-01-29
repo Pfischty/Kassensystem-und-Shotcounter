@@ -493,6 +493,7 @@ document.addEventListener('click', (e) => {
     safeRun("shot-settings", () => {
       document.querySelectorAll("[data-shot-settings]").forEach((wrapper) => {
         const hidden = wrapper.querySelector('input[name="shotcounter_settings"]');
+        const preview = wrapper.querySelector("[data-shot-image-preview]");
         const defaults = { ...shotDefaults, ...parseJson(wrapper.dataset.defaults, shotDefaults) };
         const current = parseJson(wrapper.dataset.current, {});
         let settings = { ...defaults, ...current };
@@ -509,6 +510,16 @@ document.addEventListener('click', (e) => {
               input.value = settings[key] ?? defaults[key] ?? "";
             }
           });
+          if (preview) {
+            const img = settings.background_image || "";
+            if (img) {
+              preview.src = `/uploads/${img}`;
+              preview.style.display = "block";
+            } else {
+              preview.removeAttribute("src");
+              preview.style.display = "none";
+            }
+          }
         };
 
         const syncHidden = () => {
@@ -529,6 +540,16 @@ document.addEventListener('click', (e) => {
               settings[key] = input.value;
             }
             syncHidden();
+            if (key === "background_image" && preview) {
+              const img = settings.background_image || "";
+              if (img) {
+                preview.src = `/uploads/${img}`;
+                preview.style.display = "block";
+              } else {
+                preview.removeAttribute("src");
+                preview.style.display = "none";
+              }
+            }
           });
         });
 

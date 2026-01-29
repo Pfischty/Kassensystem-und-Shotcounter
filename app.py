@@ -45,6 +45,7 @@ from sqlalchemy import event, func, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import attributes
 from werkzeug.datastructures import FileStorage
+from werkzeug.utils import secure_filename
 
 from credentials_manager import credentials_manager
 
@@ -425,6 +426,101 @@ def save_price_list_image(file: FileStorage | None, event_id: int) -> str | None
     """Save uploaded price list background image and return the filename."""
     if not file or not file.filename:
         return None
+
+
+def save_managed_image(file: FileStorage | None) -> str | None:
+    if not file or not file.filename:
+        return None
+    if not allowed_file(file.filename):
+        return None
+    original = secure_filename(file.filename)
+    stem = Path(original).stem or "bild"
+    ext = Path(original).suffix.lower()
+    base = re.sub(r"[^a-zA-Z0-9_-]+", "-", stem).strip("-") or "bild"
+    filename = f"{base}{ext}"
+    uploads_dir = Path(app.config["UPLOAD_FOLDER"])
+    if (uploads_dir / filename).exists():
+        filename = f"{base}-{secrets.token_hex(3)}{ext}"
+    filepath = uploads_dir / filename
+    try:
+        file.save(str(filepath))
+        return filename
+    except Exception as exc:
+        app.logger.error("Fehler beim Speichern des Bildes: %s", exc)
+        return None
+
+
+def _rename_managed_image(old_filename: str, new_name: str) -> str | None:
+    uploads_dir = Path(app.config["UPLOAD_FOLDER"])
+    old_path = uploads_dir / old_filename
+    if not old_path.exists() or not old_path.is_file():
+        return None
+    ext = old_path.suffix.lower()
+    base = re.sub(r"[^a-zA-Z0-9_-]+", "-", new_name).strip("-")
+    if not base:
+        return None
+    new_filename = f"{base}{ext}"
+    new_path = uploads_dir / new_filename
+    if new_path.exists():
+        return None
+    try:
+        old_path.rename(new_path)
+        return new_filename
+    except Exception as exc:
+        app.logger.error("Fehler beim Umbenennen des Bildes: %s", exc)
+        return None
+
+
+def _update_image_references(old_filename: str, new_filename: str) -> None:
+    if old_filename == new_filename:
+        return
+    events = Event.query.all()
+    changed = False
+    for evt in events:
+        shot_settings = evt.shotcounter_settings or {}
+        if shot_settings.get("background_image") == old_filename:
+            shot_settings["background_image"] = new_filename
+            evt.shotcounter_settings = shot_settings
+            attributes.flag_modified(evt, "shotcounter_settings")
+            changed = True
+
+        shared_settings = evt.shared_settings or {}
+        price_settings = shared_settings.get("price_list") or {}
+        if price_settings.get("background_image") == old_filename:
+            price_settings["background_image"] = new_filename
+            if price_settings.get("background_mode") == "none":
+                price_settings["background_mode"] = "custom"
+            shared_settings["price_list"] = price_settings
+            evt.shared_settings = shared_settings
+            attributes.flag_modified(evt, "shared_settings")
+            changed = True
+
+    if changed:
+        db.session.commit()
+
+
+def _remove_image_references(filename: str) -> None:
+    events = Event.query.all()
+    changed = False
+    for evt in events:
+        shot_settings = evt.shotcounter_settings or {}
+        if shot_settings.get("background_image") == filename:
+            shot_settings["background_image"] = None
+            evt.shotcounter_settings = shot_settings
+            attributes.flag_modified(evt, "shotcounter_settings")
+            changed = True
+
+        shared_settings = evt.shared_settings or {}
+        price_settings = shared_settings.get("price_list") or {}
+        if price_settings.get("background_image") == filename:
+            price_settings["background_image"] = None
+            shared_settings["price_list"] = price_settings
+            evt.shared_settings = shared_settings
+            attributes.flag_modified(evt, "shared_settings")
+            changed = True
+
+    if changed:
+        db.session.commit()
     if not allowed_file(file.filename):
         return None
     ext = file.filename.rsplit(".", 1)[1].lower()
@@ -944,8 +1040,8 @@ def admin():
     has_password = bool(current_creds.get("admin_password"))
     
     uploads_dir = Path(app.config["UPLOAD_FOLDER"])
-    price_list_images = sorted(
-        [p.name for p in uploads_dir.glob("pl_*.*") if p.is_file()]
+    managed_images = sorted(
+        [p.name for p in uploads_dir.iterdir() if p.is_file() and allowed_file(p.name)]
     )
 
     return render_template(
@@ -958,7 +1054,7 @@ def admin():
         event_payloads=event_payloads,
         shotcounter_defaults=DEFAULT_SHOTCOUNTER_SETTINGS,
         price_list_defaults=DEFAULT_PRICE_LIST_SETTINGS,
-        price_list_images=price_list_images,
+        managed_images=managed_images,
         shot_settings_map=shot_settings_map,
         admin_username=admin_username,
         has_password=has_password,
@@ -986,8 +1082,8 @@ def admin_event_settings(event_id: int):
     }
 
     uploads_dir = Path(app.config["UPLOAD_FOLDER"])
-    price_list_images = sorted(
-        [p.name for p in uploads_dir.glob("pl_*.*") if p.is_file()]
+    managed_images = sorted(
+        [p.name for p in uploads_dir.iterdir() if p.is_file() and allowed_file(p.name)]
     )
 
     return render_template(
@@ -1000,9 +1096,116 @@ def admin_event_settings(event_id: int):
         event_payloads=event_payloads,
         shotcounter_defaults=DEFAULT_SHOTCOUNTER_SETTINGS,
         price_list_defaults=DEFAULT_PRICE_LIST_SETTINGS,
-        price_list_images=price_list_images,
+        managed_images=managed_images,
         shot_settings_map=shot_settings_map,
     )
+
+
+@app.route("/admin/images")
+def admin_images():
+    uploads_dir = Path(app.config["UPLOAD_FOLDER"])
+    managed_images = sorted(
+        [p.name for p in uploads_dir.iterdir() if p.is_file() and allowed_file(p.name)]
+    )
+
+    usage_map: dict[str, list[str]] = {}
+    events = Event.query.order_by(Event.created_at.desc()).all()
+    for evt in events:
+        shot = (evt.shotcounter_settings or {})
+        shot_img = shot.get("background_image")
+        if shot_img:
+            usage_map.setdefault(shot_img, []).append(f"{evt.name} (Shotcounter)")
+
+        shared = evt.shared_settings or {}
+        price = shared.get("price_list") or {}
+        price_img = price.get("background_image")
+        if price_img:
+            usage_map.setdefault(price_img, []).append(f"{evt.name} (Preisliste)")
+
+    def build_entries(files: list[str]) -> list[dict[str, object]]:
+        entries: list[dict[str, object]] = []
+        for name in files:
+            entries.append(
+                {
+                    "filename": name,
+                    "base": Path(name).stem,
+                    "url": url_for("uploaded_file", filename=name),
+                    "usage": usage_map.get(name, []),
+                }
+            )
+        return entries
+
+    return render_template(
+        "image_manager.html",
+        managed_images=build_entries(managed_images),
+    )
+
+
+@app.route("/admin/images/upload", methods=["POST"])
+def admin_images_upload():
+    if "image_file" not in request.files:
+        flash("Keine Datei ausgewählt.", "error")
+        return redirect(url_for("admin_images"))
+    file = request.files["image_file"]
+    if not file or file.filename == "":
+        flash("Keine Datei ausgewählt.", "error")
+        return redirect(url_for("admin_images"))
+    if not allowed_file(file.filename):
+        flash(
+            f"Ungültiger Dateityp. Erlaubt sind: {', '.join(ALLOWED_EXTENSIONS)}",
+            "error",
+        )
+        return redirect(url_for("admin_images"))
+
+    filename = save_managed_image(file)
+    if not filename:
+        flash("Fehler beim Hochladen des Bildes.", "error")
+        return redirect(url_for("admin_images"))
+
+    flash("Bild wurde hochgeladen.", "success")
+    return redirect(url_for("admin_images"))
+
+
+@app.route("/admin/images/rename", methods=["POST"])
+def admin_images_rename():
+    old_filename = (request.form.get("filename") or "").strip()
+    new_name = (request.form.get("new_name") or "").strip()
+    if not old_filename or not new_name:
+        flash("Bitte einen neuen Namen angeben.", "error")
+        return redirect(url_for("admin_images"))
+
+    new_filename = _rename_managed_image(old_filename, new_name)
+    if not new_filename:
+        flash("Umbenennen nicht möglich (Name bereits vergeben oder ungültig).", "error")
+        return redirect(url_for("admin_images"))
+
+    _update_image_references(old_filename, new_filename)
+    flash("Bild wurde umbenannt.", "success")
+    return redirect(url_for("admin_images"))
+
+
+@app.route("/admin/images/delete", methods=["POST"])
+def admin_images_delete():
+    filename = (request.form.get("filename") or "").strip()
+    if not filename:
+        flash("Kein Bild angegeben.", "error")
+        return redirect(url_for("admin_images"))
+
+    filepath = Path(app.config["UPLOAD_FOLDER"]) / filename
+    if not filepath.exists() or not filepath.is_file():
+        flash("Bild nicht gefunden.", "error")
+        return redirect(url_for("admin_images"))
+
+    try:
+        filepath.unlink()
+    except Exception as exc:
+        app.logger.error("Fehler beim Löschen des Bildes: %s", exc)
+        flash("Bild konnte nicht gelöscht werden.", "error")
+        return redirect(url_for("admin_images"))
+
+    _remove_image_references(filename)
+    flash("Bild wurde gelöscht.", "success")
+    return redirect(url_for("admin_images"))
 
 
 @app.route("/admin/events", methods=["POST"])

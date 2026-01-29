@@ -273,37 +273,25 @@
           </label>
         </div>
 
-        <!-- Background Image Upload -->
         <div style="margin-top: 1rem; padding-top: 1rem; border-top: 1px solid var(--border);">
           <strong>Hintergrundbild</strong>
-          <div class="muted">Optional: Bild als Hintergrund für die Leaderboard-Anzeige hochladen.</div>
+          <div class="muted">Bild aus der Verwaltung auswählen.</div>
           {% set current_bg = shot_settings_map.get(event.id, {}).get('background_image') %}
-          {% if current_bg %}
-            <div style="margin-top: 0.6rem; display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap;">
-              <img src="{{ url_for('uploaded_file', filename=current_bg) }}" alt="Aktuelles Hintergrundbild" style="max-width: 200px; max-height: 120px; border-radius: 8px; border: 1px solid var(--border);">
-              <button
-                type="submit"
-                class="danger"
-                form="bg-delete-{{ event.id }}"
-                    data-confirm="Hintergrundbild wirklich entfernen?"
-                    data-confirm-text="Entfernen"
-                    data-confirm-class="danger"
-              >Bild entfernen</button>
+          <div class="shot-settings__numbers" style="margin-top: 0.6rem;">
+            <label class="stack" style="min-width: 240px;">
+              <span>Hintergrundbild auswählen</span>
+              <select data-shot-field="background_image">
+                <option value="">Kein Bild</option>
+                {% for filename in managed_images %}
+                  <option value="{{ filename }}" {% if current_bg == filename %}selected{% endif %}>{{ filename }}</option>
+                {% endfor %}
+              </select>
+            </label>
+            <div style="display:flex; align-items:flex-end; gap:0.6rem;">
+              <img data-shot-image-preview src="" alt="Shotcounter Hintergrund Vorschau" style="max-width: 200px; max-height: 120px; border-radius: 8px; border: 1px solid var(--border); display:none;">
             </div>
-          {% endif %}
-          <div style="margin-top: 0.6rem;">
-            <div class="field-inline">
-              <input
-                type="file"
-                name="background_image"
-                accept="image/png,image/jpeg,image/gif,image/webp"
-                style="max-width: 300px;"
-                form="bg-upload-{{ event.id }}"
-              >
-              <button type="submit" form="bg-upload-{{ event.id }}">Hochladen</button>
-            </div>
-            <div class="muted" style="margin-top: 0.3rem;">Erlaubte Formate: PNG, JPG, GIF, WebP. Max. 5 MB.</div>
           </div>
+          <div class="muted" style="margin-top: 0.3rem;">Neue Bilder in der <a href="{{ url_for('admin_images') }}">Bilderverwaltung</a> hochladen.</div>
         </div>
 
         <input type="hidden" name="shotcounter_settings" value='{{ (shot_settings_map.get(event.id) or shotcounter_defaults) | tojson }}'>
@@ -354,7 +342,7 @@
               <span>Vorhandenes Bild wählen</span>
               <select data-price-image-select>
                 <option value="">Kein Bild</option>
-                {% for filename in price_list_images %}
+                {% for filename in managed_images %}
                   <option value="{{ filename }}">{{ filename }}</option>
                 {% endfor %}
               </select>
@@ -366,29 +354,9 @@
           {% if current_pl_bg %}
             <div style="margin-top: 0.6rem; display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap;">
               <img src="{{ url_for('uploaded_file', filename=current_pl_bg) }}" alt="Aktuelles Preisliste-Hintergrundbild" style="max-width: 200px; max-height: 120px; border-radius: 8px; border: 1px solid var(--border);">
-              <button
-                type="submit"
-                class="danger"
-                form="pl-delete-{{ event.id }}"
-                data-confirm="Preisliste-Hintergrundbild wirklich entfernen?"
-                data-confirm-text="Entfernen"
-                data-confirm-class="danger"
-              >Bild entfernen</button>
             </div>
           {% endif %}
-          <div style="margin-top: 0.6rem;">
-            <div class="field-inline">
-              <input
-                type="file"
-                name="price_list_background"
-                accept="image/png,image/jpeg,image/gif,image/webp"
-                style="max-width: 300px;"
-                form="pl-upload-{{ event.id }}"
-              >
-              <button type="submit" form="pl-upload-{{ event.id }}">Hochladen</button>
-            </div>
-            <div class="muted" style="margin-top: 0.3rem;">Erlaubte Formate: PNG, JPG, GIF, WebP. Max. 5 MB.</div>
-          </div>
+          <div class="muted" style="margin-top: 0.6rem;">Neue Bilder in der <a href="{{ url_for('admin_images') }}">Bilderverwaltung</a> hochladen.</div>
         </div>
       </div>
     </div>
@@ -462,14 +430,6 @@
     <span class="form-status" data-form-status style="margin-left: 0.8rem; color: #94a3b8; display: none;"></span>
   </div>
 </form>
-<form id="bg-upload-{{ event.id }}" method="post" action="{{ url_for('upload_background', event_id=event.id) }}" enctype="multipart/form-data"></form>
-<form id="bg-delete-{{ event.id }}" method="post" action="{{ url_for('upload_background', event_id=event.id) }}">
-  <input type="hidden" name="delete_background" value="1">
-</form>
-<form id="pl-upload-{{ event.id }}" method="post" action="{{ url_for('upload_price_list_background', event_id=event.id) }}" enctype="multipart/form-data"></form>
-<form id="pl-delete-{{ event.id }}" method="post" action="{{ url_for('upload_price_list_background', event_id=event.id) }}">
-  <input type="hidden" name="delete_price_list_background" value="1">
-</form>
 
 <script id="event-settings-data" type="application/json">
   {{ event_payloads | tojson }}
@@ -483,5 +443,5 @@
 <script id="price-list-defaults-data" type="application/json">
   {{ price_list_defaults | tojson }}
 </script>
-<script src="{{ url_for('static', filename='js/admin.js', v='4') }}" defer></script>
+<script src="{{ url_for('static', filename='js/admin.js', v='5') }}" defer></script>
 {% endblock %}
