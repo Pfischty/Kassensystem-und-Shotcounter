@@ -132,7 +132,7 @@
         {% if items %}
           <ul class="order-list">
             {% for item in items %}
-              <li>{{ item.qty }}× {{ item.name }} — {{ item.price }} CHF ({{ item.line_total }} CHF)</li>
+              <li>{{ item.qty }}× {{ item.label or item.name }} — {{ item.price }} CHF ({{ item.line_total }} CHF)</li>
             {% endfor %}
           </ul>
         {% else %}
@@ -277,7 +277,7 @@
       }
       
       list.innerHTML = cartData.items.map(item => 
-        `<li>${item.qty}× ${item.name} — ${item.price} CHF (${item.line_total} CHF)</li>`
+        `<li>${item.qty}× ${item.label || item.name} — ${item.price} CHF (${item.line_total} CHF)</li>`
       ).join('');
       
       // Scroll to bottom

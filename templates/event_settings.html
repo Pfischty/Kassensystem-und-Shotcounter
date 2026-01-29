@@ -116,40 +116,48 @@
   .product-category__list { display:flex; flex-direction:column; gap:0.75rem; }
   .product-row {
     display:grid;
-    grid-template-columns:
-      minmax(200px, 1.3fr)
-      minmax(200px, 1.1fr)
-      minmax(170px, 0.8fr)
-      minmax(180px, 0.9fr)
-      minmax(180px, 0.7fr);
-    gap:0.6rem;
+    grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+    gap:0.5rem 0.6rem;
     background:#0c1324;
     border:1px solid var(--border);
     border-radius:10px;
-    padding:0.75rem;
+    padding:0.55rem 0.65rem;
     align-items:end;
     cursor: grab;
   }
   .product-row.is-dragging { opacity: 0.6; cursor: grabbing; }
   .product-field-group {
     display:grid;
-    grid-template-columns: minmax(110px, 1fr) minmax(90px, 1fr);
-    gap:0.6rem;
-    align-items:end;
+    grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+    gap:0.4rem;
+    align-items:start;
   }
   .product-field-group--actions {
-    grid-template-columns: minmax(120px, 1fr) minmax(110px, 1fr);
+    grid-template-columns: minmax(120px, 1fr) auto;
+    align-items:end;
   }
   .product-field-group input[type="number"] {
     max-width: 140px;
   }
   .product-field-group .row-actions button {
-    padding: 0.45rem 0.6rem;
+    padding: 0.35rem 0.55rem;
   }
-  .product-row label { font-size: 0.9rem; color: #cbd5e1; display:block; margin-bottom:0.2rem; }
-  .product-row .row-actions { display:flex; justify-content:flex-end; align-items:flex-end; }
-  .product-row .row-actions button { width:100%; }
-  .color-input { width:100%; min-height:44px; padding: 0; }
+  .product-row .stack { gap: 0.2rem; }
+  .product-row label { font-size: 0.85rem; color: #cbd5e1; display:block; margin-bottom:0.1rem; line-height:1.1; }
+  .product-row .row-actions { display:flex; justify-content:flex-end; align-items:flex-end; align-self:end; }
+  .product-row .row-actions button { width:auto; min-width:110px; height:34px; padding: 0.35rem 0.6rem; white-space:nowrap; }
+  .color-input { width:100%; min-height:44px; height:44px; padding: 0; border: 1px solid var(--border); border-radius: 8px; background: transparent; }
+  .product-row .color-input { min-height:36px; height:36px; }
+  [data-editor-mode="price"] .product-row .product-field--depot,
+  [data-editor-mode="price"] .product-row .product-field--color {
+    display: none;
+  }
+  [data-editor-mode="price"] .product-row .product-field-group {
+    grid-template-columns: 1fr;
+  }
+  [data-editor-mode="price"] .product-row .product-field-group--actions {
+    grid-template-columns: auto;
+  }
   .pill { padding: 0.3rem 0.7rem; border-radius: 999px; background: rgba(255,255,255,0.06); border: 1px solid var(--border); font-size: 0.9rem; }
   .shot-settings { margin: 0.8rem 0; }
   .shot-settings__grid { display:grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap:0.6rem; margin-top: 0.4rem; }
@@ -169,6 +177,12 @@
   }
   .visibility-toggle .pill-toggle input { margin:0; }
   .button-link { display:inline-block; background: #334155; color: var(--text); border: 1px solid var(--border); border-radius: 8px; padding: 0.5rem 0.75rem; font-weight: 700; }
+  .tabs { margin-top: 0.8rem; }
+  .tabs__nav { display:flex; flex-wrap:wrap; gap:0.4rem; padding: 0.4rem; background: rgba(255,255,255,0.03); border: 1px solid var(--border); border-radius: 12px; }
+  .tabs__btn { border: 1px solid transparent; background: transparent; color: #cbd5e1; padding: 0.45rem 0.75rem; border-radius: 10px; font-weight: 700; cursor: pointer; }
+  .tabs__btn.is-active { background: rgba(56,189,248,0.12); border-color: rgba(56,189,248,0.5); color: #e2e8f0; }
+  .tabs[data-tabs-ready="true"] .tabs__panel { display:none; margin-top: 0.9rem; }
+  .tabs[data-tabs-ready="true"] .tabs__panel.is-active { display:block; }
 </style>
 
 <div class="field-inline" style="margin-bottom: 1rem;">
@@ -177,129 +191,115 @@
 
 <form method="post" action="{{ url_for('update_event', event_id=event.id) }}" data-event-form data-scope="{{ event.id }}">
   <input type="hidden" name="next" value="{{ url_for('admin_event_settings', event_id=event.id) }}">
-  <div class="field-inline" style="margin: 0.4rem 0;">
-    <label><input type="checkbox" name="kassensystem_enabled" {% if event.kassensystem_enabled %}checked{% endif %}> Kassensystem aktiv</label>
-    <label><input type="checkbox" name="shotcounter_enabled" {% if event.shotcounter_enabled %}checked{% endif %}> Shotcounter aktiv</label>
-  </div>
-  <div class="field-inline" style="margin: 0.6rem 0;">
-    <label><input type="checkbox" name="auto_reload_on_add" {% if event.shared_settings and event.shared_settings.get('auto_reload_on_add', True) %}checked{% endif %} data-shared-setting> Auto-Reload beim Hinzufügen (Kasse)</label>
-  </div>
-  <div class="muted" style="margin-bottom: 0.6rem;">Wenn deaktiviert, wird die Kasse nicht neu geladen beim Hinzufügen von Artikeln (performanter).</div>
-
-  {% if events|length > 1 %}
-  <div class="stack" style="margin:0.6rem 0;">
-    <label>Einstellungen aus Event kopieren</label>
-    <div class="field-inline">
-      <select data-copy-select>
-        <option value="">Bitte wählen</option>
-        {% for template in events if template.id != event.id %}
-          <option value="{{ template.id }}">{{ template.name }}</option>
-        {% endfor %}
-      </select>
-      <button type="button" class="secondary" data-copy-btn>Übernehmen</button>
-      <span class="pill">kopiert auch Produkte</span>
-    </div>
-  </div>
-  {% endif %}
-
   <input type="hidden" name="shared_settings" value='{{ (event.shared_settings or {}) | tojson }}'>
   {% set current_shot = (shot_settings_map.get(event.id) or shotcounter_defaults) %}
 
-  <div
-    class="shot-settings"
-    data-shot-settings
-    data-defaults='{{ shotcounter_defaults | tojson }}'
-    data-current='{{ (shot_settings_map.get(event.id) or shotcounter_defaults) | tojson }}'
-  >
-    <strong>Shotcounter Styling</strong>
-    <div class="muted">Steuert Vollbild/Touch: Farben, Schriftgrößen und Teamanzahl.</div>
-    <div class="shot-settings__grid">
-      <label class="stack">
-        <span>Hintergrund</span>
-        <input type="color" class="color-input" data-shot-field="background_color" value="{{ current_shot.get('background_color', shotcounter_defaults.get('background_color')) }}">
-      </label>
-      <label class="stack">
-        <span>Primärfarbe (Karten)</span>
-        <input type="color" class="color-input" data-shot-field="primary_color" value="{{ current_shot.get('primary_color', shotcounter_defaults.get('primary_color')) }}">
-      </label>
-      <label class="stack">
-        <span>Sekundärfarbe (Verlauf)</span>
-        <input type="color" class="color-input" data-shot-field="secondary_color" value="{{ current_shot.get('secondary_color', shotcounter_defaults.get('secondary_color')) }}">
-      </label>
-      <label class="stack">
-        <span>Terziärfarbe (Verlauf)</span>
-        <input type="color" class="color-input" data-shot-field="tertiary_color" value="{{ current_shot.get('tertiary_color', shotcounter_defaults.get('tertiary_color')) }}">
-      </label>
-    </div>
-    <div class="shot-settings__numbers">
-      <label class="stack">
-        <span>Schriftgröße Titel (rem)</span>
-        <input type="number" step="0.1" min="0.5" max="10" data-shot-field="title_size" value="{{ current_shot.get('title_size', shotcounter_defaults.get('title_size')) }}">
-      </label>
-      <label class="stack">
-        <span>Schriftgröße Teams (rem)</span>
-        <input type="number" step="0.1" min="0.5" max="10" data-shot-field="team_size" value="{{ current_shot.get('team_size', shotcounter_defaults.get('team_size')) }}">
-      </label>
-      <label class="stack">
-        <span>Teams im Leaderboard</span>
-        <input type="number" step="1" min="1" max="50" data-shot-field="leaderboard_limit" value="{{ current_shot.get('leaderboard_limit', shotcounter_defaults.get('leaderboard_limit')) }}">
-      </label>
-    </div>
-    <div class="shot-settings__numbers" style="margin-top: 0.6rem;">
-      <label class="stack">
-        <span>Leaderboard Layout</span>
-        <select data-shot-field="leaderboard_layout">
-          <option value="stacked" {% if current_shot.get('leaderboard_layout', shotcounter_defaults.get('leaderboard_layout')) == 'stacked' %}selected{% endif %}>Teamname + Shots (2 Zeilen)</option>
-          <option value="inline" {% if current_shot.get('leaderboard_layout', shotcounter_defaults.get('leaderboard_layout')) == 'inline' %}selected{% endif %}>Teamname – Shots (1 Zeile)</option>
-        </select>
-      </label>
+  <div class="tabs" data-tabs>
+    <div class="tabs__nav">
+      <button type="button" class="tabs__btn" data-tab-target="general">Allgemein</button>
+      <button type="button" class="tabs__btn" data-tab-target="shotcounter">Shotcounter</button>
+      <button type="button" class="tabs__btn" data-tab-target="price">Preisliste</button>
+      <button type="button" class="tabs__btn" data-tab-target="cashier">Kasse</button>
+      <button type="button" class="tabs__btn" data-tab-target="products">Alle Produkte & Kategorien</button>
+      <button type="button" class="tabs__btn" data-tab-target="import">Import/Export</button>
     </div>
 
-    <!-- Background Image Upload -->
-    <div style="margin-top: 1rem; padding-top: 1rem; border-top: 1px solid var(--border);">
-      <strong>Hintergrundbild</strong>
-      <div class="muted">Optional: Bild als Hintergrund für die Leaderboard-Anzeige hochladen.</div>
-      {% set current_bg = shot_settings_map.get(event.id, {}).get('background_image') %}
-      {% if current_bg %}
-        <div style="margin-top: 0.6rem; display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap;">
-          <img src="{{ url_for('uploaded_file', filename=current_bg) }}" alt="Aktuelles Hintergrundbild" style="max-width: 200px; max-height: 120px; border-radius: 8px; border: 1px solid var(--border);">
-          <button
-            type="submit"
-            class="danger"
-            form="bg-delete-{{ event.id }}"
-                data-confirm="Hintergrundbild wirklich entfernen?"
-                data-confirm-text="Entfernen"
-                data-confirm-class="danger"
-          >Bild entfernen</button>
-        </div>
-      {% endif %}
-      <div style="margin-top: 0.6rem;">
+    <div class="tabs__panel" data-tab-panel="general">
+      <div class="field-inline" style="margin: 0.4rem 0;">
+        <label><input type="checkbox" name="kassensystem_enabled" {% if event.kassensystem_enabled %}checked{% endif %}> Kassensystem aktiv</label>
+        <label><input type="checkbox" name="shotcounter_enabled" {% if event.shotcounter_enabled %}checked{% endif %}> Shotcounter aktiv</label>
+      </div>
+      <div class="field-inline" style="margin: 0.6rem 0;">
+        <label><input type="checkbox" name="auto_reload_on_add" {% if event.shared_settings and event.shared_settings.get('auto_reload_on_add', True) %}checked{% endif %} data-shared-setting> Auto-Reload beim Hinzufügen (Kasse)</label>
+      </div>
+      <div class="muted" style="margin-bottom: 0.6rem;">Wenn deaktiviert, wird die Kasse nicht neu geladen beim Hinzufügen von Artikeln (performanter).</div>
+
+      {% if events|length > 1 %}
+      <div class="stack" style="margin:0.6rem 0;">
+        <label>Einstellungen aus Event kopieren</label>
         <div class="field-inline">
-          <input
-            type="file"
-            name="background_image"
-            accept="image/png,image/jpeg,image/gif,image/webp"
-            style="max-width: 300px;"
-            form="bg-upload-{{ event.id }}"
-          >
-          <button type="submit" form="bg-upload-{{ event.id }}">Hochladen</button>
+          <select data-copy-select>
+            <option value="">Bitte wählen</option>
+            {% for template in events if template.id != event.id %}
+              <option value="{{ template.id }}">{{ template.name }}</option>
+            {% endfor %}
+          </select>
+          <button type="button" class="secondary" data-copy-btn>Übernehmen</button>
+          <span class="pill">kopiert auch Produkte</span>
         </div>
-        <div class="muted" style="margin-top: 0.3rem;">Erlaubte Formate: PNG, JPG, GIF, WebP. Max. 5 MB.</div>
+      </div>
+      {% endif %}
+    </div>
+
+    <div class="tabs__panel" data-tab-panel="shotcounter">
+      <div
+        class="shot-settings"
+        data-shot-settings
+        data-defaults='{{ shotcounter_defaults | tojson }}'
+        data-current='{{ (shot_settings_map.get(event.id) or shotcounter_defaults) | tojson }}'
+      >
+        <strong>Shotcounter Styling</strong>
+        <div class="muted">Steuert Vollbild/Touch: Farben, Schriftgrößen und Teamanzahl.</div>
+        <div class="shot-settings__grid">
+          <label class="stack">
+            <span>Hintergrund</span>
+            <input type="color" class="color-input" data-shot-field="background_color" value="{{ current_shot.get('background_color', shotcounter_defaults.get('background_color')) }}">
+          </label>
+          <label class="stack">
+            <span>Primärfarbe (Karten)</span>
+            <input type="color" class="color-input" data-shot-field="primary_color" value="{{ current_shot.get('primary_color', shotcounter_defaults.get('primary_color')) }}">
+          </label>
+        </div>
+        <div class="shot-settings__numbers">
+          <label class="stack">
+            <span>Schriftgröße Titel (rem)</span>
+            <input type="number" step="0.1" min="0.5" max="10" data-shot-field="title_size" value="{{ current_shot.get('title_size', shotcounter_defaults.get('title_size')) }}">
+          </label>
+          <label class="stack">
+            <span>Schriftgröße Teams (rem)</span>
+            <input type="number" step="0.1" min="0.5" max="10" data-shot-field="team_size" value="{{ current_shot.get('team_size', shotcounter_defaults.get('team_size')) }}">
+          </label>
+          <label class="stack">
+            <span>Teams im Leaderboard</span>
+            <input type="number" step="1" min="1" max="50" data-shot-field="leaderboard_limit" value="{{ current_shot.get('leaderboard_limit', shotcounter_defaults.get('leaderboard_limit')) }}">
+          </label>
+        </div>
+        <div class="shot-settings__numbers" style="margin-top: 0.6rem;">
+          <label class="stack">
+            <span>Leaderboard Layout</span>
+            <select data-shot-field="leaderboard_layout">
+              <option value="stacked" {% if current_shot.get('leaderboard_layout', shotcounter_defaults.get('leaderboard_layout')) == 'stacked' %}selected{% endif %}>Teamname + Shots (2 Zeilen)</option>
+              <option value="inline" {% if current_shot.get('leaderboard_layout', shotcounter_defaults.get('leaderboard_layout')) == 'inline' %}selected{% endif %}>Teamname – Shots (1 Zeile)</option>
+            </select>
+          </label>
+        </div>
+
+        <div style="margin-top: 1rem; padding-top: 1rem; border-top: 1px solid var(--border);">
+          <strong>Hintergrundbild</strong>
+          <div class="muted">Bild aus der Verwaltung auswählen.</div>
+          {% set current_bg = shot_settings_map.get(event.id, {}).get('background_image') %}
+          <div class="shot-settings__numbers" style="margin-top: 0.6rem;">
+            <label class="stack" style="min-width: 240px;">
+              <span>Hintergrundbild auswählen</span>
+              <select data-shot-field="background_image">
+                <option value="">Kein Bild</option>
+                {% for filename in managed_images %}
+                  <option value="{{ filename }}" {% if current_bg == filename %}selected{% endif %}>{{ filename }}</option>
+                {% endfor %}
+              </select>
+            </label>
+            <div style="display:flex; align-items:flex-end; gap:0.6rem;">
+              <img data-shot-image-preview src="" alt="Shotcounter Hintergrund Vorschau" style="max-width: 200px; max-height: 120px; border-radius: 8px; border: 1px solid var(--border); display:none;">
+            </div>
+          </div>
+          <div class="muted" style="margin-top: 0.3rem;">Neue Bilder in der <a href="{{ url_for('admin_images') }}">Bilderverwaltung</a> hochladen.</div>
+        </div>
+
+        <input type="hidden" name="shotcounter_settings" value='{{ (shot_settings_map.get(event.id) or shotcounter_defaults) | tojson }}'>
       </div>
     </div>
 
-    <input type="hidden" name="shotcounter_settings" value='{{ (shot_settings_map.get(event.id) or shotcounter_defaults) | tojson }}'>
-  </div>
-
-  <div class="collapsible" data-collapsible data-start-open="false" style="margin-top: 0.8rem;">
-    <div class="collapsible__header">
-      <div>
-        <strong>Preisliste</strong>
-        <div class="muted">Rotierende Kategorien für die Preisanzeige.</div>
-      </div>
-      <button type="button" class="secondary" data-toggle>Details einblenden</button>
-    </div>
-    <div class="collapsible__content" hidden>
+    <div class="tabs__panel" data-tab-panel="price">
       {% set current_pl = (event.shared_settings or {}).get('price_list', {}) %}
       {% set current_pl_bg = current_pl.get('background_image') %}
       <div
@@ -309,6 +309,8 @@
         data-current='{{ current_pl | tojson }}'
         data-scope="{{ event.id }}"
       >
+        <strong>Preisliste</strong>
+        <div class="muted" style="margin-bottom: 0.6rem;">Rotierende Kategorien für die Preisanzeige.</div>
         <div class="shot-settings__numbers">
           <label class="stack">
             <span>Schriftgröße (rem)</span>
@@ -319,30 +321,22 @@
             <input type="number" step="1" min="2" max="120" data-price-field="rotation_seconds">
           </label>
           <label class="stack">
-            <span>Hintergrundbild</span>
-            <select data-price-field="background_mode">
-              <option value="none">Kein Bild</option>
-              <option value="custom">Eigenes Bild verwenden</option>
-            </select>
-          </label>
-        </div>
-        <div class="shot-settings__numbers" style="margin-top: 0.6rem;">
-          <label class="stack">
             <span>Hintergrundfarbe</span>
             <input type="color" class="color-input" data-price-field="background_color">
           </label>
+          <input type="hidden" data-price-field="background_mode" value="none">
         </div>
 
-        <div data-price-custom-bg style="margin-top: 0.8rem; padding-top: 0.8rem; border-top: 1px solid var(--border);">
-          <strong>Preisliste Hintergrundbild</strong>
-          <div class="muted">Optional: eigenes Bild für die Preisliste.</div>
+        <div style="margin-top: 1rem; padding-top: 1rem; border-top: 1px solid var(--border);">
+          <strong>Hintergrundbild</strong>
+          <div class="muted">Bild aus der Verwaltung auswählen.</div>
           <div class="shot-settings__numbers" style="margin-top: 0.6rem;">
-            <label class="stack" style="min-width: 220px;">
-              <span>Vorhandenes Bild wählen</span>
+            <label class="stack" style="min-width: 240px;">
+              <span>Hintergrundbild auswählen</span>
               <select data-price-image-select>
                 <option value="">Kein Bild</option>
-                {% for filename in price_list_images %}
-                  <option value="{{ filename }}">{{ filename }}</option>
+                {% for filename in managed_images %}
+                  <option value="{{ filename }}" {% if current_pl_bg == filename %}selected{% endif %}>{{ filename }}</option>
                 {% endfor %}
               </select>
             </label>
@@ -350,103 +344,132 @@
               <img data-price-image-preview src="" alt="Preisliste Hintergrund Vorschau" style="max-width: 200px; max-height: 120px; border-radius: 8px; border: 1px solid var(--border); display:none;">
             </div>
           </div>
-          {% if current_pl_bg %}
-            <div style="margin-top: 0.6rem; display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap;">
-              <img src="{{ url_for('uploaded_file', filename=current_pl_bg) }}" alt="Aktuelles Preisliste-Hintergrundbild" style="max-width: 200px; max-height: 120px; border-radius: 8px; border: 1px solid var(--border);">
-              <button
-                type="submit"
-                class="danger"
-                form="pl-delete-{{ event.id }}"
-                data-confirm="Preisliste-Hintergrundbild wirklich entfernen?"
-                data-confirm-text="Entfernen"
-                data-confirm-class="danger"
-              >Bild entfernen</button>
+          <div class="muted" style="margin-top: 0.3rem;">Neue Bilder in der <a href="{{ url_for('admin_images') }}">Bilderverwaltung</a> hochladen.</div>
+        </div>
+
+      </div>
+
+        <div class="product-editor product-editor--compact" data-product-editor data-editor-mode="price" data-scope="{{ event.id }}-price" data-items='{{ event_buttons.get(event.id, default_buttons) | tojson }}' style="margin-top: 1rem;">
+          <div class="product-editor__top">
+            <div>
+              <strong>Preisliste Produkte & Kategorien</strong>
+              <div class="muted">Zeigt nur Kategorien/Produkte, die in der Preisliste sichtbar sind.</div>
             </div>
-          {% endif %}
-          <div style="margin-top: 0.6rem;">
-            <div class="field-inline">
-              <input
-                type="file"
-                name="price_list_background"
-                accept="image/png,image/jpeg,image/gif,image/webp"
-                style="max-width: 300px;"
-                form="pl-upload-{{ event.id }}"
-              >
-              <button type="submit" form="pl-upload-{{ event.id }}">Hochladen</button>
+            <div class="inline-actions">
+              <button type="button" class="secondary" data-add-product>+ Produkt</button>
+              <button type="button" class="secondary" data-add-category>+ Kategorie</button>
             </div>
-            <div class="muted" style="margin-top: 0.3rem;">Erlaubte Formate: PNG, JPG, GIF, WebP. Max. 5 MB.</div>
+          </div>
+          <div class="product-editor__preview product-editor__preview--list" data-product-preview="price" style="display:none;"></div>
+          <div class="category-order" data-category-order>
+            <div class="field-inline" style="justify-content: space-between; align-items: center;">
+              <div>
+                <strong>Kategorieneinstellungen</strong>
+                <div class="muted">Reihenfolge + Aktivierung (Preisliste).</div>
+              </div>
+              <button type="button" class="secondary" data-add-category>+ Kategorie</button>
+            </div>
+            <div class="category-order__list" data-category-order-list></div>
+          </div>
+          <div class="product-editor__list" data-product-list></div>
+        </div>
+    </div>
+
+      <div class="tabs__panel" data-tab-panel="cashier">
+        <div class="product-editor product-editor--compact" data-product-editor data-editor-mode="cashier" data-scope="{{ event.id }}-cashier" data-items='{{ event_buttons.get(event.id, default_buttons) | tojson }}'>
+          <div class="product-editor__top">
+            <div>
+              <strong>Kasse Produkte & Kategorien</strong>
+              <div class="muted">Zeigt nur Kategorien/Produkte, die in der Kasse sichtbar sind.</div>
+            </div>
+            <div class="inline-actions">
+              <button type="button" class="secondary" data-add-product>+ Produkt</button>
+              <button type="button" class="secondary" data-add-category>+ Kategorie</button>
+            </div>
+          </div>
+          <div class="product-editor__preview" data-product-preview="cashier" style="display:none;"></div>
+          <div class="category-order" data-category-order>
+            <div class="field-inline" style="justify-content: space-between; align-items: center;">
+              <div>
+                <strong>Kategorieneinstellungen</strong>
+                <div class="muted">Reihenfolge + Aktivierung (Kasse).</div>
+              </div>
+              <button type="button" class="secondary" data-add-category>+ Kategorie</button>
+            </div>
+            <div class="category-order__list" data-category-order-list></div>
+          </div>
+          <div class="product-editor__list" data-product-list></div>
+        </div>
+      </div>
+
+    <div class="tabs__panel" data-tab-panel="products">
+      <div class="product-editor" data-product-editor data-editor-mode="all" data-scope="{{ event.id }}" data-items='{{ event_buttons.get(event.id, default_buttons) | tojson }}'>
+        <div class="product-editor__top">
+          <div>
+            <strong>Produkte für dieses Event</strong>
+            <div class="muted">Titel, Preis und Kategorie bearbeiten (Farben werden nur in der Vorschau angezeigt).</div>
+            <div class="field-inline" style="margin-top:0.45rem;">
+              <label class="stack" style="min-width: 180px;">
+                <span>Depot-Preis (CHF)</span>
+                <input type="number" step="1" min="0" data-depot-price>
+              </label>
+              <span class="muted">Depot gilt global, pro Produkt nur aktivierbar.</span>
+            </div>
+          </div>
+          <div class="inline-actions">
+            <button type="button" class="secondary" data-add-product>+ Produkt</button>
           </div>
         </div>
+        <div class="product-editor__previews">
+          <div class="product-preview-block">
+            <div class="product-preview-title">Kasse Vorschau (sichtbare Produkte)</div>
+            <div class="product-editor__preview" data-product-preview="cashier"></div>
+          </div>
+          <div class="product-preview-block">
+            <div class="product-preview-title">Preisliste Vorschau (sortiert)</div>
+            <div class="product-editor__preview product-editor__preview--list" data-product-preview="price"></div>
+          </div>
+        </div>
+        <div class="category-order" data-category-order>
+          <div class="field-inline" style="justify-content: space-between; align-items: center;">
+            <div>
+              <strong>Kategorieneinstellungen</strong>
+              <div class="muted">Reihenfolge + Aktivierung je Kategorie für Kasse & Preisliste.</div>
+            </div>
+            <button type="button" class="secondary" data-add-category>+ Kategorie</button>
+          </div>
+          <div class="category-order__list" data-category-order-list></div>
+        </div>
+        <div class="product-editor__list" data-product-list></div>
+        <input type="hidden" name="kassensystem_settings" value='{{ kass_settings.get(event.id, {"items": event_buttons.get(event.id, default_buttons)}) | tojson }}'>
       </div>
     </div>
-  </div>
 
-  <div class="product-editor" data-product-editor data-scope="{{ event.id }}" data-items='{{ event_buttons.get(event.id, default_buttons) | tojson }}'>
-    <div class="product-editor__top">
-      <div>
-        <strong>Produkte für dieses Event</strong>
-        <div class="muted">Titel, Preis und Kategorie bearbeiten (Farben werden nur in der Vorschau angezeigt).</div>
-        <div class="field-inline" style="margin-top:0.45rem;">
-          <label class="stack" style="min-width: 180px;">
-            <span>Depot-Preis (CHF)</span>
-            <input type="number" step="1" min="0" data-depot-price>
-          </label>
-          <span class="muted">Depot gilt global, pro Produkt nur aktivierbar.</span>
-        </div>
-      </div>
-      <div class="inline-actions">
+    <div class="tabs__panel" data-tab-panel="import">
+      <div class="field-inline" style="margin-top:0.4rem;">
         <label class="secondary" style="padding:0.45rem 0.65rem; cursor:pointer;">
-          JSON importieren
+          Produkte-JSON importieren
           <input type="file" accept="application/json" data-product-import hidden>
         </label>
-        <button type="button" class="secondary" data-product-export>Daten exportieren</button>
-        <button type="button" class="secondary" data-add-product>+ Produkt</button>
+        <button type="button" class="secondary" data-product-export>Produkte exportieren</button>
       </div>
+      <div class="muted" style="margin-top: 0.4rem;">Import ersetzt die Produktliste in diesem Event.</div>
+
+      <div class="field-inline" style="margin-top:0.8rem;">
+        <label class="secondary" style="padding:0.45rem 0.65rem; cursor:pointer;">
+          Event-JSON importieren
+          <input type="file" accept="application/json" data-import-event hidden>
+        </label>
+        <button type="button" class="secondary" data-export-event>Event-JSON exportieren</button>
+      </div>
+      <div class="muted" style="margin-top: 0.4rem;">Import ersetzt die Felder oben, JSON bleibt optional.</div>
     </div>
-    <div class="product-editor__previews">
-      <div class="product-preview-block">
-        <div class="product-preview-title">Kasse Vorschau (sichtbare Produkte)</div>
-        <div class="product-editor__preview" data-product-preview="cashier"></div>
-      </div>
-      <div class="product-preview-block">
-        <div class="product-preview-title">Preisliste Vorschau (sortiert)</div>
-        <div class="product-editor__preview product-editor__preview--list" data-product-preview="price"></div>
-      </div>
-    </div>
-    <div class="category-order" data-category-order>
-      <div class="field-inline" style="justify-content: space-between; align-items: center;">
-        <div>
-          <strong>Kategorieneinstellungen</strong>
-          <div class="muted">Reihenfolge + Aktivierung je Kategorie für Kasse & Preisliste.</div>
-        </div>
-        <button type="button" class="secondary" data-add-category>+ Kategorie</button>
-      </div>
-      <div class="category-order__list" data-category-order-list></div>
-    </div>
-    <div class="product-editor__list" data-product-list></div>
-    <input type="hidden" name="kassensystem_settings" value='{{ kass_settings.get(event.id, {"items": event_buttons.get(event.id, default_buttons)}) | tojson }}'>
   </div>
 
-  <div class="field-inline" style="margin-top:0.8rem;">
-    <label class="secondary" style="padding:0.45rem 0.65rem; cursor:pointer;">
-      Event-JSON importieren
-      <input type="file" accept="application/json" data-import-event hidden>
-    </label>
-    <button type="button" class="secondary" data-export-event>Event-JSON exportieren</button>
-    <span class="muted">Import ersetzt die Felder oben, JSON bleibt optional.</span>
-  </div>
   <div class="form-actions" style="margin-top: 1rem;">
     <button type="submit" class="primary" data-submit-btn>Speichern</button>
     <span class="form-status" data-form-status style="margin-left: 0.8rem; color: #94a3b8; display: none;"></span>
   </div>
-</form>
-<form id="bg-upload-{{ event.id }}" method="post" action="{{ url_for('upload_background', event_id=event.id) }}" enctype="multipart/form-data"></form>
-<form id="bg-delete-{{ event.id }}" method="post" action="{{ url_for('upload_background', event_id=event.id) }}">
-  <input type="hidden" name="delete_background" value="1">
-</form>
-<form id="pl-upload-{{ event.id }}" method="post" action="{{ url_for('upload_price_list_background', event_id=event.id) }}" enctype="multipart/form-data"></form>
-<form id="pl-delete-{{ event.id }}" method="post" action="{{ url_for('upload_price_list_background', event_id=event.id) }}">
-  <input type="hidden" name="delete_price_list_background" value="1">
 </form>
 
 <script id="event-settings-data" type="application/json">
@@ -461,5 +484,5 @@
 <script id="price-list-defaults-data" type="application/json">
   {{ price_list_defaults | tojson }}
 </script>
-<script src="{{ url_for('static', filename='js/admin.js', v='4') }}" defer></script>
+<script src="{{ url_for('static', filename='js/admin.js', v='5') }}" defer></script>
 {% endblock %}

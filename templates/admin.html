@@ -2,6 +2,9 @@
 {% block title %}Admin{% endblock %}
 {% block content %}
 <h1>Adminbereich</h1>
+<div class="field-inline" style="margin-bottom: 1rem;">
+  <a class="button-link" href="{{ url_for('admin_images') }}">Bilderverwaltung</a>
+</div>
 
 <style>
   .muted { color: #94a3b8; font-size: 0.95rem; }
@@ -290,14 +293,6 @@
             <span>Primärfarbe (Karten)</span>
             <input type="color" class="color-input" data-shot-field="primary_color">
           </label>
-          <label class="stack">
-            <span>Sekundärfarbe (Verlauf)</span>
-            <input type="color" class="color-input" data-shot-field="secondary_color">
-          </label>
-          <label class="stack">
-            <span>Terziärfarbe (Verlauf)</span>
-            <input type="color" class="color-input" data-shot-field="tertiary_color">
-          </label>
         </div>
         <div class="shot-settings__numbers">
           <label class="stack">
@@ -485,6 +480,6 @@
 <script id="price-list-defaults-data" type="application/json">
   {{ price_list_defaults | tojson }}
 </script>
-<script src="{{ url_for('static', filename='js/admin.js', v='4') }}" defer></script>
+<script src="{{ url_for('static', filename='js/admin.js', v='5') }}" defer></script>
 
 {% endblock %}

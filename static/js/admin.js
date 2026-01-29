@@ -343,6 +343,7 @@ document.addEventListener('click', (e) => {
 
   const fallbackColor = "#1f2a44";
   const defaultCategory = "Standard";
+  let productEditorSequence = 0;
 
     const getTextContent = (id) => {
       const el = document.getElementById(id);
@@ -394,6 +395,54 @@ document.addEventListener('click', (e) => {
       });
     });
 
+    safeRun("event-settings-tabs", () => {
+      const tabs = document.querySelector("[data-tabs]");
+      if (!tabs) return;
+      const buttons = Array.from(tabs.querySelectorAll("[data-tab-target]"));
+      const panels = Array.from(tabs.querySelectorAll("[data-tab-panel]"));
+      if (!buttons.length || !panels.length) return;
+
+      const activate = (name) => {
+        buttons.forEach((btn) => {
+          btn.classList.toggle("is-active", btn.dataset.tabTarget === name);
+        });
+        panels.forEach((panel) => {
+          panel.classList.toggle("is-active", panel.dataset.tabPanel === name);
+        });
+      };
+
+      const findValid = (name) => panels.some((panel) => panel.dataset.tabPanel === name) ? name : null;
+
+      const getInitial = () => {
+        const hash = window.location.hash || "";
+        if (hash.startsWith("#tab-")) {
+          const fromHash = findValid(hash.slice(5));
+          if (fromHash) return fromHash;
+        }
+        const params = new URLSearchParams(window.location.search);
+        const fromQuery = findValid(params.get("tab"));
+        if (fromQuery) return fromQuery;
+        return buttons[0].dataset.tabTarget;
+      };
+
+      tabs.dataset.tabsReady = "true";
+      const initial = getInitial();
+      activate(initial);
+
+      buttons.forEach((btn) => {
+        btn.addEventListener("click", () => {
+          const target = btn.dataset.tabTarget;
+          if (!target) return;
+          activate(target);
+          if (history && history.replaceState) {
+            history.replaceState(null, "", `#tab-${target}`);
+          } else {
+            window.location.hash = `tab-${target}`;
+          }
+        });
+      });
+    });
+
     const sanitizeColor = (value) => {
       if (typeof value !== "string") return fallbackColor;
       const hex = value.trim();
@@ -420,12 +469,44 @@ document.addEventListener('click', (e) => {
       return Number.isFinite(value) ? Math.round(value) : null;
     };
 
+    const slugifyKey = (value) => {
+      const raw = String(value || "").toLowerCase().trim();
+      if (!raw) return "";
+      let normalized = raw;
+      if (typeof normalized.normalize === "function") {
+        normalized = normalized.normalize("NFD").replace(/\p{Diacritic}/gu, "");
+      }
+      const cleaned = normalized.replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+      return cleaned || "";
+    };
+
+    const getUniqueName = (base, used) => {
+      const safeBase = base || "produkt";
+      let candidate = safeBase;
+      let suffix = 1;
+      while (used.has(candidate)) {
+        suffix += 1;
+        candidate = `${safeBase}-${suffix}`;
+      }
+      used.add(candidate);
+      return candidate;
+    };
+
+    const applyAutoNames = (list) => {
+      const used = new Set();
+      list.forEach((item, index) => {
+        const label = String(item?.label || "").trim() || `produkt-${index + 1}`;
+        const base = slugifyKey(label) || `produkt-${index + 1}`;
+        item.name = getUniqueName(base, used);
+      });
+    };
+
     const normalizeItem = (item, index) => {
       const safeItem = item || {};
       const rawLabel = safeItem.label ?? safeItem.name ?? "";
       const label = String(rawLabel).trim() || "Produkt " + (index + 1);
-      const rawName = safeItem.name ?? label ?? "produkt-" + (index + 1);
-      const name = String(rawName).trim();
+      const rawName = safeItem.name ?? "";
+      const name = String(rawName).trim() || slugifyKey(label) || "produkt-" + (index + 1);
       const price = Number.isFinite(Number(safeItem.price)) ? Number(safeItem.price) : 0;
       const hasDepot = safeItem.has_depot === true;
       const priority = getItemPriority(safeItem);
@@ -445,6 +526,7 @@ document.addEventListener('click', (e) => {
     safeRun("shot-settings", () => {
       document.querySelectorAll("[data-shot-settings]").forEach((wrapper) => {
         const hidden = wrapper.querySelector('input[name="shotcounter_settings"]');
+        const preview = wrapper.querySelector("[data-shot-image-preview]");
         const defaults = { ...shotDefaults, ...parseJson(wrapper.dataset.defaults, shotDefaults) };
         const current = parseJson(wrapper.dataset.current, {});
         let settings = { ...defaults, ...current };
@@ -461,6 +543,16 @@ document.addEventListener('click', (e) => {
               input.value = settings[key] ?? defaults[key] ?? "";
             }
           });
+          if (preview) {
+            const img = settings.background_image || "";
+            if (img) {
+              preview.src = `/uploads/${img}`;
+              preview.style.display = "block";
+            } else {
+              preview.removeAttribute("src");
+              preview.style.display = "none";
+            }
+          }
         };
 
         const syncHidden = () => {
@@ -481,6 +573,16 @@ document.addEventListener('click', (e) => {
               settings[key] = input.value;
             }
             syncHidden();
+            if (key === "background_image" && preview) {
+              const img = settings.background_image || "";
+              if (img) {
+                preview.src = `/uploads/${img}`;
+                preview.style.display = "block";
+              } else {
+                preview.removeAttribute("src");
+                preview.style.display = "none";
+              }
+            }
           });
         });
 
@@ -509,13 +611,17 @@ document.addEventListener('click', (e) => {
         const list = wrapper.querySelector("[data-product-list]");
         const categoryOrderList = wrapper.querySelector("[data-category-order-list]");
         const addCategoryBtn = wrapper.querySelector("[data-add-category]");
-        const hidden = wrapper.querySelector('input[name="kassensystem_settings"]');
+        const hidden = wrapper.querySelector('input[name="kassensystem_settings"]') || (form ? form.querySelector('input[name="kassensystem_settings"]') : null);
         const importInput = wrapper.querySelector("[data-product-import]");
         const exportButton = wrapper.querySelector("[data-product-export]");
         const depotInput = form ? form.querySelector("[data-depot-price]") : null;
+        const editorMode = wrapper.dataset.editorMode || "all";
+        const editorId = wrapper.dataset.editorId || `product-editor-${Date.now()}-${++productEditorSequence}`;
+        wrapper.dataset.editorId = editorId;
+        const editorViewKey = editorMode === "price" ? "price_list" : editorMode === "cashier" ? "cashier" : null;
 
       let baseSettings = {};
-      try { baseSettings = JSON.parse(hidden.value || "{}"); } catch (err) { baseSettings = {}; }
+      try { baseSettings = JSON.parse((hidden && hidden.value) || "{}"); } catch (err) { baseSettings = {}; }
 
       let parsedItems = [];
       try {
@@ -541,6 +647,7 @@ document.addEventListener('click', (e) => {
       if (!items.length) {
         items = [normalizeItem({ name: "Produkt", label: "Neues Produkt", price: 0, color: fallbackColor }, 0)];
       }
+      applyAutoNames(items);
 
       if (depotInput) {
         depotInput.value = depotPrice;
@@ -551,6 +658,14 @@ document.addEventListener('click', (e) => {
           syncHidden();
         });
       }
+
+      const isCategoryVisibleForView = (category, viewKey) => {
+        if (!viewKey) return true;
+        const visibility = categoryVisibility && typeof categoryVisibility === "object" ? categoryVisibility[category] : null;
+        if (!visibility) return true;
+        return visibility[viewKey] !== false;
+      };
+
 
       const normalizeCategoryOrder = (categories) => {
         const clean = [];
@@ -567,6 +682,25 @@ document.addEventListener('click', (e) => {
         });
         categoryOrder = clean;
         return clean;
+      };
+
+      const mergeCategoryOrder = (nextOrder) => {
+        const existing = categoryOrder.length ? categoryOrder.slice() : getAllCategoriesRaw();
+        const visibleSet = new Set(nextOrder);
+        let index = 0;
+        const merged = existing.map((name) => {
+          if (visibleSet.has(name)) {
+            const replacement = nextOrder[index];
+            index += 1;
+            return replacement;
+          }
+          return name;
+        });
+        nextOrder.slice(index).forEach((name) => {
+          if (!merged.includes(name)) merged.push(name);
+        });
+        categoryOrder = merged;
+        return merged;
       };
 
       const normalizeCategoryVisibility = (categories) => {
@@ -590,7 +724,7 @@ document.addEventListener('click', (e) => {
           .map((row) => row.dataset.categoryName)
           .filter(Boolean);
         if (nextOrder.length) {
-          categoryOrder = nextOrder;
+          categoryOrder = editorViewKey ? mergeCategoryOrder(nextOrder) : nextOrder;
         }
       };
 
@@ -624,20 +758,35 @@ document.addEventListener('click', (e) => {
         }
       };
 
-      const syncHidden = () => {
+      const broadcastUpdate = (settings) => {
+        if (!form) return;
+        form.dispatchEvent(
+          new CustomEvent("product-editor:update", {
+            detail: { source: editorId, settings },
+          })
+        );
+      };
+
+      const syncHidden = (broadcast = true) => {
         syncCategoryOrderFromDom();
         syncItemPrioritiesFromDom();
-        const categories = getAllCategories();
+        const categories = getAllCategoriesRaw();
         normalizeCategoryOrder(categories);
         normalizeCategoryVisibility(categories);
-        hidden.value = JSON.stringify({
+        const settings = {
           ...baseSettings,
           depot_price: depotPrice,
           category_order: categoryOrder,
           category_visibility: categoryVisibility,
           items,
-        });
-        wrapper.dispatchEvent(new CustomEvent("product-editor:change", { detail: { categories } }));
+        };
+        if (hidden) {
+          hidden.value = JSON.stringify(settings);
+        }
+        wrapper.dispatchEvent(new CustomEvent("product-editor:change", { detail: { categories }, bubbles: true }));
+        if (broadcast) {
+          broadcastUpdate(settings);
+        }
       };
 
       const getNextPriority = (categoryName) => {
@@ -774,7 +923,7 @@ document.addEventListener('click', (e) => {
         renderPricePreview();
       };
 
-      const getAllCategories = () => {
+      const getAllCategoriesRaw = () => {
         // Collect unique categories from all items in current editor
         const categories = new Set();
         items.forEach(item => {
@@ -795,15 +944,34 @@ document.addEventListener('click', (e) => {
         return Array.from(categories).sort();
       };
 
-      const getOrderedCategories = (categories) => normalizeCategoryOrder(categories);
+      const getAllCategories = () => getAllCategoriesRaw();
+
+      const getOrderedCategories = (categories) => {
+        const ordered = [];
+        (categoryOrder || []).forEach((name) => {
+          const trimmed = String(name || "").trim();
+          if (trimmed && categories.includes(trimmed) && !ordered.includes(trimmed)) {
+            ordered.push(trimmed);
+          }
+        });
+        categories.forEach((name) => {
+          if (name && !ordered.includes(name)) {
+            ordered.push(name);
+          }
+        });
+        return ordered;
+      };
 
       const renderCategoryOrder = () => {
         if (!categoryOrderList) return;
         if (Array.isArray(lastRenderedCategoryOrder) && lastRenderedCategoryOrder.length) {
           categoryOrder = lastRenderedCategoryOrder.slice();
         }
-        const categories = getAllCategories();
-        const ordered = getOrderedCategories(categories);
+        const categories = getAllCategoriesRaw();
+        const categoriesForView = editorViewKey
+          ? categories.filter((name) => isCategoryVisibleForView(name, editorViewKey))
+          : categories;
+        const ordered = getOrderedCategories(categoriesForView);
         const usage = {};
         items.forEach((item) => {
           const category = String(item?.category || defaultCategory).trim() || defaultCategory;
@@ -850,7 +1018,7 @@ document.addEventListener('click', (e) => {
               .filter(Boolean);
             if (!nextOrder.length) return;
             pendingCategoryOrder = nextOrder;
-            categoryOrder = nextOrder;
+            categoryOrder = editorViewKey ? mergeCategoryOrder(nextOrder) : nextOrder;
             renderPreview();
             syncHidden();
             refreshCategoryOrderControls();
@@ -866,13 +1034,12 @@ document.addEventListener('click', (e) => {
             } else {
               categoryOrderList.insertBefore(dragging, afterElement);
             }
-            updateOrderFromDom();
           });
 
           categoryOrderList.addEventListener("drop", (event) => {
             event.preventDefault();
             if (pendingCategoryOrder && pendingCategoryOrder.length) {
-              categoryOrder = pendingCategoryOrder;
+              categoryOrder = editorViewKey ? mergeCategoryOrder(pendingCategoryOrder) : pendingCategoryOrder;
               pendingCategoryOrder = null;
               renderList();
               renderPreview();
@@ -888,7 +1055,7 @@ document.addEventListener('click', (e) => {
         const renameCategory = (oldName, newNameRaw) => {
           const newName = String(newNameRaw || "").trim();
           if (!newName || newName === oldName) return;
-          if (categories.includes(newName)) return;
+          if (getAllCategoriesRaw().includes(newName)) return;
 
           items.forEach((item) => {
             const category = String(item.category || defaultCategory).trim() || defaultCategory;
@@ -924,7 +1091,7 @@ document.addEventListener('click', (e) => {
             row.classList.remove("is-dragging");
             categoryOrderList.classList.remove("is-dragging");
             if (pendingCategoryOrder && pendingCategoryOrder.length) {
-              categoryOrder = pendingCategoryOrder;
+              categoryOrder = editorViewKey ? mergeCategoryOrder(pendingCategoryOrder) : pendingCategoryOrder;
               pendingCategoryOrder = null;
               renderList();
               renderPreview();
@@ -1075,7 +1242,7 @@ document.addEventListener('click', (e) => {
       const addCategory = (nameRaw) => {
         const name = String(nameRaw || "").trim();
         if (!name) return;
-        const categories = getAllCategories();
+        const categories = getAllCategoriesRaw();
         if (categories.includes(name)) return;
         categoryOrder.push(name);
         categoryVisibility[name] = { cashier: true, price_list: true };
@@ -1103,14 +1270,23 @@ document.addEventListener('click', (e) => {
 
         // Populate datalist with unique categories
         const categories = getAllCategories();
-        categories.forEach(cat => {
+        const categoriesForView = editorViewKey
+          ? categories.filter((name) => isCategoryVisibleForView(name, editorViewKey))
+          : categories;
+        categoriesForView.forEach(cat => {
           const option = document.createElement("option");
           option.value = cat;
           datalist.appendChild(option);
         });
         list.appendChild(datalist);
 
-        const orderedCategories = getOrderedCategories(categories);
+        const orderedCategories = getOrderedCategories(categoriesForView);
+        const viewItems = editorViewKey
+          ? items.filter((item) => {
+              const category = String(item?.category || defaultCategory).trim() || defaultCategory;
+              return isCategoryVisibleForView(category, editorViewKey);
+            })
+          : items;
         lastRenderedCategoryOrder = orderedCategories.slice();
 
         const sortItemsWithinCategory = (groupItems) =>
@@ -1164,7 +1340,7 @@ document.addEventListener('click', (e) => {
         };
 
         orderedCategories.forEach((category) => {
-          const groupItems = items.filter((item) => {
+          const groupItems = viewItems.filter((item) => {
             const itemCategory = String(item?.category || defaultCategory).trim() || defaultCategory;
             return itemCategory === category;
           });
@@ -1225,31 +1401,31 @@ document.addEventListener('click', (e) => {
 
           const nameContainer = document.createElement("div");
           nameContainer.className = "stack";
-          const nameLabel = document.createElement("label");
-          nameLabel.textContent = "Schlüssel (interner Name)";
+          nameContainer.style.display = "none";
           const nameInput = document.createElement("input");
+          nameInput.type = "hidden";
           nameInput.value = item.name;
-          nameInput.placeholder = "unique-key";
-          nameInput.addEventListener("input", () => {
-            item.name = nameInput.value.trim();
-            row.dataset.itemName = item.name;
-            syncHidden();
-          });
-          nameContainer.append(nameLabel, nameInput);
+          nameContainer.append(nameInput);
 
           const labelContainer = document.createElement("div");
           labelContainer.className = "stack";
           const labelLabel = document.createElement("label");
-          labelLabel.textContent = "Titel (Anzeige)";
+          labelLabel.textContent = "Produktname";
           const labelInput = document.createElement("input");
           labelInput.value = item.label;
           labelInput.placeholder = "z.B. Bier";
           labelInput.addEventListener("input", () => {
             item.label = labelInput.value;
-            if (!item.name.trim()) {
-              item.name = labelInput.value;
-              nameInput.value = item.name;
-            }
+            const base = slugifyKey(item.label) || "produkt";
+            const taken = new Set(
+              items
+                .filter((candidate) => candidate && candidate !== item)
+                .map((candidate) => String(candidate.name || "").trim())
+                .filter(Boolean)
+            );
+            item.name = getUniqueName(base, taken);
+            nameInput.value = item.name;
+            row.dataset.itemName = item.name;
             renderPreview();
             syncHidden();
           });
@@ -1272,7 +1448,7 @@ document.addEventListener('click', (e) => {
           priceContainer.append(priceLabel, priceInput);
 
           const depotContainer = document.createElement("div");
-          depotContainer.className = "stack";
+          depotContainer.className = "stack product-field--depot";
           const depotLabel = document.createElement("label");
           depotLabel.textContent = "Depot";
           const depotToggleWrap = document.createElement("div");
@@ -1299,7 +1475,7 @@ document.addEventListener('click', (e) => {
           priceDepotGroup.append(priceContainer, depotContainer);
 
           const colorContainer = document.createElement("div");
-          colorContainer.className = "stack";
+          colorContainer.className = "stack product-field--color";
           const colorLabel = document.createElement("label");
           colorLabel.textContent = "Hintergrundfarbe";
           const colorInput = document.createElement("input");
@@ -1390,7 +1566,6 @@ document.addEventListener('click', (e) => {
           items.push(
             normalizeItem(
               {
-                name: "produkt-" + Date.now(),
                 label: "Neues Produkt",
                 price: 0,
                 color: fallbackColor,
@@ -1398,6 +1573,7 @@ document.addEventListener('click', (e) => {
               items.length
             )
           );
+          applyAutoNames(items);
           items[items.length - 1].priority = nextPriority;
           renderList();
           renderPreview();
@@ -1433,6 +1609,7 @@ document.addEventListener('click', (e) => {
                 : {};
             items = (importedItems || []).map((it, idx) => normalizeItem(it, idx));
             if (!items.length) items = [normalizeItem({ name: "Produkt", label: "Neues Produkt", price: 0, color: fallbackColor }, 0)];
+            applyAutoNames(items);
             renderList();
             renderPreview();
             renderCategoryOrder();
@@ -1483,7 +1660,7 @@ document.addEventListener('click', (e) => {
           syncCategoryOrderFromDom();
           syncHidden();
         },
-        setSettings: (data) => {
+        setSettings: (data, options = {}) => {
           const importedItems = Array.isArray(data && data.items) ? data.items : [];
           baseSettings = data && typeof data === "object" && !Array.isArray(data) ? { ...data } : {};
           depotPrice = normalizeDepotPrice(baseSettings.depot_price);
@@ -1498,17 +1675,26 @@ document.addEventListener('click', (e) => {
             depotInput.value = depotPrice;
           }
           items = importedItems.length ? importedItems.map((it, idx) => normalizeItem(it, idx)) : [normalizeItem({ name: "Produkt", label: "Produkt", price: 0, color: fallbackColor }, 0)];
+          applyAutoNames(items);
           renderList();
           renderPreview();
           renderCategoryOrder();
-          syncHidden();
+          syncHidden(!options.suppressBroadcast);
         },
       };
+
+      if (form) {
+        form.addEventListener("product-editor:update", (event) => {
+          const detail = event.detail || {};
+          if (!detail.settings || detail.source === editorId) return;
+          wrapper.productApi.setSettings(detail.settings, { suppressBroadcast: true });
+        });
+      }
 
         renderList();
         renderPreview();
         renderCategoryOrder();
-        syncHidden();
+        syncHidden(false);
       });
     });
 
@@ -1744,9 +1930,204 @@ document.addEventListener('click', (e) => {
       }
     };
 
+    const autosaveToast = (() => {
+      let toast;
+      let hideTimer;
+      let cleanupTimer;
+      let showToken = 0;
+
+      const ensureToast = () => {
+        if (toast) return toast;
+        toast = document.createElement("div");
+        toast.setAttribute("data-autosave-toast", "");
+        Object.assign(toast.style, {
+          position: "fixed",
+          left: "50%",
+          bottom: "16px",
+          transform: "translateX(-50%)",
+          background: "rgba(15, 23, 42, 0.92)",
+          color: "#e2e8f0",
+          border: "1px solid rgba(148, 163, 184, 0.4)",
+          borderRadius: "999px",
+          padding: "0.45rem 0.9rem",
+          fontSize: "0.9rem",
+          boxShadow: "0 8px 24px rgba(0,0,0,0.35)",
+          opacity: "0",
+          pointerEvents: "none",
+          transition: "opacity 0.2s ease",
+          zIndex: "3000",
+        });
+        document.body.appendChild(toast);
+        return toast;
+      };
+
+      return (message, tone = "success") => {
+        showToken += 1;
+        const currentToken = showToken;
+        const el = ensureToast();
+        el.textContent = message;
+        el.style.borderColor = tone === "error" ? "rgba(239, 68, 68, 0.6)" : "rgba(16, 185, 129, 0.6)";
+        el.style.color = tone === "error" ? "#fecaca" : "#e2e8f0";
+        el.style.display = "block";
+        el.style.opacity = "1";
+        if (hideTimer) clearTimeout(hideTimer);
+        if (cleanupTimer) clearTimeout(cleanupTimer);
+        hideTimer = setTimeout(() => {
+          if (!el || currentToken !== showToken) return;
+          el.style.opacity = "0";
+          setTimeout(() => {
+            if (!el || currentToken !== showToken) return;
+            el.style.display = "none";
+          }, 250);
+        }, 2200);
+        cleanupTimer = setTimeout(() => {
+          if (!el || currentToken !== showToken) return;
+          el.style.opacity = "0";
+          el.style.display = "none";
+        }, 2600);
+      };
+    })();
+
+    const prepareEventForm = (form, { silent = false, skipCategorySync = false } = {}) => {
+      const statusEl = form.querySelector('[data-form-status]');
+
+      const productEditor = form.querySelector('[data-product-editor]');
+      if (productEditor && productEditor.productApi) {
+        const settings = productEditor.productApi.getSettings();
+        const items = settings.items || [];
+        const names = items.map(item => item.name);
+        const duplicates = names.filter((name, index) => names.indexOf(name) !== index);
+
+        if (duplicates.length > 0) {
+          if (!silent) {
+            if (statusEl) {
+              statusEl.style.display = 'inline';
+              statusEl.style.color = '#ef4444';
+              statusEl.textContent = `Fehler: Doppelte Produktnamen gefunden: ${duplicates.join(', ')}`;
+              setTimeout(() => {
+                statusEl.style.display = 'none';
+              }, 5000);
+            }
+            alert(`Fehler: Doppelte Produktnamen gefunden: ${duplicates.join(', ')}`);
+          }
+          return false;
+        }
+      }
+
+      const priceSettingsWrapper = form.querySelector("[data-price-settings]");
+      if (priceSettingsWrapper && priceSettingsWrapper.priceSettingsApi) {
+        priceSettingsWrapper.priceSettingsApi.getSettings();
+      }
+
+      if (!skipCategorySync && productEditor && productEditor.productApi && productEditor.productApi.syncCategoryOrder) {
+        productEditor.productApi.syncCategoryOrder();
+      }
+
+      const sharedInput = form.querySelector('input[name="shared_settings"]');
+      if (sharedInput) {
+        const currentSettings = parseJson(sharedInput.value, {});
+        const autoReloadCheckbox = form.querySelector('input[name="auto_reload_on_add"]');
+        if (autoReloadCheckbox) {
+          currentSettings.auto_reload_on_add = autoReloadCheckbox.checked;
+        }
+
+        if (priceSettingsWrapper && priceSettingsWrapper.priceSettingsApi) {
+          currentSettings.price_list = priceSettingsWrapper.priceSettingsApi.getSettings();
+        }
+
+        sharedInput.value = JSON.stringify(currentSettings);
+      }
+
+      const kassInput = form.querySelector('input[name="kassensystem_settings"]');
+      if (productEditor && productEditor.productApi && kassInput) {
+        kassInput.value = JSON.stringify(productEditor.productApi.getSettings());
+      }
+
+      return true;
+    };
+
+    const setupAutosave = (form) => {
+      if (!form || form.dataset.scope === "new") return;
+      if (!/\/update$/.test(form.getAttribute("action") || "")) return;
+
+      const state = { timer: null, inFlight: false, pending: false, suspend: false };
+      let lastPayload = null;
+
+      const scheduleSave = () => {
+        state.pending = true;
+        if (state.timer) clearTimeout(state.timer);
+        state.timer = setTimeout(async () => {
+          if (state.inFlight || state.suspend) return;
+          state.pending = false;
+          state.suspend = true;
+          const ok = prepareEventForm(form, { silent: true, skipCategorySync: true });
+          state.suspend = false;
+          if (!ok) {
+            autosaveToast("Änderung nicht gespeichert", "error");
+            return;
+          }
+          const payload = new URLSearchParams(new FormData(form)).toString();
+          if (payload === lastPayload) {
+            return;
+          }
+          state.inFlight = true;
+          try {
+            const response = await fetch(form.action, {
+              method: "POST",
+              body: new FormData(form),
+              headers: { "X-Requested-With": "XMLHttpRequest" },
+            });
+            if (response.ok) {
+              lastPayload = payload;
+              autosaveToast("Änderung gespeichert", "success");
+            } else {
+              autosaveToast("Speichern fehlgeschlagen", "error");
+            }
+          } catch (err) {
+            autosaveToast("Speichern fehlgeschlagen", "error");
+          } finally {
+            state.inFlight = false;
+            if (state.pending) scheduleSave();
+          }
+        }, 80);
+      };
+
+      form.addEventListener(
+        "blur",
+        (event) => {
+          const target = event.target;
+          if (!(target instanceof HTMLElement)) return;
+          if (!form.contains(target)) return;
+          if (state.suspend) return;
+          if (target.tagName === "BUTTON") return;
+          if (target.tagName === "INPUT" && target.type === "file") return;
+          scheduleSave();
+        },
+        true
+      );
+
+      form.addEventListener("change", (event) => {
+        const target = event.target;
+        if (!(target instanceof HTMLElement)) return;
+        if (!form.contains(target)) return;
+        if (state.suspend) return;
+        if (target.tagName === "BUTTON") return;
+        if (target.tagName === "INPUT" && target.type === "file") return;
+        scheduleSave();
+      });
+
+      form.querySelectorAll("[data-product-editor]").forEach((editor) => {
+        editor.addEventListener("product-editor:change", () => {
+          if (state.suspend) return;
+          scheduleSave();
+        });
+      });
+    };
+
     safeRun("event-form", () => {
       document.querySelectorAll("[data-event-form]").forEach((form) => {
         bindCopyAndImport(form);
+        setupAutosave(form);
 
       // Ensure submit button works properly
       const submitBtn = form.querySelector('[data-submit-btn]');
@@ -1810,29 +2191,7 @@ document.addEventListener('click', (e) => {
         }
 
         // Collect shared settings
-        const sharedInput = this.querySelector('input[name="shared_settings"]');
-        if (sharedInput) {
-          const currentSettings = parseJson(sharedInput.value, {});
-
-          // Collect all checkboxes with data-shared-setting attribute
-          const autoReloadCheckbox = this.querySelector('input[name="auto_reload_on_add"]');
-          if (autoReloadCheckbox) {
-            currentSettings.auto_reload_on_add = autoReloadCheckbox.checked;
-          }
-
-          const priceSettingsWrapper = this.querySelector("[data-price-settings]");
-          if (priceSettingsWrapper && priceSettingsWrapper.priceSettingsApi) {
-            currentSettings.price_list = priceSettingsWrapper.priceSettingsApi.getSettings();
-          }
-
-          sharedInput.value = JSON.stringify(currentSettings);
-        }
-
-        const productEditor = this.querySelector('[data-product-editor]');
-        const kassInput = this.querySelector('input[name="kassensystem_settings"]');
-        if (productEditor && productEditor.productApi && kassInput) {
-          kassInput.value = JSON.stringify(productEditor.productApi.getSettings());
-        }
+        prepareEventForm(this, { silent: true });
 
         // Form will now submit naturally
         });
