@@ -82,6 +82,23 @@
     font-size:1rem;
     padding:0.85rem 1.2rem;
   }
+  .hint { font-size: 0.9rem; color: #cbd5e1; }
+  .terminal-panel {
+    border: 1px dashed var(--border);
+    border-radius: 10px;
+    padding: 0.65rem;
+    background: rgba(255,255,255,0.03);
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+  }
+  .terminal-status {
+    font-size: 0.95rem;
+    color: #cbd5e1;
+    min-height: 1.4rem;
+  }
+  .terminal-status.success { color: #22c55e; }
+  .terminal-status.error { color: #f87171; }
   .products-card { flex:0 0 auto; display:flex; flex-direction:column; justify-content:flex-end; }
   
   /* Category grouping (compact) */
@@ -140,6 +157,35 @@
         {% endif %}
       </div>
       <div class="summary-actions">
+        <div class="terminal-panel">
+          <strong>Terminalzahlung</strong>
+          {% if not sumup_configured %}
+            <div class="hint">SumUp Zugangsdaten fehlen. Bitte im Adminbereich hinterlegen.</div>
+          {% else %}
+            {% if assigned_terminal %}
+              <div class="pill">Terminal: {{ assigned_terminal.name }}</div>
+              <input type="hidden" id="terminal-select" value="{{ assigned_terminal.id }}">
+            {% else %}
+              <label class="stack">
+                <span>Freies Terminal wählen</span>
+                <select id="terminal-select">
+                  <option value="">Bitte wählen</option>
+                  {% for terminal in available_terminals %}
+                    <option value="{{ terminal.id }}">{{ terminal.name }}</option>
+                  {% endfor %}
+                </select>
+              </label>
+            {% endif %}
+            {% if inactive_terminal %}
+              <div class="hint">Zugewiesenes Terminal ist inaktiv: {{ inactive_terminal.name }}</div>
+            {% endif %}
+            {% if not assigned_terminal and not available_terminals %}
+              <div class="hint">Kein freies Terminal verfügbar.</div>
+            {% endif %}
+            <button class="primary" id="terminal-pay-btn" type="button">Zahlung am Terminal starten</button>
+            <div id="terminal-payment-status" class="terminal-status">Bereit.</div>
+          {% endif %}
+        </div>
         <a href="{{ url_for('remove_last') }}" id="remove-last-link"><button class="secondary">Letzter Artikel löschen</button></a>
         <a href="{{ url_for('checkout') }}"><button class="checkout-btn">Bestellung abschliessen</button></a>
       </div>
@@ -244,6 +290,8 @@
     if (totalElement) {
       totalElement.textContent = cartData.total;
     }
+
+    updateTerminalPayState();
     
     // Update item count badge
     const badgeContainer = document.querySelector('.order-list-wrap h3').parentElement;
@@ -293,6 +341,133 @@
         orderListWrap.appendChild(message);
       }
     }
+  }
+
+  const terminalButton = document.getElementById('terminal-pay-btn');
+  const terminalSelect = document.getElementById('terminal-select');
+  const terminalStatus = document.getElementById('terminal-payment-status');
+  let terminalPoller = null;
+  let activePaymentId = null;
+
+  function getCartTotal() {
+    const totalElement = document.querySelector('[data-cart-total]');
+    return totalElement ? parseFloat(totalElement.textContent || '0') : 0;
+  }
+
+  function getSelectedTerminal() {
+    if (!terminalSelect) {
+      return null;
+    }
+    return terminalSelect.value || null;
+  }
+
+  function setTerminalStatus(message, state) {
+    if (!terminalStatus) return;
+    terminalStatus.textContent = message;
+    terminalStatus.classList.remove('success', 'error');
+    if (state) {
+      terminalStatus.classList.add(state);
+    }
+  }
+
+  function updateTerminalPayState() {
+    if (!terminalButton) return;
+    const total = getCartTotal();
+    const terminalId = getSelectedTerminal();
+    const disabled = total <= 0 || !terminalId || activePaymentId !== null;
+    terminalButton.disabled = disabled;
+  }
+
+  function stopPolling() {
+    if (terminalPoller) {
+      clearInterval(terminalPoller);
+      terminalPoller = null;
+    }
+  }
+
+  async function pollTerminalStatus(paymentId) {
+    try {
+      const response = await fetch(`/api/terminal-payments/${paymentId}`);
+      const data = await response.json();
+      if (!data.success) {
+        setTerminalStatus(data.error || 'Status konnte nicht geladen werden.', 'error');
+        stopPolling();
+        activePaymentId = null;
+        updateTerminalPayState();
+        return;
+      }
+      if (data.status === 'pending') {
+        setTerminalStatus('Zahlung läuft am Terminal …');
+        return;
+      }
+      if (data.status === 'success') {
+        setTerminalStatus('Zahlung erfolgreich. Bestellung wird abgeschlossen …', 'success');
+        stopPolling();
+        window.location.href = '/cashier/checkout';
+        return;
+      }
+      const statusText = {
+        failed: 'Zahlung fehlgeschlagen.',
+        aborted: 'Zahlung abgebrochen.',
+        timeout: 'Zahlung abgelaufen.',
+      }[data.status] || 'Zahlung beendet.';
+      setTerminalStatus(statusText, 'error');
+      stopPolling();
+      activePaymentId = null;
+      updateTerminalPayState();
+    } catch (error) {
+      console.error('Status-Fehler:', error);
+      setTerminalStatus('Status konnte nicht geladen werden.', 'error');
+      stopPolling();
+      activePaymentId = null;
+      updateTerminalPayState();
+    }
+  }
+
+  if (terminalSelect) {
+    terminalSelect.addEventListener('change', updateTerminalPayState);
+  }
+
+  if (terminalButton) {
+    updateTerminalPayState();
+    terminalButton.addEventListener('click', async () => {
+      const terminalId = getSelectedTerminal();
+      const total = getCartTotal();
+      if (!terminalId || total <= 0) {
+        setTerminalStatus('Bitte Terminal wählen und Betrag prüfen.', 'error');
+        return;
+      }
+      terminalButton.disabled = true;
+      setTerminalStatus('Zahlung wird gestartet …');
+      try {
+        const response = await fetch('/api/terminal-payments', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            terminal_id: parseInt(terminalId, 10),
+            amount_cents: Math.round(total * 100),
+            currency: 'CHF',
+          }),
+        });
+        const data = await response.json();
+        if (!data.success) {
+          setTerminalStatus(data.error || 'Zahlung konnte nicht gestartet werden.', 'error');
+          terminalButton.disabled = false;
+          return;
+        }
+        activePaymentId = data.payment_id;
+        setTerminalStatus('Zahlung läuft am Terminal …');
+        stopPolling();
+        terminalPoller = setInterval(() => pollTerminalStatus(activePaymentId), 2000);
+        await pollTerminalStatus(activePaymentId);
+      } catch (error) {
+        console.error('Start-Fehler:', error);
+        setTerminalStatus('Zahlung konnte nicht gestartet werden.', 'error');
+        terminalButton.disabled = false;
+      }
+    });
   }
 </script>
 {% endblock %}

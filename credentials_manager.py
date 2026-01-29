@@ -167,6 +167,28 @@ class CredentialsManager:
         # Save to file
         return self._save_to_file(current)
 
+    def update_sumup_credentials(
+        self,
+        *,
+        access_token: Optional[str] = None,
+        merchant_id: Optional[str] = None,
+        base_url: Optional[str] = None,
+        affiliate_key: Optional[str] = None,
+    ) -> tuple[bool, Optional[str]]:
+        """Aktualisiert SumUp Credentials und speichert sie."""
+        current = self.get_credentials()
+
+        if access_token is not None:
+            current["sumup_access_token"] = access_token
+        if merchant_id is not None:
+            current["sumup_merchant_id"] = merchant_id
+        if base_url is not None:
+            current["sumup_base_url"] = base_url
+        if affiliate_key is not None:
+            current["sumup_affiliate_key"] = affiliate_key
+
+        return self._save_to_file(current)
+
     def is_configured(self) -> bool:
         """Prüft ob Credentials bereits konfiguriert sind.
         
