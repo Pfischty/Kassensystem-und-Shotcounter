@@ -116,40 +116,37 @@
   .product-category__list { display:flex; flex-direction:column; gap:0.75rem; }
   .product-row {
     display:grid;
-    grid-template-columns:
-      minmax(200px, 1.3fr)
-      minmax(200px, 1.1fr)
-      minmax(170px, 0.8fr)
-      minmax(180px, 0.9fr)
-      minmax(180px, 0.7fr);
-    gap:0.6rem;
+    grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+    gap:0.5rem 0.6rem;
     background:#0c1324;
     border:1px solid var(--border);
     border-radius:10px;
-    padding:0.75rem;
-    align-items:end;
+    padding:0.55rem 0.65rem;
+    align-items:start;
     cursor: grab;
   }
   .product-row.is-dragging { opacity: 0.6; cursor: grabbing; }
   .product-field-group {
     display:grid;
-    grid-template-columns: minmax(110px, 1fr) minmax(90px, 1fr);
-    gap:0.6rem;
-    align-items:end;
+    grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+    gap:0.4rem;
+    align-items:start;
   }
   .product-field-group--actions {
-    grid-template-columns: minmax(120px, 1fr) minmax(110px, 1fr);
+    grid-template-columns: minmax(120px, 1fr) auto;
+    align-items:end;
   }
   .product-field-group input[type="number"] {
     max-width: 140px;
   }
   .product-field-group .row-actions button {
-    padding: 0.45rem 0.6rem;
+    padding: 0.35rem 0.55rem;
   }
-  .product-row label { font-size: 0.9rem; color: #cbd5e1; display:block; margin-bottom:0.2rem; }
-  .product-row .row-actions { display:flex; justify-content:flex-end; align-items:flex-end; }
-  .product-row .row-actions button { width:100%; }
-  .color-input { width:100%; min-height:44px; padding: 0; }
+  .product-row .stack { gap: 0.2rem; }
+  .product-row label { font-size: 0.85rem; color: #cbd5e1; display:block; margin-bottom:0.1rem; line-height:1.1; }
+  .product-row .row-actions { display:flex; justify-content:flex-end; align-items:flex-end; align-self:end; }
+  .product-row .row-actions button { width:100%; height:36px; }
+  .product-row .color-input { width:100%; min-height:36px; padding: 0; }
   .pill { padding: 0.3rem 0.7rem; border-radius: 999px; background: rgba(255,255,255,0.06); border: 1px solid var(--border); font-size: 0.9rem; }
   .shot-settings { margin: 0.8rem 0; }
   .shot-settings__grid { display:grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap:0.6rem; margin-top: 0.4rem; }
