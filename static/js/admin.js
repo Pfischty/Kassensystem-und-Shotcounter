@@ -783,7 +783,7 @@ document.addEventListener('click', (e) => {
         if (hidden) {
           hidden.value = JSON.stringify(settings);
         }
-        wrapper.dispatchEvent(new CustomEvent("product-editor:change", { detail: { categories } }));
+        wrapper.dispatchEvent(new CustomEvent("product-editor:change", { detail: { categories }, bubbles: true }));
         if (broadcast) {
           broadcastUpdate(settings);
         }
@@ -1931,9 +1931,193 @@ document.addEventListener('click', (e) => {
       }
     };
 
+    const autosaveToast = (() => {
+      let toast;
+      let hideTimer;
+      let cleanupTimer;
+      let showToken = 0;
+
+      const ensureToast = () => {
+        if (toast) return toast;
+        toast = document.createElement("div");
+        toast.setAttribute("data-autosave-toast", "");
+        Object.assign(toast.style, {
+          position: "fixed",
+          left: "50%",
+          bottom: "16px",
+          transform: "translateX(-50%)",
+          background: "rgba(15, 23, 42, 0.92)",
+          color: "#e2e8f0",
+          border: "1px solid rgba(148, 163, 184, 0.4)",
+          borderRadius: "999px",
+          padding: "0.45rem 0.9rem",
+          fontSize: "0.9rem",
+          boxShadow: "0 8px 24px rgba(0,0,0,0.35)",
+          opacity: "0",
+          pointerEvents: "none",
+          transition: "opacity 0.2s ease",
+          zIndex: "3000",
+        });
+        document.body.appendChild(toast);
+        return toast;
+      };
+
+      return (message, tone = "success") => {
+        showToken += 1;
+        const currentToken = showToken;
+        const el = ensureToast();
+        el.textContent = message;
+        el.style.borderColor = tone === "error" ? "rgba(239, 68, 68, 0.6)" : "rgba(16, 185, 129, 0.6)";
+        el.style.color = tone === "error" ? "#fecaca" : "#e2e8f0";
+        el.style.display = "block";
+        el.style.opacity = "1";
+        if (hideTimer) clearTimeout(hideTimer);
+        if (cleanupTimer) clearTimeout(cleanupTimer);
+        hideTimer = setTimeout(() => {
+          if (!el || currentToken !== showToken) return;
+          el.style.opacity = "0";
+          setTimeout(() => {
+            if (!el || currentToken !== showToken) return;
+            el.style.display = "none";
+          }, 250);
+        }, 2200);
+        cleanupTimer = setTimeout(() => {
+          if (!el || currentToken !== showToken) return;
+          el.style.opacity = "0";
+          el.style.display = "none";
+        }, 2600);
+      };
+    })();
+
+    const prepareEventForm = (form, { silent = false } = {}) => {
+      const statusEl = form.querySelector('[data-form-status]');
+
+      const productEditor = form.querySelector('[data-product-editor]');
+      if (productEditor && productEditor.productApi) {
+        const settings = productEditor.productApi.getSettings();
+        const items = settings.items || [];
+        const names = items.map(item => item.name);
+        const duplicates = names.filter((name, index) => names.indexOf(name) !== index);
+
+        if (duplicates.length > 0) {
+          if (!silent) {
+            if (statusEl) {
+              statusEl.style.display = 'inline';
+              statusEl.style.color = '#ef4444';
+              statusEl.textContent = `Fehler: Doppelte Produktnamen gefunden: ${duplicates.join(', ')}`;
+              setTimeout(() => {
+                statusEl.style.display = 'none';
+              }, 5000);
+            }
+            alert(`Fehler: Doppelte Produktnamen gefunden: ${duplicates.join(', ')}`);
+          }
+          return false;
+        }
+      }
+
+      const priceSettingsWrapper = form.querySelector("[data-price-settings]");
+      if (priceSettingsWrapper && priceSettingsWrapper.priceSettingsApi) {
+        priceSettingsWrapper.priceSettingsApi.getSettings();
+      }
+
+      if (productEditor && productEditor.productApi && productEditor.productApi.syncCategoryOrder) {
+        productEditor.productApi.syncCategoryOrder();
+      }
+
+      const sharedInput = form.querySelector('input[name="shared_settings"]');
+      if (sharedInput) {
+        const currentSettings = parseJson(sharedInput.value, {});
+        const autoReloadCheckbox = form.querySelector('input[name="auto_reload_on_add"]');
+        if (autoReloadCheckbox) {
+          currentSettings.auto_reload_on_add = autoReloadCheckbox.checked;
+        }
+
+        if (priceSettingsWrapper && priceSettingsWrapper.priceSettingsApi) {
+          currentSettings.price_list = priceSettingsWrapper.priceSettingsApi.getSettings();
+        }
+
+        sharedInput.value = JSON.stringify(currentSettings);
+      }
+
+      const kassInput = form.querySelector('input[name="kassensystem_settings"]');
+      if (productEditor && productEditor.productApi && kassInput) {
+        kassInput.value = JSON.stringify(productEditor.productApi.getSettings());
+      }
+
+      return true;
+    };
+
+    const setupAutosave = (form) => {
+      if (!form || form.dataset.scope === "new") return;
+      if (!/\/update$/.test(form.getAttribute("action") || "")) return;
+
+      const state = { timer: null, inFlight: false, pending: false };
+
+      const scheduleSave = () => {
+        state.pending = true;
+        if (state.timer) clearTimeout(state.timer);
+        state.timer = setTimeout(async () => {
+          if (state.inFlight) return;
+          state.pending = false;
+          const ok = prepareEventForm(form, { silent: true });
+          if (!ok) {
+            autosaveToast("Änderung nicht gespeichert", "error");
+            return;
+          }
+          state.inFlight = true;
+          try {
+            const response = await fetch(form.action, {
+              method: "POST",
+              body: new FormData(form),
+              headers: { "X-Requested-With": "XMLHttpRequest" },
+            });
+            if (response.ok) {
+              autosaveToast("Änderung gespeichert", "success");
+            } else {
+              autosaveToast("Speichern fehlgeschlagen", "error");
+            }
+          } catch (err) {
+            autosaveToast("Speichern fehlgeschlagen", "error");
+          } finally {
+            state.inFlight = false;
+            if (state.pending) scheduleSave();
+          }
+        }, 80);
+      };
+
+      form.addEventListener(
+        "blur",
+        (event) => {
+          const target = event.target;
+          if (!(target instanceof HTMLElement)) return;
+          if (!form.contains(target)) return;
+          if (target.tagName === "BUTTON") return;
+          if (target.tagName === "INPUT" && target.type === "file") return;
+          scheduleSave();
+        },
+        true
+      );
+
+      form.addEventListener("change", (event) => {
+        const target = event.target;
+        if (!(target instanceof HTMLElement)) return;
+        if (!form.contains(target)) return;
+        if (target.tagName === "BUTTON") return;
+        if (target.tagName === "INPUT" && target.type === "file") return;
+        scheduleSave();
+      });
+
+      form.querySelectorAll("[data-product-editor]").forEach((editor) => {
+        editor.addEventListener("product-editor:change", () => {
+          scheduleSave();
+        });
+      });
+    };
+
     safeRun("event-form", () => {
       document.querySelectorAll("[data-event-form]").forEach((form) => {
         bindCopyAndImport(form);
+        setupAutosave(form);
 
       // Ensure submit button works properly
       const submitBtn = form.querySelector('[data-submit-btn]');
@@ -1997,29 +2181,7 @@ document.addEventListener('click', (e) => {
         }
 
         // Collect shared settings
-        const sharedInput = this.querySelector('input[name="shared_settings"]');
-        if (sharedInput) {
-          const currentSettings = parseJson(sharedInput.value, {});
-
-          // Collect all checkboxes with data-shared-setting attribute
-          const autoReloadCheckbox = this.querySelector('input[name="auto_reload_on_add"]');
-          if (autoReloadCheckbox) {
-            currentSettings.auto_reload_on_add = autoReloadCheckbox.checked;
-          }
-
-          const priceSettingsWrapper = this.querySelector("[data-price-settings]");
-          if (priceSettingsWrapper && priceSettingsWrapper.priceSettingsApi) {
-            currentSettings.price_list = priceSettingsWrapper.priceSettingsApi.getSettings();
-          }
-
-          sharedInput.value = JSON.stringify(currentSettings);
-        }
-
-        const productEditor = this.querySelector('[data-product-editor]');
-        const kassInput = this.querySelector('input[name="kassensystem_settings"]');
-        if (productEditor && productEditor.productApi && kassInput) {
-          kassInput.value = JSON.stringify(productEditor.productApi.getSettings());
-        }
+        prepareEventForm(this, { silent: true });
 
         // Form will now submit naturally
         });
