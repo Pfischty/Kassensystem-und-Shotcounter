@@ -394,6 +394,54 @@ document.addEventListener('click', (e) => {
       });
     });
 
+    safeRun("event-settings-tabs", () => {
+      const tabs = document.querySelector("[data-tabs]");
+      if (!tabs) return;
+      const buttons = Array.from(tabs.querySelectorAll("[data-tab-target]"));
+      const panels = Array.from(tabs.querySelectorAll("[data-tab-panel]"));
+      if (!buttons.length || !panels.length) return;
+
+      const activate = (name) => {
+        buttons.forEach((btn) => {
+          btn.classList.toggle("is-active", btn.dataset.tabTarget === name);
+        });
+        panels.forEach((panel) => {
+          panel.classList.toggle("is-active", panel.dataset.tabPanel === name);
+        });
+      };
+
+      const findValid = (name) => panels.some((panel) => panel.dataset.tabPanel === name) ? name : null;
+
+      const getInitial = () => {
+        const hash = window.location.hash || "";
+        if (hash.startsWith("#tab-")) {
+          const fromHash = findValid(hash.slice(5));
+          if (fromHash) return fromHash;
+        }
+        const params = new URLSearchParams(window.location.search);
+        const fromQuery = findValid(params.get("tab"));
+        if (fromQuery) return fromQuery;
+        return buttons[0].dataset.tabTarget;
+      };
+
+      tabs.dataset.tabsReady = "true";
+      const initial = getInitial();
+      activate(initial);
+
+      buttons.forEach((btn) => {
+        btn.addEventListener("click", () => {
+          const target = btn.dataset.tabTarget;
+          if (!target) return;
+          activate(target);
+          if (history && history.replaceState) {
+            history.replaceState(null, "", `#tab-${target}`);
+          } else {
+            window.location.hash = `tab-${target}`;
+          }
+        });
+      });
+    });
+
     const sanitizeColor = (value) => {
       if (typeof value !== "string") return fallbackColor;
       const hex = value.trim();
