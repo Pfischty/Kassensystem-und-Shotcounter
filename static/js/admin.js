@@ -343,6 +343,7 @@ document.addEventListener('click', (e) => {
 
   const fallbackColor = "#1f2a44";
   const defaultCategory = "Standard";
+  let productEditorSequence = 0;
 
     const getTextContent = (id) => {
       const el = document.getElementById(id);
@@ -578,13 +579,17 @@ document.addEventListener('click', (e) => {
         const list = wrapper.querySelector("[data-product-list]");
         const categoryOrderList = wrapper.querySelector("[data-category-order-list]");
         const addCategoryBtn = wrapper.querySelector("[data-add-category]");
-        const hidden = wrapper.querySelector('input[name="kassensystem_settings"]');
+        const hidden = wrapper.querySelector('input[name="kassensystem_settings"]') || (form ? form.querySelector('input[name="kassensystem_settings"]') : null);
         const importInput = wrapper.querySelector("[data-product-import]");
         const exportButton = wrapper.querySelector("[data-product-export]");
         const depotInput = form ? form.querySelector("[data-depot-price]") : null;
+        const editorMode = wrapper.dataset.editorMode || "all";
+        const editorId = wrapper.dataset.editorId || `product-editor-${Date.now()}-${++productEditorSequence}`;
+        wrapper.dataset.editorId = editorId;
+        const editorViewKey = editorMode === "price" ? "price_list" : editorMode === "cashier" ? "cashier" : null;
 
       let baseSettings = {};
-      try { baseSettings = JSON.parse(hidden.value || "{}"); } catch (err) { baseSettings = {}; }
+      try { baseSettings = JSON.parse((hidden && hidden.value) || "{}"); } catch (err) { baseSettings = {}; }
 
       let parsedItems = [];
       try {
@@ -621,6 +626,14 @@ document.addEventListener('click', (e) => {
         });
       }
 
+      const isCategoryVisibleForView = (category, viewKey) => {
+        if (!viewKey) return true;
+        const visibility = categoryVisibility && typeof categoryVisibility === "object" ? categoryVisibility[category] : null;
+        if (!visibility) return true;
+        return visibility[viewKey] !== false;
+      };
+
+
       const normalizeCategoryOrder = (categories) => {
         const clean = [];
         (categoryOrder || []).forEach((name) => {
@@ -636,6 +649,25 @@ document.addEventListener('click', (e) => {
         });
         categoryOrder = clean;
         return clean;
+      };
+
+      const mergeCategoryOrder = (nextOrder) => {
+        const existing = categoryOrder.length ? categoryOrder.slice() : getAllCategoriesRaw();
+        const visibleSet = new Set(nextOrder);
+        let index = 0;
+        const merged = existing.map((name) => {
+          if (visibleSet.has(name)) {
+            const replacement = nextOrder[index];
+            index += 1;
+            return replacement;
+          }
+          return name;
+        });
+        nextOrder.slice(index).forEach((name) => {
+          if (!merged.includes(name)) merged.push(name);
+        });
+        categoryOrder = merged;
+        return merged;
       };
 
       const normalizeCategoryVisibility = (categories) => {
@@ -659,7 +691,7 @@ document.addEventListener('click', (e) => {
           .map((row) => row.dataset.categoryName)
           .filter(Boolean);
         if (nextOrder.length) {
-          categoryOrder = nextOrder;
+          categoryOrder = editorViewKey ? mergeCategoryOrder(nextOrder) : nextOrder;
         }
       };
 
@@ -693,20 +725,35 @@ document.addEventListener('click', (e) => {
         }
       };
 
-      const syncHidden = () => {
+      const broadcastUpdate = (settings) => {
+        if (!form) return;
+        form.dispatchEvent(
+          new CustomEvent("product-editor:update", {
+            detail: { source: editorId, settings },
+          })
+        );
+      };
+
+      const syncHidden = (broadcast = true) => {
         syncCategoryOrderFromDom();
         syncItemPrioritiesFromDom();
-        const categories = getAllCategories();
+        const categories = getAllCategoriesRaw();
         normalizeCategoryOrder(categories);
         normalizeCategoryVisibility(categories);
-        hidden.value = JSON.stringify({
+        const settings = {
           ...baseSettings,
           depot_price: depotPrice,
           category_order: categoryOrder,
           category_visibility: categoryVisibility,
           items,
-        });
+        };
+        if (hidden) {
+          hidden.value = JSON.stringify(settings);
+        }
         wrapper.dispatchEvent(new CustomEvent("product-editor:change", { detail: { categories } }));
+        if (broadcast) {
+          broadcastUpdate(settings);
+        }
       };
 
       const getNextPriority = (categoryName) => {
@@ -843,7 +890,7 @@ document.addEventListener('click', (e) => {
         renderPricePreview();
       };
 
-      const getAllCategories = () => {
+      const getAllCategoriesRaw = () => {
         // Collect unique categories from all items in current editor
         const categories = new Set();
         items.forEach(item => {
@@ -864,15 +911,34 @@ document.addEventListener('click', (e) => {
         return Array.from(categories).sort();
       };
 
-      const getOrderedCategories = (categories) => normalizeCategoryOrder(categories);
+      const getAllCategories = () => getAllCategoriesRaw();
+
+      const getOrderedCategories = (categories) => {
+        const ordered = [];
+        (categoryOrder || []).forEach((name) => {
+          const trimmed = String(name || "").trim();
+          if (trimmed && categories.includes(trimmed) && !ordered.includes(trimmed)) {
+            ordered.push(trimmed);
+          }
+        });
+        categories.forEach((name) => {
+          if (name && !ordered.includes(name)) {
+            ordered.push(name);
+          }
+        });
+        return ordered;
+      };
 
       const renderCategoryOrder = () => {
         if (!categoryOrderList) return;
         if (Array.isArray(lastRenderedCategoryOrder) && lastRenderedCategoryOrder.length) {
           categoryOrder = lastRenderedCategoryOrder.slice();
         }
-        const categories = getAllCategories();
-        const ordered = getOrderedCategories(categories);
+        const categories = getAllCategoriesRaw();
+        const categoriesForView = editorViewKey
+          ? categories.filter((name) => isCategoryVisibleForView(name, editorViewKey))
+          : categories;
+        const ordered = getOrderedCategories(categoriesForView);
         const usage = {};
         items.forEach((item) => {
           const category = String(item?.category || defaultCategory).trim() || defaultCategory;
@@ -919,7 +985,7 @@ document.addEventListener('click', (e) => {
               .filter(Boolean);
             if (!nextOrder.length) return;
             pendingCategoryOrder = nextOrder;
-            categoryOrder = nextOrder;
+            categoryOrder = editorViewKey ? mergeCategoryOrder(nextOrder) : nextOrder;
             renderPreview();
             syncHidden();
             refreshCategoryOrderControls();
@@ -941,7 +1007,7 @@ document.addEventListener('click', (e) => {
           categoryOrderList.addEventListener("drop", (event) => {
             event.preventDefault();
             if (pendingCategoryOrder && pendingCategoryOrder.length) {
-              categoryOrder = pendingCategoryOrder;
+              categoryOrder = editorViewKey ? mergeCategoryOrder(pendingCategoryOrder) : pendingCategoryOrder;
               pendingCategoryOrder = null;
               renderList();
               renderPreview();
@@ -957,7 +1023,7 @@ document.addEventListener('click', (e) => {
         const renameCategory = (oldName, newNameRaw) => {
           const newName = String(newNameRaw || "").trim();
           if (!newName || newName === oldName) return;
-          if (categories.includes(newName)) return;
+          if (getAllCategoriesRaw().includes(newName)) return;
 
           items.forEach((item) => {
             const category = String(item.category || defaultCategory).trim() || defaultCategory;
@@ -993,7 +1059,7 @@ document.addEventListener('click', (e) => {
             row.classList.remove("is-dragging");
             categoryOrderList.classList.remove("is-dragging");
             if (pendingCategoryOrder && pendingCategoryOrder.length) {
-              categoryOrder = pendingCategoryOrder;
+              categoryOrder = editorViewKey ? mergeCategoryOrder(pendingCategoryOrder) : pendingCategoryOrder;
               pendingCategoryOrder = null;
               renderList();
               renderPreview();
@@ -1144,7 +1210,7 @@ document.addEventListener('click', (e) => {
       const addCategory = (nameRaw) => {
         const name = String(nameRaw || "").trim();
         if (!name) return;
-        const categories = getAllCategories();
+        const categories = getAllCategoriesRaw();
         if (categories.includes(name)) return;
         categoryOrder.push(name);
         categoryVisibility[name] = { cashier: true, price_list: true };
@@ -1172,14 +1238,23 @@ document.addEventListener('click', (e) => {
 
         // Populate datalist with unique categories
         const categories = getAllCategories();
-        categories.forEach(cat => {
+        const categoriesForView = editorViewKey
+          ? categories.filter((name) => isCategoryVisibleForView(name, editorViewKey))
+          : categories;
+        categoriesForView.forEach(cat => {
           const option = document.createElement("option");
           option.value = cat;
           datalist.appendChild(option);
         });
         list.appendChild(datalist);
 
-        const orderedCategories = getOrderedCategories(categories);
+        const orderedCategories = getOrderedCategories(categoriesForView);
+        const viewItems = editorViewKey
+          ? items.filter((item) => {
+              const category = String(item?.category || defaultCategory).trim() || defaultCategory;
+              return isCategoryVisibleForView(category, editorViewKey);
+            })
+          : items;
         lastRenderedCategoryOrder = orderedCategories.slice();
 
         const sortItemsWithinCategory = (groupItems) =>
@@ -1233,7 +1308,7 @@ document.addEventListener('click', (e) => {
         };
 
         orderedCategories.forEach((category) => {
-          const groupItems = items.filter((item) => {
+          const groupItems = viewItems.filter((item) => {
             const itemCategory = String(item?.category || defaultCategory).trim() || defaultCategory;
             return itemCategory === category;
           });
@@ -1552,7 +1627,7 @@ document.addEventListener('click', (e) => {
           syncCategoryOrderFromDom();
           syncHidden();
         },
-        setSettings: (data) => {
+        setSettings: (data, options = {}) => {
           const importedItems = Array.isArray(data && data.items) ? data.items : [];
           baseSettings = data && typeof data === "object" && !Array.isArray(data) ? { ...data } : {};
           depotPrice = normalizeDepotPrice(baseSettings.depot_price);
@@ -1570,14 +1645,22 @@ document.addEventListener('click', (e) => {
           renderList();
           renderPreview();
           renderCategoryOrder();
-          syncHidden();
+          syncHidden(!options.suppressBroadcast);
         },
       };
+
+      if (form) {
+        form.addEventListener("product-editor:update", (event) => {
+          const detail = event.detail || {};
+          if (!detail.settings || detail.source === editorId) return;
+          wrapper.productApi.setSettings(detail.settings, { suppressBroadcast: true });
+        });
+      }
 
         renderList();
         renderPreview();
         renderCategoryOrder();
-        syncHidden();
+        syncHidden(false);
       });
     });
 

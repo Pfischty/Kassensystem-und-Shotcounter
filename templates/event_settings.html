@@ -191,7 +191,8 @@
       <button type="button" class="tabs__btn" data-tab-target="general">Allgemein</button>
       <button type="button" class="tabs__btn" data-tab-target="shotcounter">Shotcounter</button>
       <button type="button" class="tabs__btn" data-tab-target="price">Preisliste</button>
-      <button type="button" class="tabs__btn" data-tab-target="products">Produkte & Kategorien</button>
+      <button type="button" class="tabs__btn" data-tab-target="cashier">Kasse</button>
+      <button type="button" class="tabs__btn" data-tab-target="products">Alle Produkte & Kategorien</button>
       <button type="button" class="tabs__btn" data-tab-target="import">Import/Export</button>
     </div>
 
@@ -354,10 +355,62 @@
           <div class="muted" style="margin-top: 0.6rem;">Neue Bilder in der <a href="{{ url_for('admin_images') }}">Bilderverwaltung</a> hochladen.</div>
         </div>
       </div>
+
+        <div class="product-editor product-editor--compact" data-product-editor data-editor-mode="price" data-scope="{{ event.id }}-price" data-items='{{ event_buttons.get(event.id, default_buttons) | tojson }}' style="margin-top: 1rem;">
+          <div class="product-editor__top">
+            <div>
+              <strong>Preisliste Produkte & Kategorien</strong>
+              <div class="muted">Zeigt nur Kategorien/Produkte, die in der Preisliste sichtbar sind.</div>
+            </div>
+            <div class="inline-actions">
+              <button type="button" class="secondary" data-add-product>+ Produkt</button>
+              <button type="button" class="secondary" data-add-category>+ Kategorie</button>
+            </div>
+          </div>
+          <div class="product-editor__preview product-editor__preview--list" data-product-preview="price" style="display:none;"></div>
+          <div class="category-order" data-category-order>
+            <div class="field-inline" style="justify-content: space-between; align-items: center;">
+              <div>
+                <strong>Kategorieneinstellungen</strong>
+                <div class="muted">Reihenfolge + Aktivierung (Preisliste).</div>
+              </div>
+              <button type="button" class="secondary" data-add-category>+ Kategorie</button>
+            </div>
+            <div class="category-order__list" data-category-order-list></div>
+          </div>
+          <div class="product-editor__list" data-product-list></div>
+        </div>
     </div>
 
+      <div class="tabs__panel" data-tab-panel="cashier">
+        <div class="product-editor product-editor--compact" data-product-editor data-editor-mode="cashier" data-scope="{{ event.id }}-cashier" data-items='{{ event_buttons.get(event.id, default_buttons) | tojson }}'>
+          <div class="product-editor__top">
+            <div>
+              <strong>Kasse Produkte & Kategorien</strong>
+              <div class="muted">Zeigt nur Kategorien/Produkte, die in der Kasse sichtbar sind.</div>
+            </div>
+            <div class="inline-actions">
+              <button type="button" class="secondary" data-add-product>+ Produkt</button>
+              <button type="button" class="secondary" data-add-category>+ Kategorie</button>
+            </div>
+          </div>
+          <div class="product-editor__preview" data-product-preview="cashier" style="display:none;"></div>
+          <div class="category-order" data-category-order>
+            <div class="field-inline" style="justify-content: space-between; align-items: center;">
+              <div>
+                <strong>Kategorieneinstellungen</strong>
+                <div class="muted">Reihenfolge + Aktivierung (Kasse).</div>
+              </div>
+              <button type="button" class="secondary" data-add-category>+ Kategorie</button>
+            </div>
+            <div class="category-order__list" data-category-order-list></div>
+          </div>
+          <div class="product-editor__list" data-product-list></div>
+        </div>
+      </div>
+
     <div class="tabs__panel" data-tab-panel="products">
-      <div class="product-editor" data-product-editor data-scope="{{ event.id }}" data-items='{{ event_buttons.get(event.id, default_buttons) | tojson }}'>
+      <div class="product-editor" data-product-editor data-editor-mode="all" data-scope="{{ event.id }}" data-items='{{ event_buttons.get(event.id, default_buttons) | tojson }}'>
         <div class="product-editor__top">
           <div>
             <strong>Produkte für dieses Event</strong>
