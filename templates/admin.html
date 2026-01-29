@@ -235,6 +235,78 @@
   {% endfor %}
 </div>
 
+<!-- Terminals Section -->
+<div class="card">
+  <h2>SumUp Terminals</h2>
+  <div class="muted">Terminals verwalten und mit Events verknüpfen.</div>
+
+  <form method="post" action="{{ url_for('create_terminal') }}" class="stack" style="margin-top: 1rem;">
+    <div class="field-inline">
+      <label class="stack">
+        <span>Name</span>
+        <input type="text" name="name" required>
+      </label>
+      <label class="stack">
+        <span>SumUp Device ID</span>
+        <input type="text" name="sumup_device_id" required>
+      </label>
+      <label class="stack">
+        <span>Status</span>
+        <label><input type="checkbox" name="active" checked> Aktiv</label>
+      </label>
+      <button type="submit" class="primary">Terminal hinzufügen</button>
+    </div>
+  </form>
+
+  {% if terminals %}
+    <div class="stack" style="margin-top: 1rem;">
+      {% for terminal in terminals %}
+        <div class="collapsible">
+          <div class="collapsible__header">
+            <div>
+              <strong>{{ terminal.name }}</strong>
+              {% if terminal.active %}
+                <span class="badge badge-green">aktiv</span>
+              {% else %}
+                <span class="badge badge-red">inaktiv</span>
+              {% endif %}
+              {% if terminal.assigned_event_id %}
+                <span class="pill">Event #{{ terminal.assigned_event_id }}</span>
+              {% else %}
+                <span class="pill">frei</span>
+              {% endif %}
+            </div>
+          </div>
+          <div class="collapsible__content">
+            <form method="post" action="{{ url_for('update_terminal', terminal_id=terminal.id) }}" class="stack">
+              <div class="field-inline">
+                <label class="stack">
+                  <span>Name</span>
+                  <input type="text" name="name" value="{{ terminal.name }}" required>
+                </label>
+                <label class="stack">
+                  <span>SumUp Device ID</span>
+                  <input type="text" name="sumup_device_id" value="{{ terminal.sumup_device_id }}" required>
+                </label>
+                <label class="stack">
+                  <span>Status</span>
+                  <label><input type="checkbox" name="active" {% if terminal.active %}checked{% endif %}> Aktiv</label>
+                </label>
+                <button type="submit" class="primary">Speichern</button>
+              </div>
+            </form>
+            <form method="post" action="{{ url_for('delete_terminal', terminal_id=terminal.id) }}" class="inline" style="margin-top: 0.6rem;">
+              <button type="submit" class="secondary">Terminal löschen</button>
+            </form>
+          </div>
+        </div>
+      {% endfor %}
+    </div>
+  {% else %}
+    <p style="margin-top: 1rem;">Noch keine Terminals angelegt.</p>
+  {% endif %}
+</div>
+
 <!-- Modal for New Event -->
 <div id="new-event-modal" class="modal">
   <div class="modal-content">
@@ -436,6 +508,64 @@
         die nicht ins Git-Repository übernommen wird. {% if not has_password %}
         Solange kein Passwort gesetzt ist, ist der Admin-Bereich ohne Authentifizierung zugänglich.
         {% endif %}
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- SumUp Credentials Section -->
+<div class="collapsible card" data-collapsible>
+  <div class="collapsible__header">
+    <div>
+      <h2 style="margin:0;">SumUp Zugangsdaten</h2>
+      <div class="muted">API-Token, Merchant-ID und Affiliate-Key für Terminalzahlungen.</div>
+    </div>
+    <button type="button" class="secondary" data-toggle>Details einblenden</button>
+  </div>
+  <div class="collapsible__content" hidden>
+    <form method="post" action="{{ url_for('update_sumup_credentials') }}">
+      <div class="stack">
+        <label for="sumup_access_token">Access Token</label>
+        <input
+          id="sumup_access_token"
+          name="sumup_access_token"
+          type="password"
+          placeholder="{% if sumup_settings.access_token %}Token gesetzt (leer lassen für behalten){% else %}z.B. sandbox token{% endif %}"
+        >
+      </div>
+      <div class="stack" style="margin-top: 1rem;">
+        <label for="sumup_merchant_id">Merchant ID</label>
+        <input
+          id="sumup_merchant_id"
+          name="sumup_merchant_id"
+          type="text"
+          value="{{ sumup_settings.merchant_id or '' }}"
+          placeholder="z.B. 123456789"
+        >
+      </div>
+      <div class="stack" style="margin-top: 1rem;">
+        <label for="sumup_affiliate_key">Affiliate Key (Sandbox)</label>
+        <input
+          id="sumup_affiliate_key"
+          name="sumup_affiliate_key"
+          type="text"
+          value="{{ sumup_settings.affiliate_key or '' }}"
+          placeholder="sup_afk_..."
+        >
+      </div>
+      <div class="stack" style="margin-top: 1rem;">
+        <label for="sumup_base_url">Base URL</label>
+        <input
+          id="sumup_base_url"
+          name="sumup_base_url"
+          type="text"
+          value="{{ sumup_settings.base_url or '' }}"
+          placeholder="https://api.sumup.com"
+        >
+        <div class="hint">Leer lassen für Standard-URL.</div>
+      </div>
+      <div class="field-inline" style="margin-top: 1rem;">
+        <button type="submit">SumUp Zugangsdaten speichern</button>
       </div>
     </form>
   </div>

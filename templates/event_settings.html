@@ -186,6 +186,20 @@
   </div>
   <div class="muted" style="margin-bottom: 0.6rem;">Wenn deaktiviert, wird die Kasse nicht neu geladen beim Hinzufügen von Artikeln (performanter).</div>
 
+  <div class="stack" style="margin: 0.8rem 0;">
+    <strong>SumUp Terminal-Zuordnung</strong>
+    <div class="muted">Festes Terminal für diese Kasse. Wenn kein Terminal zugeordnet ist, kann in der Kasse ein freies Terminal gewählt werden.</div>
+    <select name="assigned_terminal_id">
+      <option value="">Kein Terminal</option>
+      {% for terminal in terminals %}
+        {% set is_assigned_to_event = terminal.assigned_event_id == event.id %}
+        <option value="{{ terminal.id }}" {% if is_assigned_to_event %}selected{% elif terminal.assigned_event_id %}disabled{% endif %}>
+          {{ terminal.name }}{% if terminal.assigned_event_id and not is_assigned_to_event %} (belegt){% endif %}{% if not terminal.active %} (inaktiv){% endif %}
+        </option>
+      {% endfor %}
+    </select>
+  </div>
+
   {% if events|length > 1 %}
   <div class="stack" style="margin:0.6rem 0;">
     <label>Einstellungen aus Event kopieren</label>
