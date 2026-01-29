@@ -1034,7 +1034,6 @@ document.addEventListener('click', (e) => {
             } else {
               categoryOrderList.insertBefore(dragging, afterElement);
             }
-            updateOrderFromDom();
           });
 
           categoryOrderList.addEventListener("drop", (event) => {
@@ -1989,7 +1988,7 @@ document.addEventListener('click', (e) => {
       };
     })();
 
-    const prepareEventForm = (form, { silent = false } = {}) => {
+    const prepareEventForm = (form, { silent = false, skipCategorySync = false } = {}) => {
       const statusEl = form.querySelector('[data-form-status]');
 
       const productEditor = form.querySelector('[data-product-editor]');
@@ -2020,7 +2019,7 @@ document.addEventListener('click', (e) => {
         priceSettingsWrapper.priceSettingsApi.getSettings();
       }
 
-      if (productEditor && productEditor.productApi && productEditor.productApi.syncCategoryOrder) {
+      if (!skipCategorySync && productEditor && productEditor.productApi && productEditor.productApi.syncCategoryOrder) {
         productEditor.productApi.syncCategoryOrder();
       }
 
@@ -2051,17 +2050,24 @@ document.addEventListener('click', (e) => {
       if (!form || form.dataset.scope === "new") return;
       if (!/\/update$/.test(form.getAttribute("action") || "")) return;
 
-      const state = { timer: null, inFlight: false, pending: false };
+      const state = { timer: null, inFlight: false, pending: false, suspend: false };
+      let lastPayload = null;
 
       const scheduleSave = () => {
         state.pending = true;
         if (state.timer) clearTimeout(state.timer);
         state.timer = setTimeout(async () => {
-          if (state.inFlight) return;
+          if (state.inFlight || state.suspend) return;
           state.pending = false;
-          const ok = prepareEventForm(form, { silent: true });
+          state.suspend = true;
+          const ok = prepareEventForm(form, { silent: true, skipCategorySync: true });
+          state.suspend = false;
           if (!ok) {
             autosaveToast("Änderung nicht gespeichert", "error");
+            return;
+          }
+          const payload = new URLSearchParams(new FormData(form)).toString();
+          if (payload === lastPayload) {
             return;
           }
           state.inFlight = true;
@@ -2072,6 +2078,7 @@ document.addEventListener('click', (e) => {
               headers: { "X-Requested-With": "XMLHttpRequest" },
             });
             if (response.ok) {
+              lastPayload = payload;
               autosaveToast("Änderung gespeichert", "success");
             } else {
               autosaveToast("Speichern fehlgeschlagen", "error");
@@ -2091,6 +2098,7 @@ document.addEventListener('click', (e) => {
           const target = event.target;
           if (!(target instanceof HTMLElement)) return;
           if (!form.contains(target)) return;
+          if (state.suspend) return;
           if (target.tagName === "BUTTON") return;
           if (target.tagName === "INPUT" && target.type === "file") return;
           scheduleSave();
@@ -2102,6 +2110,7 @@ document.addEventListener('click', (e) => {
         const target = event.target;
         if (!(target instanceof HTMLElement)) return;
         if (!form.contains(target)) return;
+        if (state.suspend) return;
         if (target.tagName === "BUTTON") return;
         if (target.tagName === "INPUT" && target.type === "file") return;
         scheduleSave();
@@ -2109,6 +2118,7 @@ document.addEventListener('click', (e) => {
 
       form.querySelectorAll("[data-product-editor]").forEach((editor) => {
         editor.addEventListener("product-editor:change", () => {
+          if (state.suspend) return;
           scheduleSave();
         });
       });

@@ -1259,6 +1259,8 @@ def update_event(event_id: int):
     event.kassensystem_enabled = bool(request.form.get("kassensystem_enabled"))
     event.shotcounter_enabled = bool(request.form.get("shotcounter_enabled"))
 
+    is_ajax = request.headers.get("X-Requested-With") == "XMLHttpRequest"
+
     try:
         event.shared_settings = parse_json_field(request.form.get("shared_settings"))
         event.shared_settings["auto_reload_on_add"] = bool(request.form.get("auto_reload_on_add"))
@@ -1269,11 +1271,15 @@ def update_event(event_id: int):
         )
         event.shotcounter_settings = validate_shotcounter_settings(parse_json_field(request.form.get("shotcounter_settings")))
     except ValueError as exc:
+        if is_ajax:
+            return jsonify({"success": False, "error": str(exc)}), 400
         flash(str(exc), "error")
         return redirect(url_for("admin"))
 
     db.session.commit()
     app.logger.info("Event aktualisiert: %s", event.name)
+    if is_ajax:
+        return jsonify({"success": True}), 200
     flash("Event wurde aktualisiert.", "success")
     return redirect(_redirect_target("admin"))
 
