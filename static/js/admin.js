@@ -413,7 +413,10 @@ document.addEventListener('click', (e) => {
     };
 
     const getItemPriority = (item) => {
-      const value = Number(item?.priority);
+      if (!item) return null;
+      const raw = item.priority;
+      if (raw === null || raw === undefined || raw === "") return null;
+      const value = Number(raw);
       return Number.isFinite(value) ? Math.round(value) : null;
     };
 
@@ -534,6 +537,7 @@ document.addEventListener('click', (e) => {
           ? { ...baseSettings.category_visibility }
           : {};
       let pendingCategoryOrder = null;
+      let lastRenderedCategoryOrder = null;
       if (!items.length) {
         items = [normalizeItem({ name: "Produkt", label: "Neues Produkt", price: 0, color: fallbackColor }, 0)];
       }
@@ -590,8 +594,39 @@ document.addEventListener('click', (e) => {
         }
       };
 
+      const syncItemPrioritiesFromDom = () => {
+        if (!list) return;
+        const categoryLists = Array.from(list.querySelectorAll(".product-category__list"));
+        const nextCategoryOrder = categoryLists
+          .map((groupList) => groupList.dataset.category)
+          .filter(Boolean);
+        const orderedItems = [];
+        categoryLists.forEach((groupList) => {
+          const categoryName = groupList.dataset.category || defaultCategory;
+          const rows = Array.from(groupList.querySelectorAll(".product-row"));
+          rows.forEach((row, idx) => {
+            const itemName = row.dataset.itemName;
+            const item = items.find((candidate) => candidate && candidate.name === itemName);
+            if (item) {
+              item.priority = idx;
+              item.category = categoryName;
+              orderedItems.push(item);
+            }
+          });
+        });
+        if (orderedItems.length) {
+          const seen = new Set(orderedItems.map((item) => item && item.name).filter(Boolean));
+          const remaining = items.filter((item) => item && !seen.has(item.name));
+          items = orderedItems.concat(remaining);
+        }
+        if (nextCategoryOrder.length) {
+          categoryOrder = nextCategoryOrder;
+        }
+      };
+
       const syncHidden = () => {
         syncCategoryOrderFromDom();
+        syncItemPrioritiesFromDom();
         const categories = getAllCategories();
         normalizeCategoryOrder(categories);
         normalizeCategoryVisibility(categories);
@@ -764,6 +799,9 @@ document.addEventListener('click', (e) => {
 
       const renderCategoryOrder = () => {
         if (!categoryOrderList) return;
+        if (Array.isArray(lastRenderedCategoryOrder) && lastRenderedCategoryOrder.length) {
+          categoryOrder = lastRenderedCategoryOrder.slice();
+        }
         const categories = getAllCategories();
         const ordered = getOrderedCategories(categories);
         const usage = {};
@@ -836,10 +874,12 @@ document.addEventListener('click', (e) => {
             if (pendingCategoryOrder && pendingCategoryOrder.length) {
               categoryOrder = pendingCategoryOrder;
               pendingCategoryOrder = null;
+              renderList();
               renderPreview();
               syncHidden();
             } else {
               updateOrderFromDom();
+              renderList();
             }
             refreshCategoryOrderControls();
           });
@@ -886,6 +926,7 @@ document.addEventListener('click', (e) => {
             if (pendingCategoryOrder && pendingCategoryOrder.length) {
               categoryOrder = pendingCategoryOrder;
               pendingCategoryOrder = null;
+              renderList();
               renderPreview();
               syncHidden();
               refreshCategoryOrderControls();
@@ -959,6 +1000,7 @@ document.addEventListener('click', (e) => {
             if (currentIndex <= 0) return;
             const moved = categoryOrder.splice(currentIndex, 1)[0];
             categoryOrder.splice(currentIndex - 1, 0, moved);
+            renderList();
             renderCategoryOrder();
             renderPreview();
             syncHidden();
@@ -976,6 +1018,7 @@ document.addEventListener('click', (e) => {
             if (currentIndex >= categoryOrder.length - 1) return;
             const moved = categoryOrder.splice(currentIndex, 1)[0];
             categoryOrder.splice(currentIndex + 1, 0, moved);
+            renderList();
             renderCategoryOrder();
             renderPreview();
             syncHidden();
@@ -1068,6 +1111,7 @@ document.addEventListener('click', (e) => {
         list.appendChild(datalist);
 
         const orderedCategories = getOrderedCategories(categories);
+        lastRenderedCategoryOrder = orderedCategories.slice();
 
         const sortItemsWithinCategory = (groupItems) =>
           groupItems.slice().sort((a, b) => {
@@ -1426,6 +1470,7 @@ document.addEventListener('click', (e) => {
       wrapper.productApi = {
         getSettings: () => {
           syncCategoryOrderFromDom();
+          syncItemPrioritiesFromDom();
           return {
             ...baseSettings,
             depot_price: depotPrice,
