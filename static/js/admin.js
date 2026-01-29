@@ -1449,7 +1449,7 @@ document.addEventListener('click', (e) => {
           priceContainer.append(priceLabel, priceInput);
 
           const depotContainer = document.createElement("div");
-          depotContainer.className = "stack";
+          depotContainer.className = "stack product-field--depot";
           const depotLabel = document.createElement("label");
           depotLabel.textContent = "Depot";
           const depotToggleWrap = document.createElement("div");
@@ -1476,7 +1476,7 @@ document.addEventListener('click', (e) => {
           priceDepotGroup.append(priceContainer, depotContainer);
 
           const colorContainer = document.createElement("div");
-          colorContainer.className = "stack";
+          colorContainer.className = "stack product-field--color";
           const colorLabel = document.createElement("label");
           colorLabel.textContent = "Hintergrundfarbe";
           const colorInput = document.createElement("input");
