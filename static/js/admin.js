@@ -469,12 +469,44 @@ document.addEventListener('click', (e) => {
       return Number.isFinite(value) ? Math.round(value) : null;
     };
 
+    const slugifyKey = (value) => {
+      const raw = String(value || "").toLowerCase().trim();
+      if (!raw) return "";
+      let normalized = raw;
+      if (typeof normalized.normalize === "function") {
+        normalized = normalized.normalize("NFD").replace(/\p{Diacritic}/gu, "");
+      }
+      const cleaned = normalized.replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+      return cleaned || "";
+    };
+
+    const getUniqueName = (base, used) => {
+      const safeBase = base || "produkt";
+      let candidate = safeBase;
+      let suffix = 1;
+      while (used.has(candidate)) {
+        suffix += 1;
+        candidate = `${safeBase}-${suffix}`;
+      }
+      used.add(candidate);
+      return candidate;
+    };
+
+    const applyAutoNames = (list) => {
+      const used = new Set();
+      list.forEach((item, index) => {
+        const label = String(item?.label || "").trim() || `produkt-${index + 1}`;
+        const base = slugifyKey(label) || `produkt-${index + 1}`;
+        item.name = getUniqueName(base, used);
+      });
+    };
+
     const normalizeItem = (item, index) => {
       const safeItem = item || {};
       const rawLabel = safeItem.label ?? safeItem.name ?? "";
       const label = String(rawLabel).trim() || "Produkt " + (index + 1);
-      const rawName = safeItem.name ?? label ?? "produkt-" + (index + 1);
-      const name = String(rawName).trim();
+      const rawName = safeItem.name ?? "";
+      const name = String(rawName).trim() || slugifyKey(label) || "produkt-" + (index + 1);
       const price = Number.isFinite(Number(safeItem.price)) ? Number(safeItem.price) : 0;
       const hasDepot = safeItem.has_depot === true;
       const priority = getItemPriority(safeItem);
@@ -615,6 +647,7 @@ document.addEventListener('click', (e) => {
       if (!items.length) {
         items = [normalizeItem({ name: "Produkt", label: "Neues Produkt", price: 0, color: fallbackColor }, 0)];
       }
+      applyAutoNames(items);
 
       if (depotInput) {
         depotInput.value = depotPrice;
@@ -1369,17 +1402,11 @@ document.addEventListener('click', (e) => {
 
           const nameContainer = document.createElement("div");
           nameContainer.className = "stack";
-          const nameLabel = document.createElement("label");
-          nameLabel.textContent = "Schlüssel (interner Name)";
+          nameContainer.style.display = "none";
           const nameInput = document.createElement("input");
+          nameInput.type = "hidden";
           nameInput.value = item.name;
-          nameInput.placeholder = "unique-key";
-          nameInput.addEventListener("input", () => {
-            item.name = nameInput.value.trim();
-            row.dataset.itemName = item.name;
-            syncHidden();
-          });
-          nameContainer.append(nameLabel, nameInput);
+          nameContainer.append(nameInput);
 
           const labelContainer = document.createElement("div");
           labelContainer.className = "stack";
@@ -1390,10 +1417,16 @@ document.addEventListener('click', (e) => {
           labelInput.placeholder = "z.B. Bier";
           labelInput.addEventListener("input", () => {
             item.label = labelInput.value;
-            if (!item.name.trim()) {
-              item.name = labelInput.value;
-              nameInput.value = item.name;
-            }
+            const base = slugifyKey(item.label) || "produkt";
+            const taken = new Set(
+              items
+                .filter((candidate) => candidate && candidate !== item)
+                .map((candidate) => String(candidate.name || "").trim())
+                .filter(Boolean)
+            );
+            item.name = getUniqueName(base, taken);
+            nameInput.value = item.name;
+            row.dataset.itemName = item.name;
             renderPreview();
             syncHidden();
           });
@@ -1534,7 +1567,6 @@ document.addEventListener('click', (e) => {
           items.push(
             normalizeItem(
               {
-                name: "produkt-" + Date.now(),
                 label: "Neues Produkt",
                 price: 0,
                 color: fallbackColor,
@@ -1542,6 +1574,7 @@ document.addEventListener('click', (e) => {
               items.length
             )
           );
+          applyAutoNames(items);
           items[items.length - 1].priority = nextPriority;
           renderList();
           renderPreview();
@@ -1577,6 +1610,7 @@ document.addEventListener('click', (e) => {
                 : {};
             items = (importedItems || []).map((it, idx) => normalizeItem(it, idx));
             if (!items.length) items = [normalizeItem({ name: "Produkt", label: "Neues Produkt", price: 0, color: fallbackColor }, 0)];
+            applyAutoNames(items);
             renderList();
             renderPreview();
             renderCategoryOrder();
@@ -1642,6 +1676,7 @@ document.addEventListener('click', (e) => {
             depotInput.value = depotPrice;
           }
           items = importedItems.length ? importedItems.map((it, idx) => normalizeItem(it, idx)) : [normalizeItem({ name: "Produkt", label: "Produkt", price: 0, color: fallbackColor }, 0)];
+          applyAutoNames(items);
           renderList();
           renderPreview();
           renderCategoryOrder();

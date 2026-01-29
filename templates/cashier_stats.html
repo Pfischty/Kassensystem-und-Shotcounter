@@ -14,7 +14,7 @@
   <table>
     <tr><th>Getränk</th><th>Menge</th></tr>
     {% for name, qty in sales %}
-      <tr><td>{{ name }}</td><td>{{ qty }}</td></tr>
+        <tr><td>{{ label_map.get(name, name) }}</td><td>{{ qty }}</td></tr>
     {% endfor %}
   </table>
 </div>

@@ -912,6 +912,7 @@ def health():
 def event_detail(event_id: int):
     event = Event.query.get_or_404(event_id)
     stats = event_statistics(event)
+    label_map = {btn.name: (btn.label or btn.name) for btn in resolve_button_config(event)}
     order_logs = (
         OrderLog.query.filter_by(event_id=event.id).order_by(OrderLog.created_at.desc()).limit(50).all()
     )
@@ -937,6 +938,7 @@ def event_detail(event_id: int):
         shot_logs=shot_logs,
         sales=sales,
         teams=teams,
+        label_map=label_map,
     )
 
 
@@ -944,12 +946,13 @@ def event_detail(event_id: int):
 def export_order_logs(event_id: int):
     event = Event.query.get_or_404(event_id)
     logs = OrderLog.query.filter_by(event_id=event.id).order_by(OrderLog.created_at.asc()).all()
+    label_map = {btn.name: (btn.label or btn.name) for btn in resolve_button_config(event)}
 
     rows = []
     for log in logs:
         item_parts = []
         for item in log.items or []:
-            name = item.get("name") or "unbekannt"
+            name = item.get("label") or label_map.get(item.get("name"), item.get("name") or "unbekannt")
             qty = item.get("qty") or 0
             price = item.get("price")
             part = f"{qty}x {name}"
@@ -999,6 +1002,7 @@ def export_shot_logs(event_id: int):
 @app.route("/events/<int:event_id>/export/drink_sales.csv")
 def export_drink_sales(event_id: int):
     event = Event.query.get_or_404(event_id)
+    label_map = {btn.name: (btn.label or btn.name) for btn in resolve_button_config(event)}
     sales = (
         db.session.query(DrinkSale.name, func.coalesce(func.sum(DrinkSale.quantity), 0))
         .join(Order, Order.id == DrinkSale.order_id)
@@ -1008,7 +1012,7 @@ def export_drink_sales(event_id: int):
         .all()
     )
 
-    rows = [[name, quantity] for name, quantity in sales]
+    rows = [[label_map.get(name, name), quantity] for name, quantity in sales]
     headers = ["Produkt", "Menge"]
     filename = f"event-{event.id}-drink-sales.csv"
     return csv_response(filename, headers, rows)
@@ -1706,12 +1710,19 @@ def admin_git_update():
 def _get_cart_data(event):
     """Helper function to get cart data for an event."""
     buttons = resolve_button_config(event)
+    label_map = {button.name: (button.label or button.name) for button in buttons}
     items = session.get(cart_key(event), [])
     prices = {button.name: button.price_with_depot for button in buttons}
     total = sum(prices.get(item, 0) for item in items)
     grouped = Counter(items).items()
     detailed_items = [
-        {"name": name, "qty": qty, "price": prices.get(name, 0), "line_total": prices.get(name, 0) * qty}
+        {
+            "name": name,
+            "label": label_map.get(name, name),
+            "qty": qty,
+            "price": prices.get(name, 0),
+            "line_total": prices.get(name, 0) * qty,
+        }
         for name, qty in grouped
     ]
     return {
@@ -1843,7 +1854,9 @@ def remove_last():
 def checkout():
     event = require_active_event(kassensystem=True)
     items = session.get(cart_key(event), [])
-    prices = {btn.name: btn.price_with_depot for btn in resolve_button_config(event)}
+    buttons = resolve_button_config(event)
+    prices = {btn.name: btn.price_with_depot for btn in buttons}
+    label_map = {btn.name: (btn.label or btn.name) for btn in buttons}
     if items:
         total = sum(prices.get(item, 0) for item in items)
         order = Order(event_id=event.id, total=total)
@@ -1856,7 +1869,7 @@ def checkout():
         aggregated_items = []
         for name, qty in Counter(items).items():
             price = prices.get(name, 0)
-            aggregated_items.append({"name": name, "qty": qty, "price": price})
+            aggregated_items.append({"name": name, "label": label_map.get(name, name), "qty": qty, "price": price})
             db.session.add(DrinkSale(order_id=order.id, name=name, quantity=qty))
 
         db.session.commit()
@@ -1895,7 +1908,15 @@ def cashier_stats():
         .group_by(DrinkSale.name)
         .all()
     )
-    return render_template("cashier_stats.html", revenue=revenue, count=count, sales=sales, event=event)
+    label_map = {btn.name: (btn.label or btn.name) for btn in resolve_button_config(event)}
+    return render_template(
+        "cashier_stats.html",
+        revenue=revenue,
+        count=count,
+        sales=sales,
+        event=event,
+        label_map=label_map,
+    )
 
 
 # ---------------------------------------------------------------------------

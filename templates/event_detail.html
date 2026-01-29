@@ -80,7 +80,7 @@
           <td>{{ log.total }} CHF</td>
           <td>
             {% for item in log.items or [] %}
-              <div>{{ item.qty }}× {{ item.name }} ({{ item.price }} CHF)</div>
+              <div>{{ item.qty }}× {{ item.label or label_map.get(item.name, item.name) }} ({{ item.price }} CHF)</div>
             {% endfor %}
           </td>
           <td>
