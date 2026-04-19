@@ -5,7 +5,7 @@ from datetime import timedelta
 import pytest
 from sqlalchemy.exc import IntegrityError
 
-from app import Event, Order, Team, Terminal, TerminalPayment, SumUpClientError, app, db
+from app import Event, Order, PaymentLog, Team, Terminal, TerminalPayment, SumUpClientError, app, db
 
 
 @pytest.fixture(autouse=True)
@@ -888,6 +888,336 @@ def test_terminal_payment_status_404_keeps_pending(client, monkeypatch):
     data = response.get_json()
     assert data["success"] is True
     assert data["status"] == "pending"
+
+
+def test_admin_terminal_payment_logs_returns_detailed_entries(client):
+    with app.app_context():
+        event = Event(
+            name="SumUp Logs Event",
+            is_active=True,
+            is_archived=False,
+            kassensystem_enabled=True,
+            shotcounter_enabled=True,
+        )
+        db.session.add(event)
+        db.session.flush()
+
+        terminal = Terminal(name="Reader Logs", sumup_device_id="rdr_LOGS", active=True)
+        db.session.add(terminal)
+        db.session.flush()
+
+        payment = TerminalPayment(
+            terminal_id=terminal.id,
+            event_id=event.id,
+            amount_cents=900,
+            currency="CHF",
+            status="aborted",
+            sumup_payment_id="txn_logs",
+        )
+        db.session.add(payment)
+        db.session.flush()
+
+        db.session.add(
+            PaymentLog(
+                terminal_payment_id=payment.id,
+                event="status_inferred_aborted",
+                payload_json={"reason": "status_not_found_reader_idle", "reader_state": "IDLE"},
+            )
+        )
+        db.session.commit()
+
+    response = client.get("/admin/terminal-payments/logs?limit=10")
+    assert response.status_code == 200
+    data = response.get_json()
+    assert data["success"] is True
+    assert data["count"] >= 1
+    assert "summary" in data
+    assert data["summary"]["total_payments"] >= 1
+    assert data["summary"]["total_logs"] >= 1
+    assert data["summary"]["status_counts"].get("aborted", 0) >= 1
+    assert len(data["payments"]) >= 1
+    item = data["payments"][0]
+    assert item["status"] == "aborted"
+    assert item["sumup_payment_id"] == "txn_logs"
+    assert item["terminal_name"] == "Reader Logs"
+    assert item["log_count"] >= 1
+    assert item["latest_event"] == "status_inferred_aborted"
+    assert item["event_counts"].get("status_inferred_aborted", 0) >= 1
+    assert len(item["logs"]) >= 1
+    assert item["logs"][0]["event"] == "status_inferred_aborted"
+
+
+def test_admin_terminal_payment_logs_rejects_invalid_limit(client):
+    response = client.get("/admin/terminal-payments/logs?limit=abc")
+    assert response.status_code == 400
+    data = response.get_json()
+    assert data["success"] is False
+    assert "Limit" in data["error"]
+
+
+def test_admin_terminal_payment_logs_include_live_adds_sumup_status(client, monkeypatch):
+    with app.app_context():
+        event = Event(
+            name="SumUp Live Event",
+            is_active=True,
+            is_archived=False,
+            kassensystem_enabled=True,
+            shotcounter_enabled=True,
+        )
+        db.session.add(event)
+        db.session.flush()
+
+        terminal = Terminal(name="Reader Live", sumup_device_id="rdr_LIVE", active=True)
+        db.session.add(terminal)
+        db.session.flush()
+
+        payment = TerminalPayment(
+            terminal_id=terminal.id,
+            event_id=event.id,
+            amount_cents=700,
+            currency="CHF",
+            status="pending",
+            sumup_payment_id="txn_live_1",
+        )
+        db.session.add(payment)
+        db.session.commit()
+
+    class FakeClient:
+        class _Response:
+            def __init__(self, payment_id, status, raw):
+                self.payment_id = payment_id
+                self.status = status
+                self.raw = raw
+
+        def get_payment_status(self, payment_id):
+            assert payment_id == "txn_live_1"
+            return self._Response(
+                payment_id="txn_live_1",
+                status="successful",
+                raw={"status": "successful", "id": "txn_live_1"},
+            )
+
+    monkeypatch.setattr(app_module, "_sumup_client", lambda: FakeClient())
+
+    response = client.get("/admin/terminal-payments/logs?limit=10&include_live=1")
+    assert response.status_code == 200
+    data = response.get_json()
+    assert data["success"] is True
+    assert data["summary"]["include_live"] is True
+    assert data["summary"]["live_checked_count"] >= 1
+    item = data["payments"][0]
+    assert item["sumup_live_checked"] is True
+    assert item["sumup_live_status"] == "success"
+    assert item["sumup_live_error"] is None
+
+
+def test_admin_terminal_payment_logs_include_live_handles_sumup_error(client, monkeypatch):
+    with app.app_context():
+        event = Event(
+            name="SumUp Live Error Event",
+            is_active=True,
+            is_archived=False,
+            kassensystem_enabled=True,
+            shotcounter_enabled=True,
+        )
+        db.session.add(event)
+        db.session.flush()
+
+        terminal = Terminal(name="Reader Live Error", sumup_device_id="rdr_LIVE_ERR", active=True)
+        db.session.add(terminal)
+        db.session.flush()
+
+        payment = TerminalPayment(
+            terminal_id=terminal.id,
+            event_id=event.id,
+            amount_cents=700,
+            currency="CHF",
+            status="pending",
+            sumup_payment_id="txn_live_err",
+        )
+        db.session.add(payment)
+        db.session.commit()
+
+    class FakeClient:
+        def get_payment_status(self, _payment_id):
+            raise SumUpClientError(
+                "SumUp API Fehler (404): Resource not found",
+                status_code=404,
+                error_type="http",
+            )
+
+    monkeypatch.setattr(app_module, "_sumup_client", lambda: FakeClient())
+
+    response = client.get("/admin/terminal-payments/logs?limit=10&include_live=1")
+    assert response.status_code == 200
+    data = response.get_json()
+    assert data["success"] is True
+    assert data["summary"]["include_live"] is True
+    assert data["summary"]["live_error_count"] >= 1
+    item = data["payments"][0]
+    assert item["sumup_live_checked"] is True
+    assert item["sumup_live_status"] is None
+    assert item["sumup_live_error"] is not None
+
+
+def test_admin_terminal_payment_logs_failed_filter_and_diagnostics(client):
+    with app.app_context():
+        event = Event(
+            name="SumUp Diagnostics Event",
+            is_active=True,
+            is_archived=False,
+            kassensystem_enabled=True,
+            shotcounter_enabled=True,
+        )
+        db.session.add(event)
+        db.session.flush()
+
+        terminal = Terminal(name="Reader Diag", sumup_device_id="rdr_DIAG", active=True)
+        db.session.add(terminal)
+        db.session.flush()
+
+        failed_payment = TerminalPayment(
+            terminal_id=terminal.id,
+            event_id=event.id,
+            amount_cents=500,
+            currency="CHF",
+            status="failed",
+            sumup_payment_id="txn_diag_failed",
+        )
+        success_payment = TerminalPayment(
+            terminal_id=terminal.id,
+            event_id=event.id,
+            amount_cents=600,
+            currency="CHF",
+            status="success",
+            sumup_payment_id="txn_diag_success",
+        )
+        db.session.add(failed_payment)
+        db.session.add(success_payment)
+        db.session.flush()
+
+        db.session.add(
+            PaymentLog(
+                terminal_payment_id=failed_payment.id,
+                event="error",
+                payload_json={
+                    "error": "SumUp API Fehler (404): Resource not found",
+                    "sumup_status_code": 404,
+                },
+            )
+        )
+        db.session.add(
+            PaymentLog(
+                terminal_payment_id=failed_payment.id,
+                event="status_not_found",
+                payload_json={"status_code": 404},
+            )
+        )
+        db.session.commit()
+
+    response = client.get(
+        "/admin/terminal-payments/logs?status=failed,aborted,timeout&include_failed_details=1"
+    )
+    assert response.status_code == 200
+    data = response.get_json()
+    assert data["success"] is True
+    assert data["summary"]["include_failed_details"] is True
+    assert data["summary"]["status_filter"] == ["failed", "aborted", "timeout"]
+    assert len(data["payments"]) >= 1
+    assert all(item["status"] in {"failed", "aborted", "timeout"} for item in data["payments"])
+    first = data["payments"][0]
+    assert first["diagnostics"] is not None
+    assert first["diagnostics"]["sumup_status_codes"] == [404]
+    assert len(first["diagnostics"]["error_messages"]) >= 1
+
+
+def test_admin_terminal_payment_logs_rejects_invalid_status_filter(client):
+    response = client.get("/admin/terminal-payments/logs?status=failed,kaputt")
+    assert response.status_code == 400
+    data = response.get_json()
+    assert data["success"] is False
+    assert "Ungültiger Status-Filter" in data["error"]
+
+
+def test_admin_terminal_payment_details_returns_local_and_live_data(client, monkeypatch):
+    with app.app_context():
+        event = Event(
+            name="SumUp Details Event",
+            is_active=True,
+            is_archived=False,
+            kassensystem_enabled=True,
+            shotcounter_enabled=True,
+        )
+        db.session.add(event)
+        db.session.flush()
+
+        terminal = Terminal(name="Reader Details", sumup_device_id="rdr_DETAILS", active=True)
+        db.session.add(terminal)
+        db.session.flush()
+
+        payment = TerminalPayment(
+            terminal_id=terminal.id,
+            event_id=event.id,
+            amount_cents=1200,
+            currency="CHF",
+            status="failed",
+            sumup_payment_id="txn_details_1",
+        )
+        db.session.add(payment)
+        db.session.flush()
+
+        db.session.add(
+            PaymentLog(
+                terminal_payment_id=payment.id,
+                event="request_sent",
+                payload_json={"id": "txn_details_1"},
+            )
+        )
+        db.session.add(
+            PaymentLog(
+                terminal_payment_id=payment.id,
+                event="error",
+                payload_json={"error": "Declined", "sumup_status_code": 402},
+            )
+        )
+        db.session.commit()
+        payment_id = payment.id
+
+    class FakeClient:
+        class _Response:
+            def __init__(self, payment_id, status, raw):
+                self.payment_id = payment_id
+                self.status = status
+                self.raw = raw
+
+        def get_payment_status(self, payment_id):
+            assert payment_id == "txn_details_1"
+            return self._Response(
+                payment_id="txn_details_1",
+                status="failed",
+                raw={"status": "failed", "id": "txn_details_1"},
+            )
+
+    monkeypatch.setattr(app_module, "_sumup_client", lambda: FakeClient())
+
+    response = client.get(f"/admin/terminal-payments/{payment_id}/details?include_live=1")
+    assert response.status_code == 200
+    data = response.get_json()
+    assert data["success"] is True
+    payment = data["payment"]
+    assert payment["payment_id"] == payment_id
+    assert payment["sumup_payment_id"] == "txn_details_1"
+    assert len(payment["local_events"]) == 2
+    assert payment["sumup_live"]["checked"] is True
+    assert payment["sumup_live"]["status"] == "failed"
+    assert payment["sumup_live"]["error"] is None
+
+
+def test_admin_terminal_payment_details_404_when_missing(client):
+    response = client.get("/admin/terminal-payments/99999/details?include_live=1")
+    assert response.status_code == 404
+    data = response.get_json()
+    assert data["success"] is False
 
 
 def test_create_terminal_payment_reconciles_stale_pending_before_blocking(client, monkeypatch):

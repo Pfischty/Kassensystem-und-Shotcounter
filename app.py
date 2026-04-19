@@ -2054,6 +2054,276 @@ def admin_sumup_readers_status():
     )
 
 
+@app.route("/admin/terminal-payments/logs")
+def admin_terminal_payment_logs():
+    try:
+        limit = int(request.args.get("limit", 30))
+    except (TypeError, ValueError):
+        return jsonify({"success": False, "error": "Ungültiger Limit-Wert."}), 400
+
+    limit = max(1, min(limit, 200))
+    include_live = str(request.args.get("include_live") or "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+    include_failed_details = str(request.args.get("include_failed_details") or "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+    status_values_raw = (request.args.get("status") or "").strip()
+    status_values = [part.strip().lower() for part in status_values_raw.split(",") if part.strip()]
+    allowed_status = {"pending", "success", "failed", "aborted", "timeout"}
+    invalid_status = [value for value in status_values if value not in allowed_status]
+    if invalid_status:
+        return jsonify({"success": False, "error": f"Ungültiger Status-Filter: {', '.join(invalid_status)}"}), 400
+
+    terminal_id_raw = request.args.get("terminal_id")
+    terminal_id: Optional[int] = None
+    if terminal_id_raw not in (None, ""):
+        try:
+            terminal_id = int(terminal_id_raw)
+        except (TypeError, ValueError):
+            return jsonify({"success": False, "error": "Ungültige Terminal-ID."}), 400
+
+    query = TerminalPayment.query.order_by(TerminalPayment.id.desc())
+    if terminal_id is not None:
+        query = query.filter(TerminalPayment.terminal_id == terminal_id)
+    if status_values:
+        query = query.filter(TerminalPayment.status.in_(status_values))
+
+    payments = query.limit(limit).all()
+    payment_ids = [payment.id for payment in payments]
+
+    sumup_client: Optional[SumUpClient] = None
+    live_sync_error: Optional[Dict[str, object]] = None
+    if include_live:
+        try:
+            sumup_client = _sumup_client()
+        except SumUpClientError as exc:
+            live_sync_error = _sumup_error_payload(exc, context="terminal_payment_logs_live")
+
+    logs_by_payment: Dict[int, List[PaymentLog]] = {}
+    if payment_ids:
+        logs = (
+            PaymentLog.query.filter(PaymentLog.terminal_payment_id.in_(payment_ids))
+            .order_by(PaymentLog.id.desc())
+            .all()
+        )
+        for log in logs:
+            logs_by_payment.setdefault(log.terminal_payment_id, []).append(log)
+
+    items: List[Dict[str, object]] = []
+    status_counts: Counter[str] = Counter()
+    global_event_counts: Counter[str] = Counter()
+    total_logs = 0
+    total_error_events = 0
+    live_checked_count = 0
+    live_error_count = 0
+    live_mismatch_count = 0
+
+    for payment in payments:
+        status_counts[payment.status or "unknown"] += 1
+        payment_logs = logs_by_payment.get(payment.id, [])
+        payment_event_counts: Counter[str] = Counter(
+            log.event for log in payment_logs if isinstance(log.event, str) and log.event
+        )
+        global_event_counts.update(payment_event_counts)
+        total_logs += len(payment_logs)
+        error_events = (
+            payment_event_counts.get("error", 0)
+            + payment_event_counts.get("status_not_found", 0)
+            + payment_event_counts.get("reader_status_error", 0)
+        )
+        total_error_events += error_events
+        latest_log = payment_logs[0] if payment_logs else None
+        chronological_logs = list(reversed(payment_logs))
+
+        diagnostics = None
+        if include_failed_details:
+            diagnostic_error_events = {"error", "status_not_found", "reader_status_error", "status_inferred_aborted"}
+            first_error_at = None
+            last_error_at = None
+            error_messages: List[str] = []
+            seen_messages = set()
+            status_codes: List[int] = []
+            seen_codes = set()
+
+            for log in chronological_logs:
+                payload = log.payload_json if isinstance(log.payload_json, dict) else {}
+                if log.event in diagnostic_error_events:
+                    ts = log.created_at.isoformat() if log.created_at else None
+                    if first_error_at is None:
+                        first_error_at = ts
+                    last_error_at = ts
+
+                    message = (
+                        str(payload.get("error") or payload.get("technical_detail") or payload.get("hint") or "").strip()
+                    )
+                    if message and message not in seen_messages:
+                        seen_messages.add(message)
+                        error_messages.append(message)
+
+                    status_code_value = payload.get("sumup_status_code") or payload.get("status_code")
+                    if isinstance(status_code_value, int) and status_code_value not in seen_codes:
+                        seen_codes.add(status_code_value)
+                        status_codes.append(status_code_value)
+
+            diagnostics = {
+                "first_event_at": chronological_logs[0].created_at.isoformat() if chronological_logs and chronological_logs[0].created_at else None,
+                "last_event_at": payment_logs[0].created_at.isoformat() if payment_logs and payment_logs[0].created_at else None,
+                "first_error_at": first_error_at,
+                "last_error_at": last_error_at,
+                "error_messages": error_messages[:10],
+                "sumup_status_codes": status_codes,
+                "event_sequence": [log.event for log in chronological_logs if log.event][:20],
+            }
+
+        sumup_live_status = None
+        sumup_live_raw = None
+        sumup_live_error = None
+        if include_live and payment.sumup_payment_id and sumup_client is not None:
+            live_checked_count += 1
+            try:
+                live_response = sumup_client.get_payment_status(payment.sumup_payment_id)
+                sumup_live_status = _map_sumup_status(live_response.status)
+                sumup_live_raw = live_response.raw
+                if sumup_live_status and payment.status and sumup_live_status != payment.status:
+                    live_mismatch_count += 1
+            except SumUpClientError as exc:
+                live_error_count += 1
+                sumup_live_error = _sumup_error_payload(exc, context="terminal_payment_logs_live")
+
+        items.append(
+            {
+                "payment_id": payment.id,
+                "status": payment.status,
+                "sumup_payment_id": payment.sumup_payment_id,
+                "amount_cents": payment.amount_cents,
+                "currency": payment.currency,
+                "created_at": payment.created_at.isoformat() if payment.created_at else None,
+                "updated_at": payment.updated_at.isoformat() if payment.updated_at else None,
+                "terminal_id": payment.terminal_id,
+                "terminal_name": payment.terminal.name if payment.terminal else None,
+                "event_id": payment.event_id,
+                "event_name": payment.event.name if payment.event else None,
+                "log_count": len(payment_logs),
+                "event_counts": dict(payment_event_counts),
+                "error_event_count": error_events,
+                "latest_event": latest_log.event if latest_log else None,
+                "latest_event_at": latest_log.created_at.isoformat() if latest_log and latest_log.created_at else None,
+                "latest_payload": latest_log.payload_json if latest_log else None,
+                "diagnostics": diagnostics,
+                "sumup_live_checked": bool(include_live and payment.sumup_payment_id),
+                "sumup_live_status": sumup_live_status,
+                "sumup_live_raw": sumup_live_raw,
+                "sumup_live_error": sumup_live_error,
+                "logs": [
+                    {
+                        "id": log.id,
+                        "event": log.event,
+                        "payload": log.payload_json,
+                        "created_at": log.created_at.isoformat() if log.created_at else None,
+                    }
+                    for log in payment_logs
+                ],
+            }
+        )
+
+    return jsonify(
+        {
+            "success": True,
+            "count": len(items),
+            "summary": {
+                "total_payments": len(items),
+                "total_logs": total_logs,
+                "status_counts": dict(status_counts),
+                "event_counts": dict(global_event_counts),
+                "error_event_count": total_error_events,
+                "include_live": include_live,
+                "include_failed_details": include_failed_details,
+                "status_filter": status_values,
+                "live_checked_count": live_checked_count,
+                "live_error_count": live_error_count,
+                "live_mismatch_count": live_mismatch_count,
+                "live_sync_error": live_sync_error,
+            },
+            "payments": items,
+        }
+    )
+
+
+@app.route("/admin/terminal-payments/<int:payment_id>/details")
+def admin_terminal_payment_details(payment_id: int):
+    include_live = str(request.args.get("include_live") or "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+    payment = db.session.get(TerminalPayment, payment_id)
+    if payment is None:
+        return jsonify({"success": False, "error": "Zahlung nicht gefunden."}), 404
+
+    logs = (
+        PaymentLog.query.filter_by(terminal_payment_id=payment.id)
+        .order_by(PaymentLog.id.asc())
+        .all()
+    )
+
+    local_events = [
+        {
+            "id": log.id,
+            "event": log.event,
+            "payload": log.payload_json,
+            "created_at": log.created_at.isoformat() if log.created_at else None,
+        }
+        for log in logs
+    ]
+
+    sumup_live = {
+        "checked": False,
+        "status": None,
+        "raw": None,
+        "error": None,
+    }
+    if include_live and payment.sumup_payment_id:
+        sumup_live["checked"] = True
+        try:
+            client = _sumup_client()
+            response = client.get_payment_status(payment.sumup_payment_id)
+            sumup_live["status"] = _map_sumup_status(response.status)
+            sumup_live["raw"] = response.raw
+        except SumUpClientError as exc:
+            sumup_live["error"] = _sumup_error_payload(exc, context="terminal_payment_details_live")
+
+    return jsonify(
+        {
+            "success": True,
+            "payment": {
+                "payment_id": payment.id,
+                "status": payment.status,
+                "sumup_payment_id": payment.sumup_payment_id,
+                "amount_cents": payment.amount_cents,
+                "currency": payment.currency,
+                "created_at": payment.created_at.isoformat() if payment.created_at else None,
+                "updated_at": payment.updated_at.isoformat() if payment.updated_at else None,
+                "terminal_id": payment.terminal_id,
+                "terminal_name": payment.terminal.name if payment.terminal else None,
+                "event_id": payment.event_id,
+                "event_name": payment.event.name if payment.event else None,
+                "local_events": local_events,
+                "sumup_live": sumup_live,
+            },
+        }
+    )
+
+
 @app.route("/admin/terminals/<int:terminal_id>/connection-test", methods=["POST"])
 def admin_terminal_connection_test(terminal_id: int):
     terminal = session_get_or_404(Terminal, terminal_id)
