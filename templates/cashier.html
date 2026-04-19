@@ -43,23 +43,34 @@
   .action-buttons button { padding:0.9rem 1.1rem; font-size:1rem; }
   .checkout-btn { padding:1.25rem 1.65rem; font-size:1.1rem; min-height:72px; }
   .summary-card { display:flex; flex-direction:column; gap:0.45rem; min-height: 200px; }
-  .summary-top { display:flex; align-items:center; justify-content:space-between; flex-wrap: wrap; gap: .4rem; }
   .event-controls {
-    margin-left:auto;
     display:flex;
     align-items:center;
-    gap:0.45rem;
-    flex-wrap: wrap;
+    justify-content:flex-end;
+    gap:0.35rem;
+    flex-wrap: nowrap;
+    width:auto;
+    max-width:100%;
+    min-width: 0;
   }
-  .event-name { font-weight:600; color:#e2e8f0; }
+  .event-name {
+    font-weight:600;
+    color:#e2e8f0;
+    white-space: nowrap;
+  }
   .event-terminal {
     font-size: 0.9rem;
     color: #cbd5e1;
     white-space: nowrap;
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: none;
   }
   .icon-button {
-    width: 42px;
-    height: 42px;
+    width: 32px;
+    height: 32px;
     flex-shrink: 0;
     border-radius: 999px;
     border: 1px solid var(--border);
@@ -72,30 +83,89 @@
     transition: background 0.12s ease, transform 0.12s ease;
   }
   .icon-button:hover { background: rgba(255,255,255,0.12); transform: translateY(-1px); }
-  .icon-button svg { width: 22px; height: 22px; }
-  .summary-meta { display:flex; align-items:center; gap:0.5rem; flex-wrap:wrap; }
+  .icon-button svg { width: 16px; height: 16px; }
   .summary-body { display:flex; gap:0.6rem; align-items:stretch; }
-  .order-list-wrap {
+  .order-section {
     display: flex;
     flex-direction: column;
     flex: 1;
+    min-width: 0;
+    gap: 0.35rem;
+  }
+  .order-list-wrap {
+    display: flex;
+    flex-direction: column;
     min-height: 130px;
     max-height: 200px;
     overflow: auto;
     border: 1px dashed var(--border);
     border-radius: 10px;
-    padding: 0.4rem 0.55rem 0.45rem;
+    padding: 0.15rem 0.55rem 0.45rem;
     background: rgba(255,255,255,0.02);
   }
   .order-list {
     list-style:none;
     padding-left:0;
-    margin:0.25rem 0 0;
+    margin:0;
     display:flex;
     flex-direction:column;
     gap:0.25rem;
   }
-  .order-list li { padding:0.15rem 0.1rem; }
+  .order-list li {
+    padding:0.2rem 0.1rem;
+    display:grid;
+    grid-template-columns: 3ch minmax(0, 1fr) 72px 78px;
+    gap: 0.45rem;
+    align-items: baseline;
+    font-variant-numeric: tabular-nums;
+  }
+  .order-col-qty,
+  .order-col-price,
+  .order-col-total {
+    text-align: right;
+    white-space: nowrap;
+  }
+  .order-col-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .order-total-row {
+    margin-top: 0.55rem;
+    padding-top: 0.55rem;
+    border-top: 2px solid rgba(148, 163, 184, 0.45);
+    display: flex;
+    justify-content: flex-end;
+    gap: 0.65rem;
+    align-items: baseline;
+    font-variant-numeric: tabular-nums;
+  }
+  .order-total-label,
+  .order-total-value {
+    text-align: right;
+    white-space: nowrap;
+    font-weight: 800;
+    font-size: 1.45rem;
+    color: #f8fafc;
+  }
+  .order-total-value {
+    display: inline-block;
+    min-width: 7.2ch;
+    text-align: right;
+  }
+  .summary-actions-header {
+    display: flex;
+    justify-content: flex-end;
+    margin-bottom: 0.1rem;
+    width: 100%;
+  }
+  .summary-actions-header .icon-button {
+    width: 32px;
+    height: 32px;
+    min-height: 32px;
+    padding: 0;
+    flex: 0 0 32px;
+  }
   .summary-actions {
     display:flex;
     flex-direction:column;
@@ -232,53 +302,53 @@
 
 <div class="cashier-page">
   <div class="card summary-card">
-    <div class="summary-top">
-      <div class="summary-meta">
-        <div style="font-size:1.3rem;">Total: <strong data-cart-total>{{ total }}</strong> CHF</div>
-      </div>
-      <div class="event-controls">
-        <div class="event-name">{{ event.name }}</div>
-        {% if sumup_configured %}
-          <span id="terminal-header-title" class="event-terminal">
-            {% if assigned_terminal %}
-              Terminal: {{ assigned_terminal.name }}
-            {% elif inactive_terminal %}
-              Terminal: Fehler (inaktiv: {{ inactive_terminal.name }})
-            {% elif not available_terminals %}
-              Terminal: Fehler (kein freies Terminal)
-            {% else %}
-              Terminal: nicht gesetzt
-            {% endif %}
-          </span>
-        {% endif %}
-        {% if sumup_configured %}
-          <button id="terminal-settings-btn" class="icon-button" type="button" aria-label="Kartengerät-Bindung öffnen" title="Kartengerät-Bindung">
-            <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
-              <path d="M10.26 3.78a1 1 0 0 1 1.48-.86l1.17.68c.29.17.65.17.94 0l1.17-.68a1 1 0 0 1 1.48.86v1.35c0 .33.17.63.45.8l1.17.68a1 1 0 0 1 .37 1.36l-.68 1.17a1 1 0 0 0 0 .94l.68 1.17a1 1 0 0 1-.37 1.36l-1.17.68a1 1 0 0 0-.45.8v1.35a1 1 0 0 1-1.48.86l-1.17-.68a1 1 0 0 0-.94 0l-1.17.68a1 1 0 0 1-1.48-.86v-1.35a1 1 0 0 0-.45-.8l-1.17-.68a1 1 0 0 1-.37-1.36l.68-1.17a1 1 0 0 0 0-.94l-.68-1.17a1 1 0 0 1 .37-1.36l1.17-.68a1 1 0 0 0 .45-.8V3.78Z" stroke="currentColor" stroke-width="1.5"/>
-              <circle cx="12" cy="12" r="3" stroke="currentColor" stroke-width="1.5"/>
-            </svg>
-          </button>
-        {% endif %}
-      </div>
-    </div>
-
     <div class="summary-body">
-      <div class="order-list-wrap">
-        <div style="display:flex; align-items:center; justify-content: space-between; gap:0.4rem; margin-bottom:0.1rem;">
-          <h3 style="margin:0;">Bestellliste</h3>
-          {% if items %}<span class="badge badge-blue">{{ items|length }} Positionen</span>{% endif %}
+      <div class="order-section">
+        <div class="order-list-wrap">
+          {% if items %}
+            <ul class="order-list">
+              {% for item in items %}
+                <li>
+                  <span class="order-col-qty">{{ item.qty }}x</span>
+                  <span class="order-col-name">{{ item.label or item.name }}</span>
+                  <span class="order-col-price">{{ item.price }} CHF</span>
+                  <span class="order-col-total">{{ item.line_total }} CHF</span>
+                </li>
+              {% endfor %}
+            </ul>
+          {% else %}
+            <p style="margin:0;">Noch keine Artikel im Warenkorb.</p>
+          {% endif %}
         </div>
-        {% if items %}
-          <ul class="order-list">
-            {% for item in items %}
-              <li>{{ item.qty }}× {{ item.label or item.name }} — {{ item.price }} CHF ({{ item.line_total }} CHF)</li>
-            {% endfor %}
-          </ul>
-        {% else %}
-          <p style="margin:0;">Noch keine Artikel im Warenkorb.</p>
-        {% endif %}
+        <div class="order-total-row">
+          <div class="order-total-label">Total</div>
+          <div class="order-total-value"><strong data-cart-total>{{ total }}</strong> CHF</div>
+        </div>
       </div>
       <div class="summary-actions">
+        <div class="summary-actions-header">
+          <div class="event-controls">
+            <div class="event-name">{{ event.name }}</div>
+            {% if sumup_configured %}
+              <span id="terminal-header-title" class="event-terminal">
+                {% if assigned_terminal %}
+                  Terminal: {{ assigned_terminal.name }}
+                {% elif inactive_terminal %}
+                  Terminal: Fehler (inaktiv: {{ inactive_terminal.name }})
+                {% elif not available_terminals %}
+                  Terminal: Fehler (kein freies Terminal)
+                {% else %}
+                  Terminal: nicht gesetzt
+                {% endif %}
+              </span>
+              <button id="terminal-settings-btn" class="icon-button" type="button" aria-label="Kartengeraet-Bindung oeffnen" title="Kartengeraet-Bindung">
+                <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <path d="M12 8.75a3.25 3.25 0 1 0 0 6.5 3.25 3.25 0 0 0 0-6.5Zm8.25 3.25a.8.8 0 0 0 .75-.8.8.8 0 0 0-.75-.8l-1.1-.17a7.32 7.32 0 0 0-.48-1.14l.66-.9a.8.8 0 0 0-.08-1.1.8.8 0 0 0-1.1-.08l-.9.66a7.32 7.32 0 0 0-1.14-.48l-.17-1.1a.8.8 0 0 0-.8-.75.8.8 0 0 0-.8.75l-.17 1.1a7.32 7.32 0 0 0-1.14.48l-.9-.66a.8.8 0 0 0-1.1.08.8.8 0 0 0-.08 1.1l.66.9c-.2.36-.36.74-.48 1.14l-1.1.17a.8.8 0 0 0-.75.8.8.8 0 0 0 .75.8l1.1.17c.12.4.28.78.48 1.14l-.66.9a.8.8 0 0 0 .08 1.1.8.8 0 0 0 1.1.08l.9-.66c.36.2.74.36 1.14.48l.17 1.1a.8.8 0 0 0 .8.75.8.8 0 0 0 .8-.75l.17-1.1c.4-.12.78-.28 1.14-.48l.9.66a.8.8 0 0 0 1.1-.08.8.8 0 0 0 .08-1.1l-.66-.9c.2-.36.36-.74.48-1.14l1.1-.17Z" fill="currentColor"/>
+                </svg>
+              </button>
+            {% endif %}
+          </div>
+        </div>
         <div class="terminal-panel">
           {% if not sumup_configured %}
             <div class="hint">SumUp Zugangsdaten fehlen. Bitte im Adminbereich hinterlegen.</div>
@@ -474,20 +544,6 @@
 
     updateTerminalPayState();
     
-    // Update item count badge
-    const badgeContainer = document.querySelector('.order-list-wrap h3').parentElement;
-    let badge = badgeContainer.querySelector('.badge');
-    if (cartData.item_count > 0) {
-      if (!badge) {
-        badge = document.createElement('span');
-        badge.className = 'badge badge-blue';
-        badgeContainer.appendChild(badge);
-      }
-      badge.textContent = cartData.items.length + ' Positionen';
-    } else if (badge) {
-      badge.remove();
-    }
-    
     // Update order list
     const orderListWrap = document.querySelector('.order-list-wrap');
     const existingList = orderListWrap.querySelector('.order-list');
@@ -506,7 +562,7 @@
       }
       
       list.innerHTML = cartData.items.map(item => 
-        `<li>${item.qty}× ${item.label || item.name} — ${item.price} CHF (${item.line_total} CHF)</li>`
+        `<li><span class="order-col-qty">${item.qty}x</span><span class="order-col-name">${item.label || item.name}</span><span class="order-col-price">${item.price} CHF</span><span class="order-col-total">${item.line_total} CHF</span></li>`
       ).join('');
       
       // Scroll to bottom
