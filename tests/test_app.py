@@ -1,5 +1,6 @@
 import json
 import app as app_module
+from datetime import timedelta
 
 import pytest
 
@@ -865,6 +866,12 @@ def test_terminal_payment_status_404_keeps_pending(client, monkeypatch):
         payment_id = payment.id
 
     class FakeClient:
+        class _Response:
+            def __init__(self, payment_id, status, raw):
+                self.payment_id = payment_id
+                self.status = status
+                self.raw = raw
+
         def get_payment_status(self, _payment_id):
             raise SumUpClientError(
                 "SumUp API Fehler (404): Resource not found",
@@ -879,4 +886,64 @@ def test_terminal_payment_status_404_keeps_pending(client, monkeypatch):
     data = response.get_json()
     assert data["success"] is True
     assert data["status"] == "pending"
+
+
+def test_create_terminal_payment_reconciles_stale_pending_before_blocking(client, monkeypatch):
+    event = _create_and_activate_event(client)
+    with app.app_context():
+        terminal = Terminal(name="Reader 2", sumup_device_id="rdr_TEST2", active=True)
+        db.session.add(terminal)
+        db.session.flush()
+
+        stale_payment = TerminalPayment(
+            terminal_id=terminal.id,
+            event_id=event.id,
+            amount_cents=700,
+            currency="CHF",
+            status="pending",
+            sumup_payment_id="txn_stale",
+            created_at=app_module.utcnow() - timedelta(seconds=30),
+        )
+        db.session.add(stale_payment)
+        db.session.commit()
+        terminal_id = terminal.id
+        stale_payment_id = stale_payment.id
+
+    class FakeClient:
+        def get_payment_status(self, _payment_id):
+            raise SumUpClientError(
+                "SumUp API Fehler (404): Resource not found",
+                status_code=404,
+                error_type="http",
+            )
+
+        def get_reader_status(self, _reader_id):
+            return {"data": {"state": "IDLE", "status": "ONLINE"}}
+
+        def create_terminal_payment(self, **_kwargs):
+            return type(
+                "Resp",
+                (),
+                {
+                    "payment_id": "txn_new",
+                    "status": "pending",
+                    "raw": {"data": {"id": "txn_new"}},
+                },
+            )()
+
+    monkeypatch.setattr(app_module, "_sumup_client", lambda: FakeClient())
+
+    response = client.post(
+        "/api/terminal-payments",
+        json={"terminal_id": terminal_id, "amount_cents": 500, "currency": "CHF"},
+    )
+    assert response.status_code == 200
+    data = response.get_json()
+    assert data["success"] is True
+    assert data["status"] == "pending"
+
+    with app.app_context():
+        old_payment = db.session.get(TerminalPayment, stale_payment_id)
+        assert old_payment is not None
+        assert old_payment.status == "aborted"
 

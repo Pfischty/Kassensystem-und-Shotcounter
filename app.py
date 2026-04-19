@@ -479,6 +479,94 @@ def _terminal_payment_timeout_seconds() -> int:
     return int(os.environ.get("SUMUP_PAYMENT_TIMEOUT_SECONDS", "120"))
 
 
+def _status_not_found_abort_grace_seconds() -> int:
+    return int(os.environ.get("SUMUP_STATUS_NOT_FOUND_ABORT_GRACE_SECONDS", "12"))
+
+
+def _maybe_infer_aborted_from_reader_state(
+    payment: TerminalPayment,
+    *,
+    client: SumUpClient,
+    elapsed_seconds: float,
+) -> None:
+    """Infer aborted state when SumUp status lookup is not available but reader is idle."""
+
+    if elapsed_seconds < _status_not_found_abort_grace_seconds():
+        return
+    if not getattr(payment, "terminal", None):
+        return
+    if not hasattr(client, "get_reader_status"):
+        return
+
+    try:
+        reader_status = client.get_reader_status(payment.terminal.sumup_device_id)
+    except SumUpClientError as exc:
+        _log_terminal_payment_event(
+            payment,
+            "reader_status_error",
+            {"error": str(exc), "status_code": exc.status_code},
+        )
+        return
+
+    live = reader_status.get("data") if isinstance(reader_status.get("data"), dict) else {}
+    live_state = str(live.get("state") or "").strip().upper()
+    live_status = str(live.get("status") or "").strip().upper()
+
+    if live_state == "IDLE" and live_status in {"ONLINE", ""}:
+        payment.status = "aborted"
+        _log_terminal_payment_event(
+            payment,
+            "status_inferred_aborted",
+            {
+                "reason": "status_not_found_reader_idle",
+                "elapsed": elapsed_seconds,
+                "reader_state": live_state,
+                "reader_status": live_status,
+            },
+        )
+
+
+def _reconcile_pending_terminal_payment(payment: TerminalPayment, *, client: Optional[SumUpClient] = None) -> str:
+    """Refresh a pending terminal payment status from SumUp and timeout heuristics."""
+
+    if payment.status != "pending":
+        return payment.status
+
+    elapsed = (utcnow() - payment.created_at).total_seconds()
+    if elapsed >= _terminal_payment_timeout_seconds():
+        payment.status = "timeout"
+        _log_terminal_payment_event(payment, "timeout", {"elapsed": elapsed})
+        return payment.status
+
+    if not payment.sumup_payment_id:
+        return payment.status
+
+    sumup_client = client or _sumup_client()
+    try:
+        response = sumup_client.get_payment_status(payment.sumup_payment_id)
+        new_status = _map_sumup_status(response.status)
+        if new_status != payment.status:
+            payment.status = new_status
+            _log_terminal_payment_event(payment, "status_update", response.raw)
+    except SumUpClientError as exc:
+        if exc.status_code == 404:
+            # Reader checkouts may be accepted before a transaction lookup is available.
+            _log_terminal_payment_event(
+                payment,
+                "status_not_found",
+                {"error": str(exc), "status_code": exc.status_code},
+            )
+            _maybe_infer_aborted_from_reader_state(
+                payment,
+                client=sumup_client,
+                elapsed_seconds=elapsed,
+            )
+            return payment.status
+        raise
+
+    return payment.status
+
+
 def _resolve_terminal_assignment(event: Event) -> tuple[Optional[Terminal], Optional[Terminal]]:
     assigned_terminal = Terminal.query.filter_by(assigned_event_id=event.id).first()
     if assigned_terminal and assigned_terminal.active:
@@ -2030,8 +2118,18 @@ def api_create_terminal_payment():
     if terminal.assigned_event_id not in (None, event.id):
         return jsonify({"success": False, "error": "Terminal ist bereits belegt."}), 400
     pending_payment = TerminalPayment.query.filter_by(terminal_id=terminal.id, status="pending").first()
+    sumup_client: Optional[SumUpClient] = None
     if pending_payment:
-        return jsonify({"success": False, "error": "Terminal hat bereits eine aktive Zahlung."}), 409
+        try:
+            sumup_client = _sumup_client()
+            _reconcile_pending_terminal_payment(pending_payment, client=sumup_client)
+            db.session.commit()
+        except SumUpClientError as exc:
+            error_payload = _sumup_error_payload(exc, context="terminal_payment_reconcile")
+            return jsonify({**error_payload, "status": pending_payment.status}), _sumup_http_status_for_error(exc)
+
+        if pending_payment.status == "pending":
+            return jsonify({"success": False, "error": "Terminal hat bereits eine aktive Zahlung."}), 409
 
     payment = TerminalPayment(
         terminal_id=terminal.id,
@@ -2045,7 +2143,7 @@ def api_create_terminal_payment():
 
     reference = f"{event.name}-{payment.id}-{utcnow().strftime('%Y%m%d%H%M%S')}"
     try:
-        client = _sumup_client()
+        client = sumup_client or _sumup_client()
         response = client.create_terminal_payment(
             amount_cents=amount_cents,
             currency=currency,
@@ -2071,37 +2169,15 @@ def api_terminal_payment_status(payment_id: int):
     event = require_active_event(kassensystem=True)
     payment = TerminalPayment.query.filter_by(id=payment_id, event_id=event.id).first_or_404()
     if payment.status == "pending" and payment.sumup_payment_id:
-        timeout_seconds = _terminal_payment_timeout_seconds()
-        elapsed = (utcnow() - payment.created_at).total_seconds()
-        if elapsed >= timeout_seconds:
-            payment.status = "timeout"
-            _log_terminal_payment_event(payment, "timeout", {"elapsed": elapsed})
+        try:
+            _reconcile_pending_terminal_payment(payment)
             db.session.commit()
-        else:
-            try:
-                client = _sumup_client()
-                response = client.get_payment_status(payment.sumup_payment_id)
-                new_status = _map_sumup_status(response.status)
-                if new_status != payment.status:
-                    payment.status = new_status
-                    _log_terminal_payment_event(payment, "status_update", response.raw)
-                    db.session.commit()
-            except SumUpClientError as exc:
-                if exc.status_code == 404:
-                    # Reader checkouts may be accepted before a transaction lookup is available.
-                    # Keep payment pending and continue polling until timeout.
-                    _log_terminal_payment_event(
-                        payment,
-                        "status_not_found",
-                        {"error": str(exc), "status_code": exc.status_code},
-                    )
-                    db.session.commit()
-                else:
-                    error_payload = _sumup_error_payload(exc, context="terminal_payment_status")
-                    _log_terminal_payment_event(payment, "error", error_payload)
-                    db.session.commit()
-                    response_payload = {**error_payload, "status": payment.status}
-                    return jsonify(response_payload), _sumup_http_status_for_error(exc)
+        except SumUpClientError as exc:
+            error_payload = _sumup_error_payload(exc, context="terminal_payment_status")
+            _log_terminal_payment_event(payment, "error", error_payload)
+            db.session.commit()
+            response_payload = {**error_payload, "status": payment.status}
+            return jsonify(response_payload), _sumup_http_status_for_error(exc)
 
     return jsonify(
         {
