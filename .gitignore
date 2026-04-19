@@ -15,3 +15,5 @@ instance/
 
 # Credentials (not to be committed)
 credentials.json
+
+.DS_Store

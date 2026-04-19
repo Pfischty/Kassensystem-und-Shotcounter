@@ -109,9 +109,7 @@ Zur einfachen Bedienung am Event sind feste DNS-Aliases definiert:
 
 Zugriff:
 
-* `http://kasse`
-* `http://kasse.lan`
-* `http://192.168.50.1` (Fallback)
+* `http://192.168.50.1:8000` (Fallback)
 
 ➡️ Der System-Hostname des Raspberry Pi bleibt unverändert.
 
@@ -177,4 +175,3 @@ iptables -t nat -S POSTROUTING
 * Vereinsanlässe
 * Temporäre Infrastruktur
 * Umgebung mit unzuverlässigem Internet
-
