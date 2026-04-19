@@ -3,6 +3,7 @@ import app as app_module
 from datetime import timedelta
 
 import pytest
+from sqlalchemy.exc import IntegrityError
 
 from app import Event, Order, Team, Terminal, TerminalPayment, SumUpClientError, app, db
 
@@ -946,4 +947,53 @@ def test_create_terminal_payment_reconciles_stale_pending_before_blocking(client
         old_payment = db.session.get(TerminalPayment, stale_payment_id)
         assert old_payment is not None
         assert old_payment.status == "aborted"
+
+
+def test_create_terminal_payment_rejects_invalid_terminal_id_type(client):
+    _create_and_activate_event(client)
+    response = client.post(
+        "/api/terminal-payments",
+        json={"terminal_id": "abc", "amount_cents": 500, "currency": "CHF"},
+    )
+    assert response.status_code == 400
+    data = response.get_json()
+    assert data["success"] is False
+    assert "Terminal-ID ist ungültig" in data["error"]
+
+
+def test_create_terminal_payment_maps_integrity_error_to_conflict(client, monkeypatch):
+    _create_and_activate_event(client)
+    with app.app_context():
+        terminal = Terminal(name="Reader 3", sumup_device_id="rdr_TEST3", active=True)
+        db.session.add(terminal)
+        db.session.commit()
+        terminal_id = terminal.id
+
+    class FakeClient:
+        def create_terminal_payment(self, **_kwargs):
+            return type(
+                "Resp",
+                (),
+                {
+                    "payment_id": "txn_new",
+                    "status": "pending",
+                    "raw": {"data": {"id": "txn_new"}},
+                },
+            )()
+
+    monkeypatch.setattr(app_module, "_sumup_client", lambda: FakeClient())
+
+    def _raise_integrity_error():
+        raise IntegrityError("insert", {}, Exception("duplicate pending"))
+
+    monkeypatch.setattr(db.session, "flush", _raise_integrity_error)
+
+    response = client.post(
+        "/api/terminal-payments",
+        json={"terminal_id": terminal_id, "amount_cents": 500, "currency": "CHF"},
+    )
+    assert response.status_code == 409
+    data = response.get_json()
+    assert data["success"] is False
+    assert "aktive Zahlung" in data["error"]
 

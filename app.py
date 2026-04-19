@@ -44,7 +44,7 @@ from flask_session import Session
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy import event, func, inspect as sqla_inspect, text
 from sqlalchemy.engine import Engine
-from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import attributes
 from werkzeug.datastructures import FileStorage
 from werkzeug.utils import secure_filename
@@ -300,8 +300,28 @@ def ensure_runtime_schema() -> None:
         raise
 
 
+def ensure_runtime_indexes() -> None:
+    """Create runtime indexes required for concurrency-safe payment state handling."""
+
+    try:
+        db.session.execute(
+            text(
+                "CREATE UNIQUE INDEX IF NOT EXISTS "
+                "ux_terminal_payment_pending_terminal "
+                "ON terminal_payment (terminal_id) "
+                "WHERE status = 'pending'"
+            )
+        )
+        db.session.commit()
+    except Exception as exc:
+        db.session.rollback()
+        app.logger.error("Runtime-Index-Erstellung fehlgeschlagen: %s", exc)
+        raise
+
+
 with app.app_context():
     ensure_runtime_schema()
+    ensure_runtime_indexes()
 
 
 _schema_checked = False
@@ -454,6 +474,30 @@ def _sumup_http_status_for_error(exc: SumUpClientError) -> int:
 def _amount_to_cents(amount: int | float | str) -> int:
     value = Decimal(str(amount)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
     return int(value * 100)
+
+
+def _parse_terminal_payment_request(payload: Dict[str, object]) -> tuple[Optional[int], Optional[int], str, Optional[Response]]:
+    """Validate and normalize terminal payment request payload."""
+
+    try:
+        terminal_id = int(payload.get("terminal_id") or 0)
+    except (TypeError, ValueError):
+        return None, None, "CHF", (jsonify({"success": False, "error": "Terminal-ID ist ungültig."}), 400)
+
+    try:
+        amount_cents = int(payload.get("amount_cents") or 0)
+    except (TypeError, ValueError):
+        return None, None, "CHF", (jsonify({"success": False, "error": "Betrag ist ungültig."}), 400)
+
+    currency_raw = payload.get("currency")
+    currency = (str(currency_raw).upper() if currency_raw is not None else "CHF").strip() or "CHF"
+
+    if terminal_id <= 0:
+        return None, None, currency, (jsonify({"success": False, "error": "Terminal fehlt."}), 400)
+    if amount_cents <= 0:
+        return None, None, currency, (jsonify({"success": False, "error": "Betrag muss größer 0 sein."}), 400)
+
+    return terminal_id, amount_cents, currency, None
 
 
 def _log_terminal_payment_event(payment: TerminalPayment, event_name: str, payload: Dict) -> None:
@@ -2099,13 +2143,9 @@ def api_terminals():
 def api_create_terminal_payment():
     event = require_active_event(kassensystem=True)
     payload = request.get_json(silent=True) or {}
-    terminal_id = int(payload.get("terminal_id") or 0)
-    amount_cents = int(payload.get("amount_cents") or 0)
-    currency = (payload.get("currency") or "CHF").upper()
-    if terminal_id <= 0:
-        return jsonify({"success": False, "error": "Terminal fehlt."}), 400
-    if amount_cents <= 0:
-        return jsonify({"success": False, "error": "Betrag muss größer 0 sein."}), 400
+    terminal_id, amount_cents, currency, payload_error = _parse_terminal_payment_request(payload)
+    if payload_error:
+        return payload_error
 
     terminal = db.session.get(Terminal, terminal_id)
     if not terminal:
@@ -2139,7 +2179,11 @@ def api_create_terminal_payment():
         status="pending",
     )
     db.session.add(payment)
-    db.session.flush()
+    try:
+        db.session.flush()
+    except IntegrityError:
+        db.session.rollback()
+        return jsonify({"success": False, "error": "Terminal hat bereits eine aktive Zahlung."}), 409
 
     reference = f"{event.name}-{payment.id}-{utcnow().strftime('%Y%m%d%H%M%S')}"
     try:
