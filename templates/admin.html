@@ -541,7 +541,7 @@
   <div class="collapsible__header">
     <div>
       <h2 style="margin:0;">SumUp Zugangsdaten</h2>
-      <div class="muted">API-Token, Merchant-ID und Affiliate-Key für Terminalzahlungen.</div>
+      <div class="muted">API-Token, Merchant Code und optionaler Affiliate-Key für Terminalzahlungen.</div>
     </div>
     <button type="button" class="secondary" data-toggle>Details einblenden</button>
   </div>
@@ -557,14 +557,15 @@
         >
       </div>
       <div class="stack" style="margin-top: 1rem;">
-        <label for="sumup_merchant_id">Merchant ID</label>
+        <label for="sumup_merchant_id">Merchant Code</label>
         <input
           id="sumup_merchant_id"
           name="sumup_merchant_id"
           type="text"
           value="{{ sumup_settings.merchant_id or '' }}"
-          placeholder="z.B. 123456789"
+          placeholder="Optional, z.B. MK10CL2A"
         >
+        <div class="hint">Optional: Wenn leer, wird der Merchant Code beim Verbindungstest aus dem Token erkannt.</div>
       </div>
       <div class="stack" style="margin-top: 1rem;">
         <label for="sumup_affiliate_key">Affiliate Key (Sandbox)</label>

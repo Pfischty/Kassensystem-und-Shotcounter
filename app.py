@@ -341,18 +341,70 @@ def csv_response(filename: str, headers: List[str], rows: Iterable[Iterable[obje
 # ---------------------------------------------------------------------------
 def _sumup_settings() -> Dict[str, Optional[str]]:
     creds = credentials_manager.get_credentials()
+    configured_merchant = (
+        os.environ.get("SUMUP_MERCHANT_CODE")
+        or os.environ.get("SUMUP_MERCHANT_ID")
+        or creds.get("sumup_merchant_id")
+    )
     return {
         "access_token": os.environ.get("SUMUP_ACCESS_TOKEN") or creds.get("sumup_access_token"),
-        "merchant_id": os.environ.get("SUMUP_MERCHANT_ID") or creds.get("sumup_merchant_id"),
+        "merchant_id": configured_merchant,
         "base_url": os.environ.get("SUMUP_BASE_URL") or creds.get("sumup_base_url"),
         "affiliate_key": os.environ.get("SUMUP_AFFILIATE_KEY") or creds.get("sumup_affiliate_key"),
     }
 
 
+def _extract_merchant_from_profile(profile: Dict[str, object]) -> str:
+    if not isinstance(profile, dict):
+        return ""
+    merchant_profile = profile.get("merchant_profile")
+    merchant_profile = merchant_profile if isinstance(merchant_profile, dict) else {}
+    return str(
+        profile.get("merchant_code")
+        or profile.get("merchant_id")
+        or merchant_profile.get("merchant_code")
+        or merchant_profile.get("merchant_id")
+        or ""
+    ).strip()
+
+
+def _resolve_merchant_code(
+    *,
+    access_token: str,
+    base_url: str,
+    affiliate_key: Optional[str],
+    configured_merchant: Optional[str],
+) -> str:
+    configured = (configured_merchant or "").strip()
+    bootstrap_client = SumUpClient(
+        access_token=access_token,
+        merchant_id=None,
+        base_url=base_url,
+        affiliate_key=affiliate_key,
+    )
+    profile = bootstrap_client.get_profile()
+    api_merchant = _extract_merchant_from_profile(profile)
+    if api_merchant:
+        if configured and configured != api_merchant:
+            app.logger.warning(
+                "SumUp Merchant-Mismatch erkannt: konfiguriert=%s, API=%s. Nutze API-Merchant.",
+                configured,
+                api_merchant,
+            )
+        return api_merchant
+    if configured:
+        return configured
+    raise SumUpClientError(
+        "SumUp Merchant Code konnte nicht aus dem Token bestimmt werden.",
+        error_type="config",
+        hint="Bitte im Adminbereich den Merchant Code setzen oder Token/Berechtigungen prüfen.",
+    )
+
+
 def _sumup_client() -> SumUpClient:
     settings = _sumup_settings()
     access_token = settings.get("access_token")
-    merchant_id = settings.get("merchant_id")
+    configured_merchant = settings.get("merchant_id")
     base_url = settings.get("base_url") or "https://api.sumup.com"
     affiliate_key = settings.get("affiliate_key")
     if not access_token:
@@ -361,12 +413,14 @@ def _sumup_client() -> SumUpClient:
             error_type="config",
             hint="Im Adminbereich unter 'SumUp Zugangsdaten' den Access Token hinterlegen.",
         )
-    if not merchant_id:
-        raise SumUpClientError(
-            "SumUp Merchant ID fehlt.",
-            error_type="config",
-            hint="Im Adminbereich unter 'SumUp Zugangsdaten' die Merchant ID hinterlegen.",
-        )
+
+    merchant_id = _resolve_merchant_code(
+        access_token=access_token,
+        base_url=base_url,
+        affiliate_key=affiliate_key,
+        configured_merchant=configured_merchant,
+    )
+
     return SumUpClient(
         access_token=access_token,
         merchant_id=merchant_id,
@@ -1689,18 +1743,13 @@ def admin_sumup_connection_test():
         return jsonify(payload), _sumup_http_status_for_error(exc)
 
     configured_merchant = (_sumup_settings().get("merchant_id") or "").strip()
-    api_merchant = str(
-        profile.get("merchant_code")
-        or profile.get("merchant_id")
-        or (profile.get("merchant_profile") or {}).get("merchant_code")
-        or ""
-    ).strip()
+    api_merchant = _extract_merchant_from_profile(profile)
 
     warning = None
     if configured_merchant and api_merchant and configured_merchant != api_merchant:
         warning = (
-            "Merchant-ID aus den Zugangsdaten stimmt nicht mit der API-Antwort überein. "
-            "Bitte Konfiguration prüfen."
+            "Konfigurierter Merchant stimmt nicht mit dem Token-Merchant überein. "
+            "Für API-Aufrufe wird automatisch der Merchant aus dem Token verwendet."
         )
 
     return jsonify(

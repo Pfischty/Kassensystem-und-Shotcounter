@@ -40,16 +40,27 @@ class SumUpClient:
         self,
         *,
         access_token: str,
-        merchant_id: str,
+        merchant_id: Optional[str],
         base_url: str,
         affiliate_key: Optional[str] = None,
     ) -> None:
         self._access_token = access_token
-        self._merchant_id = merchant_id
+        self._merchant_id = (merchant_id or "").strip()
         self._base_url = base_url.rstrip("/")
         self._affiliate_key = affiliate_key
 
+    def _require_merchant_id(self) -> str:
+        merchant = (self._merchant_id or "").strip()
+        if not merchant:
+            raise SumUpClientError(
+                "SumUp Merchant Code fehlt.",
+                error_type="config",
+                hint="Merchant Code im Adminbereich setzen oder per Verbindungstest aus Token übernehmen.",
+            )
+        return merchant
+
     def create_terminal_payment(self, *, amount_cents: int, currency: str, device_id: str, reference: str) -> SumUpResponse:
+        merchant_id = self._require_merchant_id()
         # Prefer modern Reader Checkout API.
         reader_payload = {
             "total_amount": amount_cents / 100,
@@ -58,7 +69,7 @@ class SumUpClient:
         try:
             response = self._request(
                 "POST",
-                f"/v0.1/merchants/{self._merchant_id}/readers/{device_id}/checkout",
+                f"/v0.1/merchants/{merchant_id}/readers/{device_id}/checkout",
                 reader_payload,
             )
             data = response.get("data") if isinstance(response.get("data"), dict) else {}
@@ -74,7 +85,7 @@ class SumUpClient:
             "currency": currency,
             "device_id": device_id,
             "reference": reference,
-            "merchant_id": self._merchant_id,
+            "merchant_id": merchant_id,
         }
         response = self._request("POST", "/v0.1/terminal/payments", legacy_payload)
         return SumUpResponse(
@@ -112,11 +123,13 @@ class SumUpClient:
 
     def get_reader_status(self, reader_id: str) -> Dict[str, Any]:
         """Fetch status information for a specific reader device."""
-        return self._request("GET", f"/v0.1/merchants/{self._merchant_id}/readers/{reader_id}/status")
+        merchant_id = self._require_merchant_id()
+        return self._request("GET", f"/v0.1/merchants/{merchant_id}/readers/{reader_id}/status")
 
     def list_readers(self) -> list[Dict[str, Any]]:
         """List readers configured for the merchant account."""
-        response = self._request("GET", f"/v0.1/merchants/{self._merchant_id}/readers")
+        merchant_id = self._require_merchant_id()
+        response = self._request("GET", f"/v0.1/merchants/{merchant_id}/readers")
         items = response.get("items") if isinstance(response, dict) else None
         return items if isinstance(items, list) else []
 
