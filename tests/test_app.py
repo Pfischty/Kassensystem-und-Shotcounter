@@ -10,16 +10,17 @@ from app import Event, Order, Team, Terminal, TerminalPayment, SumUpClientError,
 
 @pytest.fixture(autouse=True)
 def setup_database():
-    """Configure an in-memory database for each test."""
+    """Reset isolated test database for each test."""
 
     app.config.update(
         TESTING=True,
         SECRET_KEY="test-key",
-        SQLALCHEMY_DATABASE_URI="sqlite:///:memory:",
         SESSION_TYPE="filesystem",
     )
 
     with app.app_context():
+        engine_url = str(db.engine.url)
+        assert "pytest-test.db" in engine_url, f"Unexpected test DB target: {engine_url}"
         db.drop_all()
         db.create_all()
     yield

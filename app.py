@@ -58,6 +58,9 @@ from sumup_client import SumUpClient, SumUpClientError
 # ---------------------------------------------------------------------------
 app = Flask(__name__, instance_relative_config=True)
 
+if os.environ.get("KASSENSYSTEM_TESTING", "").strip().lower() in {"1", "true", "yes", "on"}:
+    app.config["TESTING"] = True
+
 is_production = os.environ.get("FLASK_ENV") == "production" or os.environ.get("APP_ENV") == "production"
 
 # Configure credentials storage path (default: instance/credentials.json).
@@ -82,7 +85,11 @@ if not secret_key:
     secret_key = "dev-secret-key"
 
 app.config["SECRET_KEY"] = secret_key
-app.config.setdefault("SQLALCHEMY_DATABASE_URI", f"sqlite:///{Path(app.instance_path) / 'app.db'}")
+db_uri_env = (os.environ.get("SQLALCHEMY_DATABASE_URI") or "").strip()
+if db_uri_env:
+    app.config["SQLALCHEMY_DATABASE_URI"] = db_uri_env
+else:
+    app.config.setdefault("SQLALCHEMY_DATABASE_URI", f"sqlite:///{Path(app.instance_path) / 'app.db'}")
 app.config.setdefault("SQLALCHEMY_TRACK_MODIFICATIONS", False)
 app.config.setdefault("SESSION_TYPE", "filesystem")
 
@@ -319,9 +326,10 @@ def ensure_runtime_indexes() -> None:
         raise
 
 
-with app.app_context():
-    ensure_runtime_schema()
-    ensure_runtime_indexes()
+if not app.config.get("TESTING"):
+    with app.app_context():
+        ensure_runtime_schema()
+        ensure_runtime_indexes()
 
 
 _schema_checked = False
