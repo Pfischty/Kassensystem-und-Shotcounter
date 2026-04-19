@@ -561,7 +561,9 @@
       </div>
       <div class="field-inline" style="margin-top: 1rem;">
         <button type="submit">SumUp Zugangsdaten speichern</button>
+        <button type="button" class="secondary" id="sumup-test-connection-btn">Verbindung testen</button>
       </div>
+      <div class="flash" id="sumup-test-result" style="display:none; margin-top: 1rem;"></div>
     </form>
   </div>
 </div>
@@ -611,5 +613,69 @@
   {{ price_list_defaults | tojson }}
 </script>
 <script src="{{ url_for('static', filename='js/admin.js', v='5') }}" defer></script>
+<script>
+  document.addEventListener("DOMContentLoaded", () => {
+    const testBtn = document.getElementById("sumup-test-connection-btn");
+    const resultEl = document.getElementById("sumup-test-result");
+    if (!testBtn || !resultEl) return;
+
+    const showResult = (message, kind) => {
+      resultEl.style.display = "block";
+      resultEl.classList.remove("error", "success");
+      resultEl.classList.add(kind === "success" ? "success" : "error");
+      resultEl.textContent = message;
+    };
+
+    testBtn.addEventListener("click", async () => {
+      const originalLabel = testBtn.textContent;
+      testBtn.disabled = true;
+      testBtn.textContent = "Teste Verbindung ...";
+      resultEl.style.display = "none";
+
+      try {
+        const response = await fetch("{{ url_for('admin_sumup_connection_test') }}", {
+          method: "POST",
+          headers: {
+            "Accept": "application/json",
+            "X-Requested-With": "XMLHttpRequest",
+          },
+        });
+        const data = await response.json();
+        if (!response.ok || !data.success) {
+          const messageParts = [data.error || "Verbindungstest fehlgeschlagen."];
+          if (data.hint) {
+            messageParts.push(`Hinweis: ${data.hint}`);
+          }
+          if (data.sumup_status_code) {
+            messageParts.push(`HTTP-Status: ${data.sumup_status_code}`);
+          }
+          showResult(messageParts.join(" "), "error");
+          return;
+        }
+
+        const details = [];
+        if (data.api_merchant_id) {
+          details.push(`API Merchant: ${data.api_merchant_id}`);
+        }
+        if (data.configured_merchant_id) {
+          details.push(`Konfiguriert: ${data.configured_merchant_id}`);
+        }
+        let message = data.message || "Verbindung erfolgreich.";
+        if (details.length) {
+          message += ` (${details.join(" | ")})`;
+        }
+        if (data.warning) {
+          message += ` Achtung: ${data.warning}`;
+        }
+        showResult(message, "success");
+      } catch (err) {
+        showResult("Verbindungstest konnte nicht ausgeführt werden. Bitte Seite neu laden und erneut versuchen.", "error");
+      } finally {
+        testBtn.disabled = false;
+        testBtn.textContent = originalLabel;
+      }
+    });
+  });
+</script>
 
 {% endblock %}

@@ -11,6 +11,21 @@ from urllib import error, request
 class SumUpClientError(RuntimeError):
     """Raised when SumUp API communication fails."""
 
+    def __init__(
+        self,
+        message: str,
+        *,
+        status_code: Optional[int] = None,
+        error_type: str = "unknown",
+        detail: Optional[str] = None,
+        hint: Optional[str] = None,
+    ) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+        self.error_type = error_type
+        self.detail = detail
+        self.hint = hint
+
 
 @dataclass
 class SumUpResponse:
@@ -56,6 +71,10 @@ class SumUpClient:
             raw=response,
         )
 
+    def get_profile(self) -> Dict[str, Any]:
+        """Fetch merchant profile data to validate credentials and connectivity."""
+        return self._request("GET", "/v0.1/me")
+
     def _request(self, method: str, path: str, payload: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         url = f"{self._base_url}{path}"
         headers = {
@@ -74,13 +93,52 @@ class SumUpClient:
                 body = response.read().decode("utf-8")
         except error.HTTPError as exc:
             detail = exc.read().decode("utf-8") if exc.fp else str(exc)
-            raise SumUpClientError(f"SumUp API Fehler ({exc.code}): {detail}") from exc
+            parsed_detail = detail
+            try:
+                payload = json.loads(detail)
+                parsed_detail = (
+                    payload.get("message")
+                    or payload.get("error")
+                    or payload.get("error_description")
+                    or payload.get("detail")
+                    or detail
+                )
+            except (TypeError, json.JSONDecodeError):
+                parsed_detail = detail
+
+            hint_map = {
+                400: "Anfrage ist ungültig. Prüfe Parameter und Device-ID.",
+                401: "Token ungültig oder abgelaufen. Bitte Access Token prüfen.",
+                403: "Kein Zugriff erlaubt. Prüfe Merchant-ID und Berechtigungen.",
+                404: "API-Endpunkt nicht gefunden. Prüfe die Base URL.",
+                429: "Zu viele Anfragen. Bitte kurz warten und erneut versuchen.",
+                500: "SumUp Serverfehler. Bitte später erneut versuchen.",
+                502: "SumUp Gateway-Fehler. Bitte später erneut versuchen.",
+                503: "SumUp Dienst nicht verfügbar. Bitte später erneut versuchen.",
+            }
+            raise SumUpClientError(
+                f"SumUp API Fehler ({exc.code}): {parsed_detail}",
+                status_code=exc.code,
+                error_type="http",
+                detail=detail,
+                hint=hint_map.get(exc.code),
+            ) from exc
         except error.URLError as exc:
-            raise SumUpClientError(f"SumUp API nicht erreichbar: {exc}") from exc
+            raise SumUpClientError(
+                f"SumUp API nicht erreichbar: {exc}",
+                error_type="network",
+                detail=str(exc),
+                hint="Prüfe Internetverbindung, DNS und Firewall-Regeln.",
+            ) from exc
 
         if not body:
             return {}
         try:
             return json.loads(body)
         except json.JSONDecodeError as exc:
-            raise SumUpClientError("Ungültige SumUp API Antwort") from exc
+            raise SumUpClientError(
+                "Ungültige SumUp API Antwort",
+                error_type="decode",
+                detail=body[:500],
+                hint="Die API hat eine unerwartete Antwort geliefert. Bitte erneut versuchen.",
+            ) from exc

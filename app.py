@@ -42,7 +42,7 @@ from flask import (
 from flask_migrate import Migrate
 from flask_session import Session
 from flask_sqlalchemy import SQLAlchemy
-from sqlalchemy import event, func, text
+from sqlalchemy import event, func, inspect as sqla_inspect, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import attributes
 from werkzeug.datastructures import FileStorage
@@ -258,6 +258,31 @@ class PaymentLog(db.Model):
 
     terminal_payment = db.relationship("TerminalPayment", backref=db.backref("logs", cascade="all, delete-orphan"))
 
+
+def ensure_runtime_schema() -> None:
+    """Create missing tables for existing installs when migrations were not run."""
+
+    required_tables = tuple(sorted(db.metadata.tables.keys()))
+    try:
+        inspector = sqla_inspect(db.engine)
+        missing = [table for table in required_tables if not inspector.has_table(table)]
+        if not missing:
+            return
+        app.logger.warning("Fehlende Tabellen erkannt: %s. Erstelle fehlende Tabellen.", ", ".join(missing))
+        db.create_all()
+        inspector = sqla_inspect(db.engine)
+        still_missing = [table for table in required_tables if not inspector.has_table(table)]
+        if still_missing:
+            app.logger.error("Schema-Selbstheilung unvollständig. Fehlend: %s", ", ".join(still_missing))
+            return
+        app.logger.info("Schema-Selbstheilung abgeschlossen.")
+    except Exception as exc:
+        app.logger.error("Schema-Selbstheilung fehlgeschlagen: %s", exc)
+
+
+with app.app_context():
+    ensure_runtime_schema()
+
 # ---------------------------------------------------------------------------
 # CSV Export Helpers
 # ---------------------------------------------------------------------------
@@ -297,15 +322,64 @@ def _sumup_client() -> SumUpClient:
     base_url = settings.get("base_url") or "https://api.sumup.com"
     affiliate_key = settings.get("affiliate_key")
     if not access_token:
-        raise SumUpClientError("SumUp Access Token fehlt.")
+        raise SumUpClientError(
+            "SumUp Access Token fehlt.",
+            error_type="config",
+            hint="Im Adminbereich unter 'SumUp Zugangsdaten' den Access Token hinterlegen.",
+        )
     if not merchant_id:
-        raise SumUpClientError("SumUp Merchant ID fehlt.")
+        raise SumUpClientError(
+            "SumUp Merchant ID fehlt.",
+            error_type="config",
+            hint="Im Adminbereich unter 'SumUp Zugangsdaten' die Merchant ID hinterlegen.",
+        )
     return SumUpClient(
         access_token=access_token,
         merchant_id=merchant_id,
         base_url=base_url,
         affiliate_key=affiliate_key,
     )
+
+
+def _sumup_error_payload(exc: SumUpClientError, *, context: str) -> Dict[str, object]:
+    message = str(exc) or "Unbekannter SumUp Fehler"
+    hint = exc.hint
+    if not hint:
+        if exc.error_type == "config":
+            hint = "Bitte SumUp Zugangsdaten im Adminbereich prüfen und speichern."
+        elif exc.error_type == "network":
+            hint = "Bitte Netzwerk, DNS und Internetzugriff des Geräts prüfen."
+        elif exc.error_type == "decode":
+            hint = "SumUp hat eine unerwartete Antwort geliefert. Bitte erneut versuchen."
+        elif exc.status_code in {401, 403}:
+            hint = "Token/Merchant-ID prüfen und sicherstellen, dass die API-Berechtigung aktiv ist."
+        elif exc.status_code == 404:
+            hint = "Base URL prüfen (Standard: https://api.sumup.com)."
+        elif exc.status_code == 429:
+            hint = "Zu viele Anfragen. Kurz warten und erneut versuchen."
+
+    payload: Dict[str, object] = {
+        "success": False,
+        "error": message,
+        "context": context,
+        "error_type": exc.error_type,
+        "hint": hint,
+    }
+    if exc.status_code is not None:
+        payload["sumup_status_code"] = exc.status_code
+    if exc.detail:
+        payload["technical_detail"] = exc.detail[:800]
+    return payload
+
+
+def _sumup_http_status_for_error(exc: SumUpClientError) -> int:
+    if exc.error_type == "config":
+        return 400
+    if exc.status_code in {401, 403}:
+        return 401
+    if exc.status_code in {404, 429}:
+        return 502
+    return 502
 
 
 def _amount_to_cents(amount: int | float | str) -> int:
@@ -559,6 +633,19 @@ def save_price_list_image(file: FileStorage | None, event_id: int) -> str | None
     if not file or not file.filename:
         return None
 
+    if not allowed_file(file.filename):
+        return None
+
+    ext = file.filename.rsplit(".", 1)[1].lower()
+    filename = f"pl_{event_id}_{secrets.token_hex(8)}.{ext}"
+    filepath = Path(app.config["UPLOAD_FOLDER"]) / filename
+    try:
+        file.save(str(filepath))
+        return filename
+    except Exception as exc:
+        app.logger.error("Fehler beim Speichern des Preisliste-Hintergrundbildes: %s", exc)
+        return None
+
 
 def save_managed_image(file: FileStorage | None) -> str | None:
     if not file or not file.filename:
@@ -653,17 +740,6 @@ def _remove_image_references(filename: str) -> None:
 
     if changed:
         db.session.commit()
-    if not allowed_file(file.filename):
-        return None
-    ext = file.filename.rsplit(".", 1)[1].lower()
-    filename = f"pl_{event_id}_{secrets.token_hex(8)}.{ext}"
-    filepath = Path(app.config["UPLOAD_FOLDER"]) / filename
-    try:
-        file.save(str(filepath))
-        return filename
-    except Exception as exc:
-        app.logger.error("Fehler beim Speichern des Preisliste-Hintergrundbildes: %s", exc)
-        return None
 
 
 def validate_shotcounter_settings(raw: dict | None) -> Dict[str, int | float | str]:
@@ -1495,6 +1571,42 @@ def update_sumup_credentials():
     return redirect(url_for("admin"))
 
 
+@app.route("/admin/sumup-connection-test", methods=["POST"])
+def admin_sumup_connection_test():
+    try:
+        client = _sumup_client()
+        profile = client.get_profile()
+    except SumUpClientError as exc:
+        payload = _sumup_error_payload(exc, context="sumup_connection_test")
+        app.logger.warning("SumUp Verbindungstest fehlgeschlagen: %s", payload.get("error"))
+        return jsonify(payload), _sumup_http_status_for_error(exc)
+
+    configured_merchant = (_sumup_settings().get("merchant_id") or "").strip()
+    api_merchant = str(
+        profile.get("merchant_code")
+        or profile.get("merchant_id")
+        or (profile.get("merchant_profile") or {}).get("merchant_code")
+        or ""
+    ).strip()
+
+    warning = None
+    if configured_merchant and api_merchant and configured_merchant != api_merchant:
+        warning = (
+            "Merchant-ID aus den Zugangsdaten stimmt nicht mit der API-Antwort überein. "
+            "Bitte Konfiguration prüfen."
+        )
+
+    return jsonify(
+        {
+            "success": True,
+            "message": "Verbindung zu SumUp erfolgreich.",
+            "configured_merchant_id": configured_merchant or None,
+            "api_merchant_id": api_merchant or None,
+            "warning": warning,
+        }
+    )
+
+
 @app.route("/admin/events/<int:event_id>/activate", methods=["POST"])
 def activate_event(event_id: int):
     event = Event.query.get_or_404(event_id)
@@ -1597,9 +1709,11 @@ def api_create_terminal_payment():
         return jsonify({"success": True, "payment_id": payment.id, "status": payment.status})
     except SumUpClientError as exc:
         payment.status = "failed"
-        _log_terminal_payment_event(payment, "error", {"error": str(exc)})
+        error_payload = _sumup_error_payload(exc, context="terminal_payment_create")
+        _log_terminal_payment_event(payment, "error", error_payload)
         db.session.commit()
-        return jsonify({"success": False, "error": str(exc), "payment_id": payment.id, "status": payment.status}), 502
+        response_payload = {**error_payload, "payment_id": payment.id, "status": payment.status}
+        return jsonify(response_payload), _sumup_http_status_for_error(exc)
 
 
 @app.route("/api/terminal-payments/<int:payment_id>")
@@ -1623,9 +1737,11 @@ def api_terminal_payment_status(payment_id: int):
                     _log_terminal_payment_event(payment, "status_update", response.raw)
                     db.session.commit()
             except SumUpClientError as exc:
-                _log_terminal_payment_event(payment, "error", {"error": str(exc)})
+                error_payload = _sumup_error_payload(exc, context="terminal_payment_status")
+                _log_terminal_payment_event(payment, "error", error_payload)
                 db.session.commit()
-                return jsonify({"success": False, "error": str(exc), "status": payment.status}), 502
+                response_payload = {**error_payload, "status": payment.status}
+                return jsonify(response_payload), _sumup_http_status_for_error(exc)
 
     return jsonify(
         {
