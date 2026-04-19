@@ -3,7 +3,7 @@ import app as app_module
 
 import pytest
 
-from app import Event, Order, Team, Terminal, SumUpClientError, app, db
+from app import Event, Order, Team, Terminal, TerminalPayment, SumUpClientError, app, db
 
 
 @pytest.fixture(autouse=True)
@@ -749,4 +749,49 @@ def test_sumup_readers_status_returns_live_and_local_info(client, monkeypatch):
     assert item["live_state"] == "IDLE"
     assert item["connection_type"] == "Wi-Fi"
     assert item["local_terminal_name"] == "Weiss"
+
+
+def test_terminal_payment_status_404_keeps_pending(client, monkeypatch):
+    with app.app_context():
+        event = Event(
+            name="SumUp Event",
+            is_active=True,
+            is_archived=False,
+            kassensystem_enabled=True,
+            shotcounter_enabled=True,
+        )
+        db.session.add(event)
+        db.session.flush()
+
+        terminal = Terminal(name="Reader 1", sumup_device_id="rdr_TEST", active=True)
+        db.session.add(terminal)
+        db.session.flush()
+
+        payment = TerminalPayment(
+            terminal_id=terminal.id,
+            event_id=event.id,
+            amount_cents=700,
+            currency="CHF",
+            status="pending",
+            sumup_payment_id="txn_404",
+        )
+        db.session.add(payment)
+        db.session.commit()
+        payment_id = payment.id
+
+    class FakeClient:
+        def get_payment_status(self, _payment_id):
+            raise SumUpClientError(
+                "SumUp API Fehler (404): Resource not found",
+                status_code=404,
+                error_type="http",
+            )
+
+    monkeypatch.setattr(app_module, "_sumup_client", lambda: FakeClient())
+
+    response = client.get(f"/api/terminal-payments/{payment_id}")
+    assert response.status_code == 200
+    data = response.get_json()
+    assert data["success"] is True
+    assert data["status"] == "pending"
 

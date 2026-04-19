@@ -59,30 +59,87 @@ class SumUpClient:
             )
         return merchant
 
+    @staticmethod
+    def _looks_like_reader_id(value: str) -> bool:
+        candidate = (value or "").strip()
+        return candidate.startswith("rdr_") and len(candidate) >= 10
+
+    def _resolve_reader_id(self, device_id: str) -> str:
+        candidate = (device_id or "").strip()
+        if not candidate:
+            raise SumUpClientError(
+                "Reader-ID fehlt.",
+                error_type="config",
+                hint="Bitte eine gültige Reader-ID (rdr_...) konfigurieren.",
+            )
+        if self._looks_like_reader_id(candidate):
+            return candidate
+
+        readers = self.list_readers()
+        needle = candidate.lower()
+        for reader in readers:
+            if not isinstance(reader, dict):
+                continue
+            reader_id = str(reader.get("id") or "").strip()
+            if not reader_id:
+                continue
+            details = reader.get("details") if isinstance(reader.get("details"), dict) else {}
+            device = reader.get("device") if isinstance(reader.get("device"), dict) else {}
+            identifier = str(details.get("identifier") or device.get("identifier") or "").strip()
+            if identifier and identifier.lower() == needle:
+                return reader_id
+
+        raise SumUpClientError(
+            "Kein passender Reader gefunden.",
+            error_type="config",
+            hint="Bitte Reader-ID im Format rdr_... verwenden oder Reader zuerst über 'Reader scannen & aktivieren' übernehmen.",
+        )
+
     def create_terminal_payment(self, *, amount_cents: int, currency: str, device_id: str, reference: str) -> SumUpResponse:
         merchant_id = self._require_merchant_id()
         # Prefer modern Reader Checkout API.
+        normalized_currency = (currency or "CHF").strip().upper() or "CHF"
         reader_payload = {
-            "total_amount": amount_cents / 100,
+            "total_amount": {
+                "currency": normalized_currency,
+                "minor_unit": 2,
+                "value": int(amount_cents),
+            },
             "description": reference,
         }
-        try:
-            response = self._request(
+
+        def _create_reader_checkout(reader_id: str) -> Dict[str, Any]:
+            return self._request(
                 "POST",
-                f"/v0.1/merchants/{merchant_id}/readers/{device_id}/checkout",
+                f"/v0.1/merchants/{merchant_id}/readers/{reader_id}/checkout",
                 reader_payload,
             )
+
+        try:
+            response = _create_reader_checkout((device_id or "").strip())
             data = response.get("data") if isinstance(response.get("data"), dict) else {}
             payment_id = data.get("client_transaction_id") or data.get("id")
             return SumUpResponse(payment_id=payment_id, status="pending", raw=response)
         except SumUpClientError as exc:
+            # If a non-rdr identifier is stored locally, try resolving it via Reader list.
+            if exc.status_code == 404 and not self._looks_like_reader_id(device_id):
+                try:
+                    resolved_reader_id = self._resolve_reader_id(device_id)
+                    response = _create_reader_checkout(resolved_reader_id)
+                    data = response.get("data") if isinstance(response.get("data"), dict) else {}
+                    payment_id = data.get("client_transaction_id") or data.get("id")
+                    return SumUpResponse(payment_id=payment_id, status="pending", raw=response)
+                except SumUpClientError:
+                    # Continue into legacy fallback below.
+                    pass
+
             # Legacy fallback for older integrations/accounts.
             if exc.status_code != 404:
                 raise
 
         legacy_payload = {
             "amount": f"{amount_cents / 100:.2f}",
-            "currency": currency,
+            "currency": normalized_currency,
             "device_id": device_id,
             "reference": reference,
             "merchant_id": merchant_id,
@@ -124,7 +181,14 @@ class SumUpClient:
     def get_reader_status(self, reader_id: str) -> Dict[str, Any]:
         """Fetch status information for a specific reader device."""
         merchant_id = self._require_merchant_id()
-        return self._request("GET", f"/v0.1/merchants/{merchant_id}/readers/{reader_id}/status")
+        candidate = (reader_id or "").strip()
+        try:
+            return self._request("GET", f"/v0.1/merchants/{merchant_id}/readers/{candidate}/status")
+        except SumUpClientError as exc:
+            if exc.status_code == 404 and not self._looks_like_reader_id(candidate):
+                resolved_reader_id = self._resolve_reader_id(candidate)
+                return self._request("GET", f"/v0.1/merchants/{merchant_id}/readers/{resolved_reader_id}/status")
+            raise
 
     def list_readers(self) -> list[Dict[str, Any]]:
         """List readers configured for the merchant account."""

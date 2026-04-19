@@ -2071,11 +2071,21 @@ def api_terminal_payment_status(payment_id: int):
                     _log_terminal_payment_event(payment, "status_update", response.raw)
                     db.session.commit()
             except SumUpClientError as exc:
-                error_payload = _sumup_error_payload(exc, context="terminal_payment_status")
-                _log_terminal_payment_event(payment, "error", error_payload)
-                db.session.commit()
-                response_payload = {**error_payload, "status": payment.status}
-                return jsonify(response_payload), _sumup_http_status_for_error(exc)
+                if exc.status_code == 404:
+                    # Reader checkouts may be accepted before a transaction lookup is available.
+                    # Keep payment pending and continue polling until timeout.
+                    _log_terminal_payment_event(
+                        payment,
+                        "status_not_found",
+                        {"error": str(exc), "status_code": exc.status_code},
+                    )
+                    db.session.commit()
+                else:
+                    error_payload = _sumup_error_payload(exc, context="terminal_payment_status")
+                    _log_terminal_payment_event(payment, "error", error_payload)
+                    db.session.commit()
+                    response_payload = {**error_payload, "status": payment.status}
+                    return jsonify(response_payload), _sumup_http_status_for_error(exc)
 
     return jsonify(
         {
