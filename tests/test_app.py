@@ -5,7 +5,18 @@ from datetime import timedelta
 import pytest
 from sqlalchemy.exc import IntegrityError
 
-from app import Event, Order, PaymentLog, Team, Terminal, TerminalPayment, SumUpClientError, app, db
+from app import (
+    Event,
+    Order,
+    PaymentLog,
+    Team,
+    Terminal,
+    TerminalPayment,
+    TerminalPaymentInitLog,
+    SumUpClientError,
+    app,
+    db,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -924,6 +935,16 @@ def test_admin_terminal_payment_logs_returns_detailed_entries(client):
                 payload_json={"reason": "status_not_found_reader_idle", "reader_state": "IDLE"},
             )
         )
+        db.session.add(
+            TerminalPaymentInitLog(
+                event_id=event.id,
+                terminal_id=terminal.id,
+                terminal_payment_id=payment.id,
+                phase="sumup_create",
+                outcome="failed",
+                payload_json={"reason": "aborted_on_device"},
+            )
+        )
         db.session.commit()
 
     response = client.get("/admin/terminal-payments/logs?limit=10")
@@ -934,7 +955,9 @@ def test_admin_terminal_payment_logs_returns_detailed_entries(client):
     assert "summary" in data
     assert data["summary"]["total_payments"] >= 1
     assert data["summary"]["total_logs"] >= 1
+    assert data["summary"]["total_init_attempts"] >= 1
     assert data["summary"]["status_counts"].get("aborted", 0) >= 1
+    assert len(data["init_attempts"]) >= 1
     assert len(data["payments"]) >= 1
     item = data["payments"][0]
     assert item["status"] == "aborted"
@@ -1139,6 +1162,64 @@ def test_admin_terminal_payment_logs_rejects_invalid_status_filter(client):
     assert "Ungültiger Status-Filter" in data["error"]
 
 
+def test_admin_terminal_payment_logs_filters_orphan_init_attempts(client):
+    with app.app_context():
+        event = Event(
+            name="Init Filter Event",
+            is_active=True,
+            is_archived=False,
+            kassensystem_enabled=True,
+            shotcounter_enabled=True,
+        )
+        db.session.add(event)
+        db.session.flush()
+
+        terminal = Terminal(name="Reader Init Filter", sumup_device_id="rdr_INIT_FILTER", active=True)
+        db.session.add(terminal)
+        db.session.flush()
+
+        payment = TerminalPayment(
+            terminal_id=terminal.id,
+            event_id=event.id,
+            amount_cents=500,
+            currency="CHF",
+            status="failed",
+        )
+        db.session.add(payment)
+        db.session.flush()
+
+        db.session.add(
+            TerminalPaymentInitLog(
+                event_id=event.id,
+                terminal_id=terminal.id,
+                terminal_payment_id=None,
+                phase="request_validation",
+                outcome="rejected",
+                payload_json={"reason": "invalid_payload"},
+            )
+        )
+        db.session.add(
+            TerminalPaymentInitLog(
+                event_id=event.id,
+                terminal_id=terminal.id,
+                terminal_payment_id=payment.id,
+                phase="sumup_create",
+                outcome="failed",
+                payload_json={"reason": "declined"},
+            )
+        )
+        db.session.commit()
+
+    response = client.get("/admin/terminal-payments/logs?limit=10&init_orphan_only=1")
+    assert response.status_code == 200
+    data = response.get_json()
+    assert data["success"] is True
+    assert data["summary"]["init_orphan_only"] is True
+    assert data["summary"]["orphan_init_attempt_count"] >= 1
+    assert len(data["init_attempts"]) >= 1
+    assert all(item["terminal_payment_id"] is None for item in data["init_attempts"])
+
+
 def test_admin_terminal_payment_details_returns_local_and_live_data(client, monkeypatch):
     with app.app_context():
         event = Event(
@@ -1180,6 +1261,16 @@ def test_admin_terminal_payment_details_returns_local_and_live_data(client, monk
                 payload_json={"error": "Declined", "sumup_status_code": 402},
             )
         )
+        db.session.add(
+            TerminalPaymentInitLog(
+                event_id=event.id,
+                terminal_id=terminal.id,
+                terminal_payment_id=payment.id,
+                phase="sumup_create",
+                outcome="failed",
+                payload_json={"error": "Declined"},
+            )
+        )
         db.session.commit()
         payment_id = payment.id
 
@@ -1208,6 +1299,8 @@ def test_admin_terminal_payment_details_returns_local_and_live_data(client, monk
     assert payment["payment_id"] == payment_id
     assert payment["sumup_payment_id"] == "txn_details_1"
     assert len(payment["local_events"]) == 2
+    assert len(payment["init_events"]) == 1
+    assert payment["init_events"][0]["phase"] == "sumup_create"
     assert payment["sumup_live"]["checked"] is True
     assert payment["sumup_live"]["status"] == "failed"
     assert payment["sumup_live"]["error"] is None
@@ -1290,6 +1383,12 @@ def test_create_terminal_payment_rejects_invalid_terminal_id_type(client):
     data = response.get_json()
     assert data["success"] is False
     assert "Terminal-ID ist ungültig" in data["error"]
+
+    with app.app_context():
+        init_logs = TerminalPaymentInitLog.query.order_by(TerminalPaymentInitLog.id.desc()).all()
+        assert len(init_logs) >= 1
+        assert init_logs[0].phase == "request_validation"
+        assert init_logs[0].outcome == "rejected"
 
 
 def test_create_terminal_payment_maps_integrity_error_to_conflict(client, monkeypatch):

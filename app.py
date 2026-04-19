@@ -273,6 +273,23 @@ class PaymentLog(db.Model):
     terminal_payment = db.relationship("TerminalPayment", backref=db.backref("logs", cascade="all, delete-orphan"))
 
 
+class TerminalPaymentInitLog(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    event_id = db.Column(db.Integer, db.ForeignKey("event.id", ondelete="SET NULL"), nullable=True)
+    terminal_id = db.Column(db.Integer, db.ForeignKey("terminal.id", ondelete="SET NULL"), nullable=True)
+    terminal_payment_id = db.Column(
+        db.Integer, db.ForeignKey("terminal_payment.id", ondelete="SET NULL"), nullable=True
+    )
+    outcome = db.Column(db.String(20), nullable=False)  # started|rejected|failed|success
+    phase = db.Column(db.String(60), nullable=False)
+    payload_json = db.Column(db.JSON, default=dict)
+    created_at = db.Column(db.DateTime, default=utcnow)
+
+    event = db.relationship("Event")
+    terminal = db.relationship("Terminal")
+    terminal_payment = db.relationship("TerminalPayment")
+
+
 def ensure_runtime_schema() -> None:
     """Create missing tables for existing installs when migrations were not run."""
 
@@ -510,6 +527,34 @@ def _parse_terminal_payment_request(payload: Dict[str, object]) -> tuple[Optiona
 
 def _log_terminal_payment_event(payment: TerminalPayment, event_name: str, payload: Dict) -> None:
     db.session.add(PaymentLog(terminal_payment_id=payment.id, event=event_name, payload_json=payload))
+
+
+def _log_terminal_payment_init_event(
+    *,
+    event: Optional[Event],
+    terminal: Optional[Terminal],
+    payment: Optional[TerminalPayment],
+    phase: str,
+    outcome: str,
+    payload: Dict,
+    commit_now: bool = False,
+) -> None:
+    db.session.add(
+        TerminalPaymentInitLog(
+            event_id=event.id if event else None,
+            terminal_id=terminal.id if terminal else None,
+            terminal_payment_id=payment.id if payment else None,
+            phase=phase,
+            outcome=outcome,
+            payload_json=payload,
+        )
+    )
+    if commit_now:
+        try:
+            db.session.commit()
+        except SQLAlchemyError as exc:
+            db.session.rollback()
+            app.logger.warning("Init-Log konnte nicht gespeichert werden (%s): %s", phase, exc)
 
 
 def _map_sumup_status(status: Optional[str]) -> str:
@@ -2074,6 +2119,12 @@ def admin_terminal_payment_logs():
         "yes",
         "on",
     }
+    init_orphan_only = str(request.args.get("init_orphan_only") or "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
 
     status_values_raw = (request.args.get("status") or "").strip()
     status_values = [part.strip().lower() for part in status_values_raw.split(",") if part.strip()]
@@ -2098,6 +2149,14 @@ def admin_terminal_payment_logs():
 
     payments = query.limit(limit).all()
     payment_ids = [payment.id for payment in payments]
+
+    init_query = TerminalPaymentInitLog.query.order_by(TerminalPaymentInitLog.id.desc())
+    if terminal_id is not None:
+        init_query = init_query.filter(TerminalPaymentInitLog.terminal_id == terminal_id)
+    if init_orphan_only:
+        init_query = init_query.filter(TerminalPaymentInitLog.terminal_payment_id.is_(None))
+    recent_init_attempts = init_query.limit(limit).all()
+    orphan_init_attempt_count = sum(1 for log in recent_init_attempts if log.terminal_payment_id is None)
 
     sumup_client: Optional[SumUpClient] = None
     live_sync_error: Optional[Dict[str, object]] = None
@@ -2238,19 +2297,35 @@ def admin_terminal_payment_logs():
         {
             "success": True,
             "count": len(items),
+            "init_attempts": [
+                {
+                    "id": log.id,
+                    "phase": log.phase,
+                    "outcome": log.outcome,
+                    "event_id": log.event_id,
+                    "terminal_id": log.terminal_id,
+                    "terminal_payment_id": log.terminal_payment_id,
+                    "payload": log.payload_json,
+                    "created_at": log.created_at.isoformat() if log.created_at else None,
+                }
+                for log in recent_init_attempts
+            ],
             "summary": {
                 "total_payments": len(items),
                 "total_logs": total_logs,
+                "total_init_attempts": len(recent_init_attempts),
                 "status_counts": dict(status_counts),
                 "event_counts": dict(global_event_counts),
                 "error_event_count": total_error_events,
                 "include_live": include_live,
                 "include_failed_details": include_failed_details,
+                "init_orphan_only": init_orphan_only,
                 "status_filter": status_values,
                 "live_checked_count": live_checked_count,
                 "live_error_count": live_error_count,
                 "live_mismatch_count": live_mismatch_count,
                 "live_sync_error": live_sync_error,
+                "orphan_init_attempt_count": orphan_init_attempt_count,
             },
             "payments": items,
         }
@@ -2273,6 +2348,11 @@ def admin_terminal_payment_details(payment_id: int):
     logs = (
         PaymentLog.query.filter_by(terminal_payment_id=payment.id)
         .order_by(PaymentLog.id.asc())
+        .all()
+    )
+    init_logs = (
+        TerminalPaymentInitLog.query.filter_by(terminal_payment_id=payment.id)
+        .order_by(TerminalPaymentInitLog.id.asc())
         .all()
     )
 
@@ -2318,6 +2398,16 @@ def admin_terminal_payment_details(payment_id: int):
                 "event_id": payment.event_id,
                 "event_name": payment.event.name if payment.event else None,
                 "local_events": local_events,
+                "init_events": [
+                    {
+                        "id": log.id,
+                        "phase": log.phase,
+                        "outcome": log.outcome,
+                        "payload": log.payload_json,
+                        "created_at": log.created_at.isoformat() if log.created_at else None,
+                    }
+                    for log in init_logs
+                ],
                 "sumup_live": sumup_live,
             },
         }
@@ -2423,18 +2513,81 @@ def api_create_terminal_payment():
     payload = request.get_json(silent=True) or {}
     terminal_id, amount_cents, currency, payload_error = _parse_terminal_payment_request(payload)
     if payload_error:
+        _log_terminal_payment_init_event(
+            event=event,
+            terminal=None,
+            payment=None,
+            phase="request_validation",
+            outcome="rejected",
+            payload={"reason": "invalid_payload", "request": payload},
+            commit_now=True,
+        )
         return payload_error
 
     terminal = db.session.get(Terminal, terminal_id)
     if not terminal:
+        _log_terminal_payment_init_event(
+            event=event,
+            terminal=None,
+            payment=None,
+            phase="terminal_lookup",
+            outcome="rejected",
+            payload={"reason": "terminal_not_found", "terminal_id": terminal_id, "request": payload},
+            commit_now=True,
+        )
         return jsonify({"success": False, "error": "Terminal nicht gefunden."}), 404
     if not terminal.active:
+        _log_terminal_payment_init_event(
+            event=event,
+            terminal=terminal,
+            payment=None,
+            phase="terminal_validation",
+            outcome="rejected",
+            payload={"reason": "terminal_inactive", "terminal_id": terminal.id},
+            commit_now=True,
+        )
         return jsonify({"success": False, "error": "Terminal ist deaktiviert."}), 400
     assigned_terminal, _ = _resolve_terminal_assignment(event)
     if assigned_terminal and assigned_terminal.id != terminal.id:
+        _log_terminal_payment_init_event(
+            event=event,
+            terminal=terminal,
+            payment=None,
+            phase="terminal_assignment",
+            outcome="rejected",
+            payload={
+                "reason": "assigned_to_other_terminal",
+                "assigned_terminal_id": assigned_terminal.id,
+                "selected_terminal_id": terminal.id,
+            },
+            commit_now=True,
+        )
         return jsonify({"success": False, "error": "Kasse ist fest einem anderen Terminal zugeordnet."}), 400
     if terminal.assigned_event_id not in (None, event.id):
+        _log_terminal_payment_init_event(
+            event=event,
+            terminal=terminal,
+            payment=None,
+            phase="terminal_assignment",
+            outcome="rejected",
+            payload={
+                "reason": "terminal_assigned_elsewhere",
+                "assigned_event_id": terminal.assigned_event_id,
+                "current_event_id": event.id,
+            },
+            commit_now=True,
+        )
         return jsonify({"success": False, "error": "Terminal ist bereits belegt."}), 400
+
+    _log_terminal_payment_init_event(
+        event=event,
+        terminal=terminal,
+        payment=None,
+        phase="init_request",
+        outcome="started",
+        payload={"amount_cents": amount_cents, "currency": currency, "request": payload},
+    )
+
     pending_payment = TerminalPayment.query.filter_by(terminal_id=terminal.id, status="pending").first()
     sumup_client: Optional[SumUpClient] = None
     if pending_payment:
@@ -2444,9 +2597,27 @@ def api_create_terminal_payment():
             db.session.commit()
         except SumUpClientError as exc:
             error_payload = _sumup_error_payload(exc, context="terminal_payment_reconcile")
+            _log_terminal_payment_init_event(
+                event=event,
+                terminal=terminal,
+                payment=pending_payment,
+                phase="pending_reconcile",
+                outcome="failed",
+                payload=error_payload,
+                commit_now=True,
+            )
             return jsonify({**error_payload, "status": pending_payment.status}), _sumup_http_status_for_error(exc)
 
         if pending_payment.status == "pending":
+            _log_terminal_payment_init_event(
+                event=event,
+                terminal=terminal,
+                payment=pending_payment,
+                phase="pending_check",
+                outcome="rejected",
+                payload={"reason": "already_active_payment", "pending_payment_id": pending_payment.id},
+                commit_now=True,
+            )
             return jsonify({"success": False, "error": "Terminal hat bereits eine aktive Zahlung."}), 409
 
     payment = TerminalPayment(
@@ -2461,7 +2632,25 @@ def api_create_terminal_payment():
         db.session.flush()
     except IntegrityError:
         db.session.rollback()
+        _log_terminal_payment_init_event(
+            event=event,
+            terminal=terminal,
+            payment=None,
+            phase="payment_row_create",
+            outcome="rejected",
+            payload={"reason": "active_payment_integrity_conflict"},
+            commit_now=True,
+        )
         return jsonify({"success": False, "error": "Terminal hat bereits eine aktive Zahlung."}), 409
+
+    _log_terminal_payment_init_event(
+        event=event,
+        terminal=terminal,
+        payment=payment,
+        phase="payment_row_create",
+        outcome="success",
+        payload={"payment_id": payment.id},
+    )
 
     reference = f"{event.name}-{payment.id}-{utcnow().strftime('%Y%m%d%H%M%S')}"
     try:
@@ -2475,12 +2664,28 @@ def api_create_terminal_payment():
         payment.sumup_payment_id = response.payment_id
         payment.status = _map_sumup_status(response.status)
         _log_terminal_payment_event(payment, "request_sent", response.raw)
+        _log_terminal_payment_init_event(
+            event=event,
+            terminal=terminal,
+            payment=payment,
+            phase="sumup_create",
+            outcome="success",
+            payload={"sumup_payment_id": response.payment_id, "status": payment.status, "raw": response.raw},
+        )
         db.session.commit()
         return jsonify({"success": True, "payment_id": payment.id, "status": payment.status})
     except SumUpClientError as exc:
         payment.status = "failed"
         error_payload = _sumup_error_payload(exc, context="terminal_payment_create")
         _log_terminal_payment_event(payment, "error", error_payload)
+        _log_terminal_payment_init_event(
+            event=event,
+            terminal=terminal,
+            payment=payment,
+            phase="sumup_create",
+            outcome="failed",
+            payload=error_payload,
+        )
         db.session.commit()
         response_payload = {**error_payload, "payment_id": payment.id, "status": payment.status}
         return jsonify(response_payload), _sumup_http_status_for_error(exc)
