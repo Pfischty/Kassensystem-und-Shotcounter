@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from urllib.parse import urlencode
 from dataclasses import dataclass
 from typing import Any, Dict, Optional
 from urllib import error, request
@@ -49,21 +50,55 @@ class SumUpClient:
         self._affiliate_key = affiliate_key
 
     def create_terminal_payment(self, *, amount_cents: int, currency: str, device_id: str, reference: str) -> SumUpResponse:
-        payload = {
+        # Prefer modern Reader Checkout API.
+        reader_payload = {
+            "total_amount": amount_cents / 100,
+            "description": reference,
+        }
+        try:
+            response = self._request(
+                "POST",
+                f"/v0.1/merchants/{self._merchant_id}/readers/{device_id}/checkout",
+                reader_payload,
+            )
+            data = response.get("data") if isinstance(response.get("data"), dict) else {}
+            payment_id = data.get("client_transaction_id") or data.get("id")
+            return SumUpResponse(payment_id=payment_id, status="pending", raw=response)
+        except SumUpClientError as exc:
+            # Legacy fallback for older integrations/accounts.
+            if exc.status_code != 404:
+                raise
+
+        legacy_payload = {
             "amount": f"{amount_cents / 100:.2f}",
             "currency": currency,
             "device_id": device_id,
             "reference": reference,
             "merchant_id": self._merchant_id,
         }
-        response = self._request("POST", "/v0.1/terminal/payments", payload)
+        response = self._request("POST", "/v0.1/terminal/payments", legacy_payload)
         return SumUpResponse(
             payment_id=response.get("id") or response.get("payment_id"),
-            status=response.get("status"),
+            status=response.get("status") or "pending",
             raw=response,
         )
 
     def get_payment_status(self, payment_id: str) -> SumUpResponse:
+        # Prefer transaction lookup in modern API.
+        query = urlencode({"id": payment_id})
+        try:
+            response = self._request("GET", f"/v0.1/me/transactions?{query}")
+            status = response.get("simple_status") or response.get("status")
+            return SumUpResponse(
+                payment_id=response.get("client_transaction_id") or response.get("id") or payment_id,
+                status=status,
+                raw=response,
+            )
+        except SumUpClientError as exc:
+            if exc.status_code != 404:
+                raise
+
+        # Legacy fallback.
         response = self._request("GET", f"/v0.1/terminal/payments/{payment_id}")
         return SumUpResponse(
             payment_id=response.get("id") or payment_id,
@@ -74,6 +109,16 @@ class SumUpClient:
     def get_profile(self) -> Dict[str, Any]:
         """Fetch merchant profile data to validate credentials and connectivity."""
         return self._request("GET", "/v0.1/me")
+
+    def get_reader_status(self, reader_id: str) -> Dict[str, Any]:
+        """Fetch status information for a specific reader device."""
+        return self._request("GET", f"/v0.1/merchants/{self._merchant_id}/readers/{reader_id}/status")
+
+    def list_readers(self) -> list[Dict[str, Any]]:
+        """List readers configured for the merchant account."""
+        response = self._request("GET", f"/v0.1/merchants/{self._merchant_id}/readers")
+        items = response.get("items") if isinstance(response, dict) else None
+        return items if isinstance(items, list) else []
 
     def _request(self, method: str, path: str, payload: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         url = f"{self._base_url}{path}"
@@ -110,7 +155,7 @@ class SumUpClient:
                 400: "Anfrage ist ungültig. Prüfe Parameter und Device-ID.",
                 401: "Token ungültig oder abgelaufen. Bitte Access Token prüfen.",
                 403: "Kein Zugriff erlaubt. Prüfe Merchant-ID und Berechtigungen.",
-                404: "API-Endpunkt nicht gefunden. Prüfe die Base URL.",
+                404: "Ressource nicht gefunden. Prüfe Reader-ID (z. B. rdr_...), Merchant-Code und API-Berechtigungen.",
                 429: "Zu viele Anfragen. Bitte kurz warten und erneut versuchen.",
                 500: "SumUp Serverfehler. Bitte später erneut versuchen.",
                 502: "SumUp Gateway-Fehler. Bitte später erneut versuchen.",

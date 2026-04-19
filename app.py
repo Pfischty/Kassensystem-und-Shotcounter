@@ -44,6 +44,7 @@ from flask_session import Session
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy import event, func, inspect as sqla_inspect, text
 from sqlalchemy.engine import Engine
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import attributes
 from werkzeug.datastructures import FileStorage
 from werkzeug.utils import secure_filename
@@ -265,23 +266,56 @@ def ensure_runtime_schema() -> None:
     required_tables = tuple(sorted(db.metadata.tables.keys()))
     try:
         inspector = sqla_inspect(db.engine)
+        existing_tables = set(inspector.get_table_names())
         missing = [table for table in required_tables if not inspector.has_table(table)]
         if not missing:
             return
+
+        db_uri = str(app.config.get("SQLALCHEMY_DATABASE_URI") or "")
+        if db_uri.startswith("sqlite:///") and db_uri != "sqlite:///:memory:":
+            db_file = Path(db_uri.replace("sqlite:///", "", 1))
+            if not existing_tables and db_file.exists() and db_file.stat().st_size > 0:
+                app.logger.warning(
+                    "Keine Tabellen gefunden, obwohl die SQLite-Datei bereits existiert (DB=%s). "
+                    "Versuche Schema-Selbstheilung trotzdem.",
+                    db_file,
+                )
+
         app.logger.warning("Fehlende Tabellen erkannt: %s. Erstelle fehlende Tabellen.", ", ".join(missing))
         db.create_all()
         inspector = sqla_inspect(db.engine)
         still_missing = [table for table in required_tables if not inspector.has_table(table)]
         if still_missing:
             app.logger.error("Schema-Selbstheilung unvollständig. Fehlend: %s", ", ".join(still_missing))
-            return
+            raise RuntimeError(f"Schema-Selbstheilung unvollständig. Fehlend: {', '.join(still_missing)}")
         app.logger.info("Schema-Selbstheilung abgeschlossen.")
     except Exception as exc:
         app.logger.error("Schema-Selbstheilung fehlgeschlagen: %s", exc)
+        raise
 
 
 with app.app_context():
     ensure_runtime_schema()
+
+
+_schema_checked = False
+
+
+def ensure_schema_ready() -> None:
+    """Verify critical schema objects before serving requests."""
+
+    global _schema_checked
+    if _schema_checked:
+        return
+
+    inspector = sqla_inspect(db.engine)
+    if not inspector.has_table("event"):
+        ensure_runtime_schema()
+        inspector = sqla_inspect(db.engine)
+        if not inspector.has_table("event"):
+            raise RuntimeError("Tabelle 'event' fehlt weiterhin nach Schema-Selbstheilung.")
+
+    _schema_checked = True
 
 # ---------------------------------------------------------------------------
 # CSV Export Helpers
@@ -354,7 +388,7 @@ def _sumup_error_payload(exc: SumUpClientError, *, context: str) -> Dict[str, ob
         elif exc.status_code in {401, 403}:
             hint = "Token/Merchant-ID prüfen und sicherstellen, dass die API-Berechtigung aktiv ist."
         elif exc.status_code == 404:
-            hint = "Base URL prüfen (Standard: https://api.sumup.com)."
+            hint = "Reader-ID (z. B. rdr_...), Merchant-Code und Base URL prüfen."
         elif exc.status_code == 429:
             hint = "Zu viele Anfragen. Kurz warten und erneut versuchen."
 
@@ -438,6 +472,58 @@ def _assign_terminal_to_event(event: Event, terminal_id: Optional[int]) -> None:
     if not terminal:
         raise ValueError("Terminal nicht gefunden.")
     terminal.assigned_event_id = event.id
+
+
+def _validate_terminal_payload(name: str, device_id: str, *, terminal_id: Optional[int] = None) -> tuple[str, str]:
+    terminal_name = (name or "").strip()
+    sumup_device_id = (device_id or "").strip()
+
+    if not terminal_name:
+        raise ValueError("Terminalname ist erforderlich.")
+    if len(terminal_name) < 2:
+        raise ValueError("Terminalname muss mindestens 2 Zeichen lang sein.")
+    if len(terminal_name) > 120:
+        raise ValueError("Terminalname darf maximal 120 Zeichen lang sein.")
+
+    if not sumup_device_id:
+        raise ValueError("SumUp Device-ID ist erforderlich.")
+    if len(sumup_device_id) < 6:
+        raise ValueError("SumUp Device-ID muss mindestens 6 Zeichen lang sein.")
+    if len(sumup_device_id) > 120:
+        raise ValueError("SumUp Device-ID darf maximal 120 Zeichen lang sein.")
+
+    allowed = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._:-")
+    if any(char not in allowed for char in sumup_device_id):
+        raise ValueError("Ungültige Device-ID. Erlaubt sind Buchstaben, Zahlen sowie . _ : -")
+
+    existing_name = Terminal.query.filter(func.lower(Terminal.name) == terminal_name.lower())
+    existing_device = Terminal.query.filter(func.lower(Terminal.sumup_device_id) == sumup_device_id.lower())
+    if terminal_id is not None:
+        existing_name = existing_name.filter(Terminal.id != terminal_id)
+        existing_device = existing_device.filter(Terminal.id != terminal_id)
+
+    if existing_name.first():
+        raise ValueError("Ein Terminal mit diesem Namen existiert bereits.")
+    if existing_device.first():
+        raise ValueError("Diese SumUp Device-ID ist bereits einem anderen Terminal zugeordnet.")
+
+    return terminal_name, sumup_device_id
+
+
+def _build_unique_terminal_name(base_name: str, *, exclude_terminal_id: Optional[int] = None) -> str:
+    base = (base_name or "").strip() or "SumUp Reader"
+    candidate = base[:120]
+    index = 2
+
+    while True:
+        query = Terminal.query.filter(func.lower(Terminal.name) == candidate.lower())
+        if exclude_terminal_id is not None:
+            query = query.filter(Terminal.id != exclude_terminal_id)
+        if not query.first():
+            return candidate
+        suffix = f" ({index})"
+        candidate = f"{base[: max(1, 120 - len(suffix))]}{suffix}"
+        index += 1
 
 
 # ---------------------------------------------------------------------------
@@ -1033,6 +1119,23 @@ def _admin_auth_required() -> Response:
 
 
 @app.before_request
+def enforce_schema_ready():
+    if request.endpoint == "static":
+        return None
+    try:
+        ensure_schema_ready()
+    except (RuntimeError, SQLAlchemyError) as exc:
+        app.logger.error("Datenbankschema nicht bereit: %s", exc)
+        accept = request.headers.get("Accept", "")
+        is_xhr = request.headers.get("X-Requested-With") == "XMLHttpRequest"
+        message = "Datenbankschema fehlt oder ist beschädigt. Bitte Anwendung neu starten und Logs prüfen."
+        if is_xhr or "application/json" in accept:
+            return jsonify({"success": False, "error": message}), 500
+        return Response(message, 500)
+    return None
+
+
+@app.before_request
 def enforce_admin_auth():
     if not request.path.startswith("/admin"):
         return None
@@ -1503,30 +1606,34 @@ def update_event(event_id: int):
 
 @app.route("/admin/terminals", methods=["POST"])
 def create_terminal():
-    name = (request.form.get("name") or "").strip()
-    device_id = (request.form.get("sumup_device_id") or "").strip()
+    name = request.form.get("name") or ""
+    device_id = request.form.get("sumup_device_id") or ""
     active = bool(request.form.get("active"))
-    if not name or not device_id:
-        flash("Terminalname und Device-ID sind erforderlich.", "error")
+    try:
+        terminal_name, sumup_device_id = _validate_terminal_payload(name, device_id)
+    except ValueError as exc:
+        flash(str(exc), "error")
         return redirect(url_for("admin"))
-    terminal = Terminal(name=name, sumup_device_id=device_id, active=active)
+    terminal = Terminal(name=terminal_name, sumup_device_id=sumup_device_id, active=active)
     db.session.add(terminal)
     db.session.commit()
     flash("Terminal wurde angelegt.", "success")
-    app.logger.info("Terminal angelegt: %s", name)
+    app.logger.info("Terminal angelegt: %s", terminal_name)
     return redirect(url_for("admin"))
 
 
 @app.route("/admin/terminals/<int:terminal_id>/update", methods=["POST"])
 def update_terminal(terminal_id: int):
     terminal = Terminal.query.get_or_404(terminal_id)
-    name = (request.form.get("name") or "").strip()
-    device_id = (request.form.get("sumup_device_id") or "").strip()
-    if not name or not device_id:
-        flash("Terminalname und Device-ID sind erforderlich.", "error")
+    name = request.form.get("name") or ""
+    device_id = request.form.get("sumup_device_id") or ""
+    try:
+        terminal_name, sumup_device_id = _validate_terminal_payload(name, device_id, terminal_id=terminal.id)
+    except ValueError as exc:
+        flash(str(exc), "error")
         return redirect(url_for("admin"))
-    terminal.name = name
-    terminal.sumup_device_id = device_id
+    terminal.name = terminal_name
+    terminal.sumup_device_id = sumup_device_id
     terminal.active = bool(request.form.get("active"))
     db.session.commit()
     flash("Terminal wurde aktualisiert.", "success")
@@ -1603,6 +1710,184 @@ def admin_sumup_connection_test():
             "configured_merchant_id": configured_merchant or None,
             "api_merchant_id": api_merchant or None,
             "warning": warning,
+        }
+    )
+
+
+@app.route("/admin/sumup-readers-sync", methods=["POST"])
+def admin_sumup_readers_sync():
+    try:
+        client = _sumup_client()
+        readers = client.list_readers()
+    except SumUpClientError as exc:
+        payload = _sumup_error_payload(exc, context="sumup_readers_sync")
+        app.logger.warning("SumUp Reader-Sync fehlgeschlagen: %s", payload.get("error"))
+        return jsonify(payload), _sumup_http_status_for_error(exc)
+
+    created = 0
+    updated = 0
+    reactivated = 0
+    scanned: List[Dict[str, object]] = []
+
+    for reader in readers:
+        if not isinstance(reader, dict):
+            continue
+        reader_id = str(reader.get("id") or "").strip()
+        if not reader_id:
+            continue
+
+        details = reader.get("details") if isinstance(reader.get("details"), dict) else {}
+        preferred_name = (
+            str(reader.get("name") or "").strip()
+            or str(details.get("identifier") or "").strip()
+            or f"Reader {reader_id[-6:]}"
+        )
+
+        existing = Terminal.query.filter(func.lower(Terminal.sumup_device_id) == reader_id.lower()).first()
+        if existing:
+            changed = False
+            if not existing.active:
+                existing.active = True
+                reactivated += 1
+                changed = True
+            if not existing.name.strip():
+                existing.name = _build_unique_terminal_name(preferred_name, exclude_terminal_id=existing.id)
+                changed = True
+            if changed:
+                updated += 1
+            terminal_name = existing.name
+        else:
+            terminal_name = _build_unique_terminal_name(preferred_name)
+            db.session.add(Terminal(name=terminal_name, sumup_device_id=reader_id, active=True))
+            created += 1
+
+        scanned.append(
+            {
+                "reader_id": reader_id,
+                "name": terminal_name,
+                "model": details.get("model"),
+                "identifier": details.get("identifier"),
+                "status": details.get("status"),
+            }
+        )
+
+    db.session.commit()
+
+    return jsonify(
+        {
+            "success": True,
+            "message": "Reader-Sync abgeschlossen.",
+            "scanned_count": len(scanned),
+            "created_count": created,
+            "updated_count": updated,
+            "reactivated_count": reactivated,
+            "readers": scanned,
+        }
+    )
+
+
+@app.route("/admin/sumup-readers-status")
+def admin_sumup_readers_status():
+    try:
+        client = _sumup_client()
+        readers = client.list_readers()
+    except SumUpClientError as exc:
+        payload = _sumup_error_payload(exc, context="sumup_readers_status")
+        app.logger.warning("SumUp Reader-Status fehlgeschlagen: %s", payload.get("error"))
+        return jsonify(payload), _sumup_http_status_for_error(exc)
+
+    local_terminals = {
+        str(terminal.sumup_device_id or "").strip().lower(): terminal
+        for terminal in Terminal.query.order_by(Terminal.name.asc()).all()
+    }
+
+    status_items: List[Dict[str, object]] = []
+    for reader in readers:
+        if not isinstance(reader, dict):
+            continue
+        reader_id = str(reader.get("id") or "").strip()
+        if not reader_id:
+            continue
+
+        details = reader.get("details") if isinstance(reader.get("details"), dict) else {}
+        live = {}
+        status_error = None
+        try:
+            live_response = client.get_reader_status(reader_id)
+            live = live_response.get("data") if isinstance(live_response.get("data"), dict) else {}
+        except SumUpClientError as exc:
+            status_error = str(exc)
+
+        local_terminal = local_terminals.get(reader_id.lower())
+        status_items.append(
+            {
+                "reader_id": reader_id,
+                "reader_name": str(reader.get("name") or "").strip() or None,
+                "model": details.get("model"),
+                "identifier": details.get("identifier"),
+                "account_status": details.get("status"),
+                "live_status": live.get("status"),
+                "live_state": live.get("state"),
+                "battery_level": live.get("battery_level"),
+                "connection_type": live.get("connection_type"),
+                "firmware_version": live.get("firmware_version"),
+                "last_activity": live.get("last_activity"),
+                "status_error": status_error,
+                "local_terminal_id": local_terminal.id if local_terminal else None,
+                "local_terminal_name": local_terminal.name if local_terminal else None,
+                "local_terminal_active": local_terminal.active if local_terminal else None,
+            }
+        )
+
+    return jsonify(
+        {
+            "success": True,
+            "message": "Reader-Status geladen.",
+            "count": len(status_items),
+            "readers": status_items,
+        }
+    )
+
+
+@app.route("/admin/terminals/<int:terminal_id>/connection-test", methods=["POST"])
+def admin_terminal_connection_test(terminal_id: int):
+    terminal = Terminal.query.get_or_404(terminal_id)
+
+    try:
+        client = _sumup_client()
+        status_response = client.get_reader_status(terminal.sumup_device_id)
+    except SumUpClientError as exc:
+        payload = _sumup_error_payload(exc, context="terminal_connection_test")
+        payload["terminal_id"] = terminal.id
+        payload["terminal_name"] = terminal.name
+        payload["device_id"] = terminal.sumup_device_id
+        app.logger.warning(
+            "Terminal-Verbindungstest fehlgeschlagen (Terminal %s / %s): %s",
+            terminal.id,
+            terminal.sumup_device_id,
+            payload.get("error"),
+        )
+        return jsonify(payload), _sumup_http_status_for_error(exc)
+
+    data = status_response.get("data") if isinstance(status_response.get("data"), dict) else {}
+    device_status = (data.get("status") or "UNKNOWN").upper()
+    state = (data.get("state") or "UNKNOWN").upper()
+
+    return jsonify(
+        {
+            "success": True,
+            "message": "Terminal-Verbindung erfolgreich geprüft.",
+            "terminal_id": terminal.id,
+            "terminal_name": terminal.name,
+            "device_id": terminal.sumup_device_id,
+            "device_status": device_status,
+            "device_state": state,
+            "battery_level": data.get("battery_level"),
+            "battery_temperature": data.get("battery_temperature"),
+            "connection_type": data.get("connection_type"),
+            "firmware_version": data.get("firmware_version"),
+            "last_activity": data.get("last_activity"),
+            "raw": data,
         }
     )
 

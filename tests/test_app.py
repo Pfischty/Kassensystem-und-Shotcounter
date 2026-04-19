@@ -1,8 +1,9 @@
 import json
+import app as app_module
 
 import pytest
 
-from app import Event, Order, Team, app, db
+from app import Event, Order, Team, Terminal, SumUpClientError, app, db
 
 
 @pytest.fixture(autouse=True)
@@ -507,4 +508,245 @@ def test_category_order_preserves_item_order(client):
         assert items[0]["category"] == "Essen"
         assert items[1]["category"] == "Alkohol"
         assert items[2]["category"] == "Getränke"
+
+
+def test_create_terminal_success(client):
+    response = client.post(
+        "/admin/terminals",
+        data={"name": "Bar Nord", "sumup_device_id": "dev-12345", "active": "on"},
+        follow_redirects=True,
+    )
+
+    assert response.status_code == 200
+    assert "Terminal wurde angelegt." in response.get_data(as_text=True)
+
+    with app.app_context():
+        terminal = Terminal.query.filter_by(name="Bar Nord").first()
+        assert terminal is not None
+        assert terminal.sumup_device_id == "dev-12345"
+        assert terminal.active is True
+
+
+def test_create_terminal_rejects_invalid_device_id(client):
+    response = client.post(
+        "/admin/terminals",
+        data={"name": "Bar Ost", "sumup_device_id": "bad id!", "active": "on"},
+        follow_redirects=True,
+    )
+
+    assert response.status_code == 200
+    assert "Ungültige Device-ID" in response.get_data(as_text=True)
+
+    with app.app_context():
+        assert Terminal.query.filter_by(name="Bar Ost").first() is None
+
+
+def test_create_terminal_rejects_duplicate_device_id(client):
+    client.post(
+        "/admin/terminals",
+        data={"name": "Bar West", "sumup_device_id": "dev-777777", "active": "on"},
+        follow_redirects=True,
+    )
+
+    response = client.post(
+        "/admin/terminals",
+        data={"name": "Bar Süd", "sumup_device_id": "dev-777777", "active": "on"},
+        follow_redirects=True,
+    )
+
+    assert response.status_code == 200
+    assert "bereits einem anderen Terminal zugeordnet" in response.get_data(as_text=True)
+
+    with app.app_context():
+        assert Terminal.query.count() == 1
+
+
+def test_update_terminal_rejects_duplicate_name(client):
+    client.post(
+        "/admin/terminals",
+        data={"name": "Fix Nord", "sumup_device_id": "dev-111111", "active": "on"},
+        follow_redirects=True,
+    )
+    client.post(
+        "/admin/terminals",
+        data={"name": "Fix Süd", "sumup_device_id": "dev-222222", "active": "on"},
+        follow_redirects=True,
+    )
+
+    with app.app_context():
+        target = Terminal.query.filter_by(name="Fix Süd").first()
+        assert target is not None
+        target_id = target.id
+
+    response = client.post(
+        f"/admin/terminals/{target_id}/update",
+        data={"name": "Fix Nord", "sumup_device_id": "dev-222222", "active": "on"},
+        follow_redirects=True,
+    )
+
+    assert response.status_code == 200
+    assert "Ein Terminal mit diesem Namen existiert bereits." in response.get_data(as_text=True)
+
+    with app.app_context():
+        unchanged = Terminal.query.get(target_id)
+        assert unchanged is not None
+        assert unchanged.name == "Fix Süd"
+
+
+def test_terminal_connection_test_success(client, monkeypatch):
+    client.post(
+        "/admin/terminals",
+        data={"name": "Reader Test", "sumup_device_id": "rdr_TEST12345", "active": "on"},
+        follow_redirects=True,
+    )
+
+    with app.app_context():
+        terminal = Terminal.query.filter_by(name="Reader Test").first()
+        assert terminal is not None
+        terminal_id = terminal.id
+
+    class FakeClient:
+        def get_reader_status(self, reader_id):
+            assert reader_id == "rdr_TEST12345"
+            return {
+                "data": {
+                    "status": "ONLINE",
+                    "state": "IDLE",
+                    "connection_type": "Wi-Fi",
+                    "battery_level": 77,
+                    "firmware_version": "3.3.40.3",
+                }
+            }
+
+    monkeypatch.setattr(app_module, "_sumup_client", lambda: FakeClient())
+
+    response = client.post(f"/admin/terminals/{terminal_id}/connection-test")
+    assert response.status_code == 200
+    data = response.get_json()
+    assert data["success"] is True
+    assert data["device_status"] == "ONLINE"
+    assert data["device_state"] == "IDLE"
+    assert data["connection_type"] == "Wi-Fi"
+    assert data["battery_level"] == 77
+
+
+def test_terminal_connection_test_handles_sumup_error(client, monkeypatch):
+    client.post(
+        "/admin/terminals",
+        data={"name": "Reader Error", "sumup_device_id": "rdr_ERROR123", "active": "on"},
+        follow_redirects=True,
+    )
+
+    with app.app_context():
+        terminal = Terminal.query.filter_by(name="Reader Error").first()
+        assert terminal is not None
+        terminal_id = terminal.id
+
+    class FakeClient:
+        def get_reader_status(self, _reader_id):
+            raise SumUpClientError(
+                "SumUp API Fehler (404): Resource not found",
+                status_code=404,
+                error_type="http",
+                hint="Reader-ID prüfen.",
+            )
+
+    monkeypatch.setattr(app_module, "_sumup_client", lambda: FakeClient())
+
+    response = client.post(f"/admin/terminals/{terminal_id}/connection-test")
+    assert response.status_code == 502
+    data = response.get_json()
+    assert data["success"] is False
+    assert data["context"] == "terminal_connection_test"
+    assert data["terminal_id"] == terminal_id
+    assert "Resource not found" in data["error"]
+
+
+def test_sumup_readers_sync_creates_new_terminals(client, monkeypatch):
+    class FakeClient:
+        def list_readers(self):
+            return [
+                {"id": "rdr_ABC123", "details": {"identifier": "200100941884", "model": "SOLO"}},
+                {"id": "rdr_DEF456", "details": {"identifier": "200100941885", "model": "SOLO"}},
+            ]
+
+    monkeypatch.setattr(app_module, "_sumup_client", lambda: FakeClient())
+
+    response = client.post("/admin/sumup-readers-sync")
+    assert response.status_code == 200
+    data = response.get_json()
+    assert data["success"] is True
+    assert data["scanned_count"] == 2
+    assert data["created_count"] == 2
+
+    with app.app_context():
+        assert Terminal.query.filter_by(sumup_device_id="rdr_ABC123").first() is not None
+        assert Terminal.query.filter_by(sumup_device_id="rdr_DEF456").first() is not None
+
+
+def test_sumup_readers_sync_reactivates_existing_terminal(client, monkeypatch):
+    with app.app_context():
+        db.session.add(Terminal(name="Weiss", sumup_device_id="rdr_KEEP", active=False))
+        db.session.commit()
+
+    class FakeClient:
+        def list_readers(self):
+            return [{"id": "rdr_KEEP", "details": {"identifier": "200100941884", "model": "SOLO"}}]
+
+    monkeypatch.setattr(app_module, "_sumup_client", lambda: FakeClient())
+
+    response = client.post("/admin/sumup-readers-sync")
+    assert response.status_code == 200
+    data = response.get_json()
+    assert data["success"] is True
+    assert data["created_count"] == 0
+    assert data["reactivated_count"] == 1
+
+    with app.app_context():
+        terminal = Terminal.query.filter_by(sumup_device_id="rdr_KEEP").first()
+        assert terminal is not None
+        assert terminal.active is True
+
+
+def test_sumup_readers_status_returns_live_and_local_info(client, monkeypatch):
+    with app.app_context():
+        db.session.add(Terminal(name="Weiss", sumup_device_id="rdr_STATUS1", active=True))
+        db.session.commit()
+
+    class FakeClient:
+        def list_readers(self):
+            return [
+                {
+                    "id": "rdr_STATUS1",
+                    "name": "Sumup Weiss",
+                    "details": {"identifier": "200100941884", "model": "SOLO", "status": "ONLINE"},
+                }
+            ]
+
+        def get_reader_status(self, reader_id):
+            assert reader_id == "rdr_STATUS1"
+            return {
+                "data": {
+                    "status": "ONLINE",
+                    "state": "IDLE",
+                    "connection_type": "Wi-Fi",
+                    "battery_level": 12,
+                    "firmware_version": "3.3.40.3",
+                }
+            }
+
+    monkeypatch.setattr(app_module, "_sumup_client", lambda: FakeClient())
+
+    response = client.get("/admin/sumup-readers-status")
+    assert response.status_code == 200
+    data = response.get_json()
+    assert data["success"] is True
+    assert data["count"] == 1
+    assert len(data["readers"]) == 1
+    item = data["readers"][0]
+    assert item["reader_id"] == "rdr_STATUS1"
+    assert item["live_status"] == "ONLINE"
+    assert item["live_state"] == "IDLE"
+    assert item["connection_type"] == "Wi-Fi"
+    assert item["local_terminal_name"] == "Weiss"
 

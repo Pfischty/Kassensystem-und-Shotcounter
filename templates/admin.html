@@ -251,7 +251,14 @@
       </label>
       <label class="stack">
         <span>SumUp Device ID</span>
-        <input type="text" name="sumup_device_id" required>
+        <input
+          type="text"
+          name="sumup_device_id"
+          required
+          placeholder="z.B. TID-CH-01.ABC123"
+          pattern="[A-Za-z0-9._:-]{6,120}"
+          title="Mindestens 6 Zeichen. Erlaubt sind Buchstaben, Zahlen sowie . _ : -"
+        >
       </label>
       <label class="stack">
         <span>Status</span>
@@ -289,15 +296,36 @@
                 </label>
                 <label class="stack">
                   <span>SumUp Device ID</span>
-                  <input type="text" name="sumup_device_id" value="{{ terminal.sumup_device_id }}" required>
+                  <input
+                    type="text"
+                    name="sumup_device_id"
+                    value="{{ terminal.sumup_device_id }}"
+                    required
+                    placeholder="z.B. TID-CH-01.ABC123"
+                    pattern="[A-Za-z0-9._:-]{6,120}"
+                    title="Mindestens 6 Zeichen. Erlaubt sind Buchstaben, Zahlen sowie . _ : -"
+                  >
                 </label>
                 <label class="stack">
                   <span>Status</span>
                   <label><input type="checkbox" name="active" {% if terminal.active %}checked{% endif %}> Aktiv</label>
                 </label>
                 <button type="submit" class="primary">Speichern</button>
+                <button
+                  type="button"
+                  class="secondary"
+                  data-terminal-test
+                  data-terminal-id="{{ terminal.id }}"
+                >
+                  Verbindung testen
+                </button>
               </div>
             </form>
+            <div
+              class="flash"
+              data-terminal-test-result="{{ terminal.id }}"
+              style="display:none; margin-top: 0.6rem;"
+            ></div>
             <form method="post" action="{{ url_for('delete_terminal', terminal_id=terminal.id) }}" class="inline" style="margin-top: 0.6rem;">
               <button type="submit" class="secondary">Terminal löschen</button>
             </form>
@@ -562,8 +590,29 @@
       <div class="field-inline" style="margin-top: 1rem;">
         <button type="submit">SumUp Zugangsdaten speichern</button>
         <button type="button" class="secondary" id="sumup-test-connection-btn">Verbindung testen</button>
+        <button type="button" class="secondary" id="sumup-sync-readers-btn">Reader scannen & aktivieren</button>
+        <button type="button" class="secondary" id="sumup-load-readers-status-btn">Reader-Status laden</button>
       </div>
       <div class="flash" id="sumup-test-result" style="display:none; margin-top: 1rem;"></div>
+      <div class="flash" id="sumup-sync-readers-result" style="display:none; margin-top: 0.6rem;"></div>
+      <div class="flash" id="sumup-readers-status-result" style="display:none; margin-top: 0.6rem;"></div>
+      <div style="margin-top: 0.8rem; overflow-x: auto;">
+        <table id="sumup-readers-status-table" style="display:none; min-width: 940px;">
+          <thead>
+            <tr>
+              <th>Reader</th>
+              <th>Live</th>
+              <th>State</th>
+              <th>Verbindung</th>
+              <th>Akku</th>
+              <th>Firmware</th>
+              <th>Lokal verbunden</th>
+              <th>Fehler</th>
+            </tr>
+          </thead>
+          <tbody id="sumup-readers-status-body"></tbody>
+        </table>
+      </div>
     </form>
   </div>
 </div>
@@ -617,6 +666,12 @@
   document.addEventListener("DOMContentLoaded", () => {
     const testBtn = document.getElementById("sumup-test-connection-btn");
     const resultEl = document.getElementById("sumup-test-result");
+    const syncBtn = document.getElementById("sumup-sync-readers-btn");
+    const syncResultEl = document.getElementById("sumup-sync-readers-result");
+    const statusBtn = document.getElementById("sumup-load-readers-status-btn");
+    const statusResultEl = document.getElementById("sumup-readers-status-result");
+    const statusTable = document.getElementById("sumup-readers-status-table");
+    const statusBody = document.getElementById("sumup-readers-status-body");
     if (!testBtn || !resultEl) return;
 
     const showResult = (message, kind) => {
@@ -673,6 +728,195 @@
       } finally {
         testBtn.disabled = false;
         testBtn.textContent = originalLabel;
+      }
+    });
+
+    if (syncBtn && syncResultEl) {
+      const showSyncResult = (message, kind) => {
+        syncResultEl.style.display = "block";
+        syncResultEl.classList.remove("error", "success");
+        syncResultEl.classList.add(kind === "success" ? "success" : "error");
+        syncResultEl.textContent = message;
+      };
+
+      syncBtn.addEventListener("click", async () => {
+        const originalLabel = syncBtn.textContent;
+        syncBtn.disabled = true;
+        syncBtn.textContent = "Scanne Reader ...";
+        syncResultEl.style.display = "none";
+
+        try {
+          const response = await fetch("{{ url_for('admin_sumup_readers_sync') }}", {
+            method: "POST",
+            headers: {
+              "Accept": "application/json",
+              "X-Requested-With": "XMLHttpRequest",
+            },
+          });
+          const data = await response.json();
+
+          if (!response.ok || !data.success) {
+            const parts = [data.error || "Reader-Scan fehlgeschlagen."];
+            if (data.hint) {
+              parts.push(`Hinweis: ${data.hint}`);
+            }
+            showSyncResult(parts.join(" "), "error");
+            return;
+          }
+
+          const msg = [
+            `${data.message}`,
+            `Gefunden: ${data.scanned_count || 0}`,
+            `Neu: ${data.created_count || 0}`,
+            `Aktualisiert: ${data.updated_count || 0}`,
+            `Reaktiviert: ${data.reactivated_count || 0}`,
+          ].join(" | ");
+          showSyncResult(msg, "success");
+          setTimeout(() => window.location.reload(), 900);
+        } catch (err) {
+          showSyncResult("Reader-Scan konnte nicht ausgeführt werden.", "error");
+        } finally {
+          syncBtn.disabled = false;
+          syncBtn.textContent = originalLabel;
+        }
+      });
+    }
+
+    if (statusBtn && statusResultEl && statusTable && statusBody) {
+      let statusRefreshTimer = null;
+
+      const showStatusResult = (message, kind) => {
+        statusResultEl.style.display = "block";
+        statusResultEl.classList.remove("error", "success");
+        statusResultEl.classList.add(kind === "success" ? "success" : "error");
+        statusResultEl.textContent = message;
+      };
+
+      const renderRows = (readers) => {
+        statusBody.innerHTML = "";
+        for (const reader of readers) {
+          const tr = document.createElement("tr");
+          const localTerminal = reader.local_terminal_name
+            ? `${reader.local_terminal_name}${reader.local_terminal_active ? " (aktiv)" : " (inaktiv)"}`
+            : "-";
+          tr.innerHTML = `
+            <td>${reader.reader_name || reader.identifier || "Reader"}<br><small>${reader.reader_id || ""}</small></td>
+            <td>${reader.live_status || reader.account_status || "UNKNOWN"}</td>
+            <td>${reader.live_state || "-"}</td>
+            <td>${reader.connection_type || "-"}</td>
+            <td>${reader.battery_level ?? "-"}${reader.battery_level !== null && reader.battery_level !== undefined ? "%" : ""}</td>
+            <td>${reader.firmware_version || "-"}</td>
+            <td>${localTerminal}</td>
+            <td>${reader.status_error || "-"}</td>
+          `;
+          statusBody.appendChild(tr);
+        }
+        statusTable.style.display = readers.length ? "table" : "none";
+      };
+
+      const loadReaderStatus = async (silent = false) => {
+        const originalLabel = statusBtn.textContent;
+        if (!silent) {
+          statusBtn.disabled = true;
+          statusBtn.textContent = "Lade Status ...";
+          statusResultEl.style.display = "none";
+        }
+
+        try {
+          const response = await fetch("{{ url_for('admin_sumup_readers_status') }}", {
+            method: "GET",
+            headers: {
+              "Accept": "application/json",
+              "X-Requested-With": "XMLHttpRequest",
+            },
+          });
+          const data = await response.json();
+          if (!response.ok || !data.success) {
+            const parts = [data.error || "Reader-Status konnte nicht geladen werden."];
+            if (data.hint) {
+              parts.push(`Hinweis: ${data.hint}`);
+            }
+            showStatusResult(parts.join(" "), "error");
+            return;
+          }
+
+          renderRows(Array.isArray(data.readers) ? data.readers : []);
+          showStatusResult(`Reader-Status geladen. Gefunden: ${data.count || 0}`, "success");
+          if (!statusRefreshTimer) {
+            statusRefreshTimer = setInterval(() => loadReaderStatus(true), 30000);
+          }
+        } catch (_err) {
+          showStatusResult("Reader-Status konnte nicht geladen werden.", "error");
+        } finally {
+          if (!silent) {
+            statusBtn.disabled = false;
+            statusBtn.textContent = originalLabel;
+          }
+        }
+      };
+
+      statusBtn.addEventListener("click", () => {
+        loadReaderStatus(false);
+      });
+    }
+  });
+
+  document.querySelectorAll("[data-terminal-test]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const terminalId = btn.getAttribute("data-terminal-id");
+      const resultEl = document.querySelector(`[data-terminal-test-result="${terminalId}"]`);
+      if (!terminalId || !resultEl) return;
+
+      const originalLabel = btn.textContent;
+      btn.disabled = true;
+      btn.textContent = "Teste ...";
+      resultEl.style.display = "none";
+
+      const showResult = (message, kind) => {
+        resultEl.style.display = "block";
+        resultEl.classList.remove("error", "success");
+        resultEl.classList.add(kind === "success" ? "success" : "error");
+        resultEl.textContent = message;
+      };
+
+      try {
+        const response = await fetch(`/admin/terminals/${terminalId}/connection-test`, {
+          method: "POST",
+          headers: {
+            "Accept": "application/json",
+            "X-Requested-With": "XMLHttpRequest",
+          },
+        });
+        const data = await response.json();
+
+        if (!response.ok || !data.success) {
+          const parts = [data.error || "Verbindungstest fehlgeschlagen."];
+          if (data.hint) {
+            parts.push(`Hinweis: ${data.hint}`);
+          }
+          showResult(parts.join(" "), "error");
+          return;
+        }
+
+        const details = [
+          `Status: ${data.device_status || "UNKNOWN"}`,
+          `State: ${data.device_state || "UNKNOWN"}`,
+        ];
+        if (data.connection_type) {
+          details.push(`Verbindung: ${data.connection_type}`);
+        }
+        if (data.battery_level !== null && data.battery_level !== undefined) {
+          details.push(`Akku: ${data.battery_level}%`);
+        }
+        if (data.firmware_version) {
+          details.push(`Firmware: ${data.firmware_version}`);
+        }
+        showResult(`${data.message} (${details.join(" | ")})`, "success");
+      } catch (err) {
+        showResult("Verbindungstest konnte nicht ausgeführt werden.", "error");
+      } finally {
+        btn.disabled = false;
+        btn.textContent = originalLabel;
       }
     });
   });
