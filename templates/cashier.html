@@ -5,6 +5,7 @@
 
 <style>
   .cashier-page {
+    font-size: calc(1rem * var(--cashier-font-scale, 1));
     display: flex;
     flex-direction: column;
     gap: 0.5rem;
@@ -41,48 +42,237 @@
   .cashier-tile:hover { transform: translateY(-2px); box-shadow:0 12px 30px rgba(0,0,0,0.3); }
   .action-buttons { display:flex; gap:0.75rem; flex-wrap: wrap; }
   .action-buttons button { padding:0.9rem 1.1rem; font-size:1rem; }
-  .checkout-btn { padding:1.25rem 1.65rem; font-size:1.1rem; min-height:72px; }
+  .checkout-btn { padding:1.25rem 1.65rem; font-size:1.1em; min-height:72px; }
   .summary-card { display:flex; flex-direction:column; gap:0.45rem; min-height: 200px; }
-  .summary-top { display:flex; align-items:center; justify-content:space-between; flex-wrap: wrap; gap: .4rem; }
-  .event-name { margin-left:auto; font-weight:600; color:#e2e8f0; }
-  .summary-meta { display:flex; align-items:center; gap:0.5rem; flex-wrap:wrap; }
-  .summary-body { display:flex; gap:0.6rem; align-items:stretch; }
-  .order-list-wrap {
+  .event-controls {
+    display:flex;
+    align-items:center;
+    justify-content:flex-end;
+    gap:0.35rem;
+    flex-wrap: nowrap;
+    width:auto;
+    max-width:100%;
+    min-width: 0;
+  }
+  .event-name {
+    font-weight:600;
+    color:#e2e8f0;
+    white-space: nowrap;
+  }
+  .event-terminal {
+    font-size: 0.9em;
+    color: #cbd5e1;
+    white-space: nowrap;
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: none;
+  }
+  .icon-button {
+    width: 32px;
+    height: 32px;
+    flex-shrink: 0;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    background: rgba(255,255,255,0.06);
+    color: #e2e8f0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: background 0.12s ease, transform 0.12s ease;
+  }
+  .icon-button:hover { background: rgba(255,255,255,0.12); transform: translateY(-1px); }
+  .icon-button svg { width: 16px; height: 16px; }
+  .summary-body { display:flex; gap:0.6rem; align-items:stretch; min-height: 280px; }
+  .order-section {
     display: flex;
     flex-direction: column;
     flex: 1;
-    min-height: 130px;
-    max-height: 200px;
+    min-width: 0;
+    min-height: 0;
+    gap: 0.35rem;
+  }
+  .order-list-wrap {
+    display: flex;
+    flex-direction: column;
+    flex: 1 1 auto;
+    min-height: 170px;
+    max-height: none;
     overflow: auto;
     border: 1px dashed var(--border);
     border-radius: 10px;
-    padding: 0.4rem 0.55rem 0.45rem;
+    padding: 0.15rem 0.55rem 0.45rem;
     background: rgba(255,255,255,0.02);
   }
   .order-list {
     list-style:none;
     padding-left:0;
-    margin:0.25rem 0 0;
+    margin:0;
     display:flex;
     flex-direction:column;
     gap:0.25rem;
   }
-  .order-list li { padding:0.15rem 0.1rem; }
+  .order-list li {
+    padding:0.2rem 0.1rem;
+    display:grid;
+    grid-template-columns: 3ch minmax(0, 1fr) 72px 78px;
+    gap: 0.45rem;
+    align-items: baseline;
+    font-variant-numeric: tabular-nums;
+  }
+  .order-col-qty,
+  .order-col-price,
+  .order-col-total {
+    text-align: right;
+    white-space: nowrap;
+  }
+  .order-col-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .order-total-block {
+    margin-top: 0.45rem;
+    padding-top: 0.55rem;
+    border-top: 2px solid rgba(148, 163, 184, 0.45);
+    text-align: right;
+  }
+  .order-depot-note {
+    margin-top: 0;
+    text-align: right;
+    font-size: 0.9em;
+    color: #9ca3af;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+  }
+  .order-total-value {
+    margin-top: 0.1rem;
+    text-align: right;
+    white-space: nowrap;
+    font-weight: 800;
+    font-size: 1.45em;
+    color: #f8fafc;
+    font-variant-numeric: tabular-nums;
+  }
+  .summary-actions-header {
+    display: flex;
+    justify-content: flex-end;
+    margin-bottom: 0.1rem;
+    width: 100%;
+  }
+  .summary-actions-header .icon-button {
+    width: 32px;
+    height: 32px;
+    min-height: 32px;
+    padding: 0;
+    flex: 0 0 32px;
+  }
   .summary-actions {
     display:flex;
     flex-direction:column;
     gap:0.4rem;
-    flex:0 0 200px;
+    flex:0 0 250px;
     align-self:flex-start;
   }
   .summary-actions a { width:100%; }
   .summary-actions button {
     width: 100%;
     min-height:60px;
-    font-size:1rem;
+    font-size:1em;
     padding:0.85rem 1.2rem;
   }
+  .hint { font-size: 0.9em; color: #cbd5e1; }
+  .terminal-panel {
+    border: 1px dashed var(--border);
+    border-radius: 10px;
+    padding: 0.65rem;
+    background: rgba(255,255,255,0.03);
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+  }
+  .terminal-status {
+    font-size: 0.95em;
+    color: #cbd5e1;
+    min-height: 1.4rem;
+  }
+  .terminal-status.success { color: #22c55e; }
+  .terminal-status.error { color: #f87171; }
   .products-card { flex:0 0 auto; display:flex; flex-direction:column; justify-content:flex-end; }
+  .dialog-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(2, 6, 23, 0.75);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    padding: 1rem;
+    z-index: 1200;
+  }
+  .dialog-backdrop.open {
+    display: flex;
+  }
+  .dialog-card {
+    width: min(520px, 96vw);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    background: #0f172a;
+    box-shadow: 0 20px 45px rgba(0, 0, 0, 0.42);
+    padding: 0.95rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.8rem;
+  }
+  .dialog-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 0.5rem;
+  }
+  .dialog-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+  }
+  .payment-status-chip {
+    display: inline-flex;
+    align-items: center;
+    border-radius: 999px;
+    padding: 0.2rem 0.55rem;
+    border: 1px solid var(--border);
+    font-size: 0.86rem;
+    font-weight: 600;
+  }
+  .payment-status-chip.pending { color: #facc15; }
+  .payment-status-chip.success { color: #22c55e; }
+  .payment-status-chip.error { color: #f87171; }
+  .payment-summary {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.55rem;
+  }
+  .payment-summary .hint {
+    margin-top: 0.15rem;
+  }
+  .payment-message {
+    border: 1px dashed var(--border);
+    border-radius: 10px;
+    padding: 0.55rem 0.65rem;
+    background: rgba(255,255,255,0.02);
+    min-height: 2.3rem;
+    color: #e2e8f0;
+  }
+  .payment-amount-tools {
+    display: flex;
+    gap: 0.45rem;
+    flex-wrap: wrap;
+  }
+  .payment-amount-tools button {
+    min-height: 40px;
+  }
   
   /* Category grouping (compact) */
   .category-section {
@@ -93,7 +283,7 @@
   }
   .category-title {
     margin: 0 0 0.25rem 0;
-    font-size: 0.85rem;
+    font-size: 0.85em;
     font-weight: 600;
     color: #94a3b8;
     text-transform: uppercase;
@@ -113,33 +303,65 @@
   }
 </style>
 
-<div class="cashier-page">
+<div class="cashier-page" style="--cashier-font-scale: {{ cashier_font_size }};">
   <div class="card summary-card">
-    <div class="summary-top">
-      <div class="summary-meta">
-        <div class="badge badge-blue">Aktives Event</div>
-        <div style="font-size:1.3rem;">Total: <strong data-cart-total>{{ total }}</strong> CHF</div>
-      </div>
-      <div class="event-name">{{ event.name }}</div>
-    </div>
-
     <div class="summary-body">
-      <div class="order-list-wrap">
-        <div style="display:flex; align-items:center; justify-content: space-between; gap:0.4rem; margin-bottom:0.1rem;">
-          <h3 style="margin:0;">Bestellliste</h3>
-          {% if items %}<span class="badge badge-blue">{{ items|length }} Positionen</span>{% endif %}
+      <div class="order-section">
+        <div class="order-list-wrap">
+          {% if items %}
+            <ul class="order-list">
+              {% for item in items %}
+                <li>
+                  <span class="order-col-qty">{{ item.qty }}x</span>
+                  <span class="order-col-name">{{ item.label or item.name }}</span>
+                  <span class="order-col-price">{{ item.price }} CHF</span>
+                  <span class="order-col-total">{{ item.line_total }} CHF</span>
+                </li>
+              {% endfor %}
+            </ul>
+          {% else %}
+            <p style="margin:0;">Noch keine Artikel im Warenkorb.</p>
+          {% endif %}
         </div>
-        {% if items %}
-          <ul class="order-list">
-            {% for item in items %}
-              <li>{{ item.qty }}× {{ item.label or item.name }} — {{ item.price }} CHF ({{ item.line_total }} CHF)</li>
-            {% endfor %}
-          </ul>
-        {% else %}
-          <p style="margin:0;">Noch keine Artikel im Warenkorb.</p>
-        {% endif %}
+        <div class="order-total-block">
+          <div class="order-depot-note">inkl. Depot <span data-cart-depot>{{ depot_total }}</span> CHF</div>
+          <div class="order-total-value"><strong data-cart-total>{{ total }}</strong> CHF</div>
+        </div>
       </div>
       <div class="summary-actions">
+        <div class="summary-actions-header">
+          <div class="event-controls">
+            <div class="event-name">{{ event.name }}</div>
+            {% if sumup_configured %}
+              <span id="terminal-header-title" class="event-terminal">
+                {% if assigned_terminal %}
+                  Terminal: {{ assigned_terminal.name }}
+                {% elif inactive_terminal %}
+                  Terminal: Fehler (inaktiv: {{ inactive_terminal.name }})
+                {% elif not available_terminals %}
+                  Terminal: Fehler (kein freies Terminal)
+                {% else %}
+                  Terminal: nicht gesetzt
+                {% endif %}
+              </span>
+              <button id="terminal-settings-btn" class="icon-button" type="button" aria-label="Kartengeraet-Bindung oeffnen" title="Kartengeraet-Bindung">
+                <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <path d="M12 8.75a3.25 3.25 0 1 0 0 6.5 3.25 3.25 0 0 0 0-6.5Zm8.25 3.25a.8.8 0 0 0 .75-.8.8.8 0 0 0-.75-.8l-1.1-.17a7.32 7.32 0 0 0-.48-1.14l.66-.9a.8.8 0 0 0-.08-1.1.8.8 0 0 0-1.1-.08l-.9.66a7.32 7.32 0 0 0-1.14-.48l-.17-1.1a.8.8 0 0 0-.8-.75.8.8 0 0 0-.8.75l-.17 1.1a7.32 7.32 0 0 0-1.14.48l-.9-.66a.8.8 0 0 0-1.1.08.8.8 0 0 0-.08 1.1l.66.9c-.2.36-.36.74-.48 1.14l-1.1.17a.8.8 0 0 0-.75.8.8.8 0 0 0 .75.8l1.1.17c.12.4.28.78.48 1.14l-.66.9a.8.8 0 0 0 .08 1.1.8.8 0 0 0 1.1.08l.9-.66c.36.2.74.36 1.14.48l.17 1.1a.8.8 0 0 0 .8.75.8.8 0 0 0 .8-.75l.17-1.1c.4-.12.78-.28 1.14-.48l.9.66a.8.8 0 0 0 1.1-.08.8.8 0 0 0 .08-1.1l-.66-.9c.2-.36.36-.74.48-1.14l1.1-.17Z" fill="currentColor"/>
+                </svg>
+              </button>
+            {% endif %}
+          </div>
+        </div>
+        <div class="terminal-panel">
+          {% if not sumup_configured %}
+            <div class="hint">SumUp Zugangsdaten fehlen. Bitte im Adminbereich hinterlegen.</div>
+          {% else %}
+            <input type="hidden" id="terminal-select" value="">
+            <button class="primary" id="terminal-pay-btn" type="button">Zahlung starten</button>
+            <button class="secondary" id="terminal-edit-btn" type="button">Zahlung bearbeiten</button>
+            <div id="terminal-payment-status" class="terminal-status">Bereit.</div>
+          {% endif %}
+        </div>
         <a href="{{ url_for('remove_last') }}" id="remove-last-link"><button class="secondary">Letzter Artikel löschen</button></a>
         <a href="{{ url_for('checkout') }}"><button class="checkout-btn">Bestellung abschliessen</button></a>
       </div>
@@ -177,6 +399,84 @@
     {% endif %}
   </div>
 </div>
+
+{% if sumup_configured %}
+  <div class="dialog-backdrop" id="terminal-binding-dialog" aria-hidden="true">
+    <div class="dialog-card" role="dialog" aria-modal="true" aria-labelledby="terminal-binding-title">
+      <div class="dialog-header">
+        <h3 id="terminal-binding-title" style="margin:0;">Kartengerät-Bindung</h3>
+        <button id="terminal-binding-close" class="icon-button" type="button" aria-label="Popup schliessen" title="Schliessen">✕</button>
+      </div>
+      <div class="hint">Diese Auswahl bleibt in diesem Browser gespeichert, bis du sie wieder aufhebst.</div>
+      {% if assigned_terminal %}
+        <div class="pill">Dieses Event ist fix zugeordnet: {{ assigned_terminal.name }}</div>
+      {% else %}
+        <label class="stack">
+          <span>Kartengerät wählen</span>
+          <select id="terminal-binding-select">
+            <option value="">Keine Bindung</option>
+            {% for terminal in available_terminals %}
+              <option value="{{ terminal.id }}">{{ terminal.name }}</option>
+            {% endfor %}
+          </select>
+        </label>
+      {% endif %}
+      <div id="terminal-binding-status" class="hint" style="min-height:1.2rem;"></div>
+      <div class="dialog-actions">
+        {% if not assigned_terminal %}
+          <button id="terminal-binding-reset" class="secondary" type="button">Bindung aufheben</button>
+          <button id="terminal-binding-save" class="primary" type="button">Bindung speichern</button>
+        {% endif %}
+        <button id="terminal-binding-done" class="secondary" type="button">Fertig</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="dialog-backdrop" id="terminal-payment-dialog" aria-hidden="true">
+    <div class="dialog-card" role="dialog" aria-modal="true" aria-labelledby="terminal-payment-title">
+      <div class="dialog-header">
+        <h3 id="terminal-payment-title" style="margin:0;">Terminalzahlung</h3>
+        <span id="payment-status-chip" class="payment-status-chip pending">Laufend</span>
+      </div>
+      <div class="payment-summary">
+        <div>
+          <strong>Betrag gesamt</strong>
+          <div class="hint" id="payment-amount">-</div>
+        </div>
+        <div>
+          <strong>Terminal</strong>
+          <div class="hint" id="payment-terminal-name">-</div>
+        </div>
+        <div>
+          <strong>Grundbetrag</strong>
+          <div class="hint" id="payment-base-amount">-</div>
+        </div>
+        <div>
+          <strong>Trinkgeld</strong>
+          <div class="hint" id="payment-tip-amount">0.00 CHF</div>
+        </div>
+      </div>
+      <div class="payment-amount-tools">
+        <button id="payment-tip-plus-btn" type="button" class="secondary">+1 CHF</button>
+        <button id="payment-round-btn" type="button" class="secondary">Auf 10er aufrunden</button>
+        <button id="payment-tip-reset-btn" type="button" class="secondary">Trinkgeld entfernen</button>
+      </div>
+      <div>
+        <strong>Aktueller Status</strong>
+        <div id="payment-message" class="payment-message">Bereit.</div>
+      </div>
+      <div class="dialog-actions">
+        <button id="payment-start-btn" type="button" class="primary" style="display:none;">Zahlung starten</button>
+        <button id="payment-cancel-btn" type="button" class="secondary" style="display:none;">Zahlung abbrechen</button>
+        <button id="payment-refresh-btn" type="button" class="secondary">Aktualisieren</button>
+        <button id="payment-retry-btn" type="button" class="secondary" style="display:none;">Erneut versuchen</button>
+        <button id="payment-checkout-btn" type="button" class="primary" style="display:none;">Bestellung abschliessen</button>
+        <button id="payment-close-btn" type="button" class="secondary">Schliessen</button>
+      </div>
+    </div>
+  </div>
+{% endif %}
+
 <script>
   // Auto-reload mode setting from server
   const AUTO_RELOAD = {{ 'true' if auto_reload else 'false' }};
@@ -244,20 +544,12 @@
     if (totalElement) {
       totalElement.textContent = cartData.total;
     }
-    
-    // Update item count badge
-    const badgeContainer = document.querySelector('.order-list-wrap h3').parentElement;
-    let badge = badgeContainer.querySelector('.badge');
-    if (cartData.item_count > 0) {
-      if (!badge) {
-        badge = document.createElement('span');
-        badge.className = 'badge badge-blue';
-        badgeContainer.appendChild(badge);
+      const depotElement = document.querySelector('[data-cart-depot]');
+      if (depotElement) {
+        depotElement.textContent = cartData.depot_total || 0;
       }
-      badge.textContent = cartData.items.length + ' Positionen';
-    } else if (badge) {
-      badge.remove();
-    }
+
+    updateTerminalPayState();
     
     // Update order list
     const orderListWrap = document.querySelector('.order-list-wrap');
@@ -277,7 +569,7 @@
       }
       
       list.innerHTML = cartData.items.map(item => 
-        `<li>${item.qty}× ${item.label || item.name} — ${item.price} CHF (${item.line_total} CHF)</li>`
+        `<li><span class="order-col-qty">${item.qty}x</span><span class="order-col-name">${item.label || item.name}</span><span class="order-col-price">${item.price} CHF</span><span class="order-col-total">${item.line_total} CHF</span></li>`
       ).join('');
       
       // Scroll to bottom
@@ -293,6 +585,605 @@
         orderListWrap.appendChild(message);
       }
     }
+  }
+
+  const terminalButton = document.getElementById('terminal-pay-btn');
+  const terminalEditButton = document.getElementById('terminal-edit-btn');
+  const terminalSelect = document.getElementById('terminal-select');
+  const terminalStatus = document.getElementById('terminal-payment-status');
+  const terminalPanelTitle = document.getElementById('terminal-panel-title');
+  const terminalHeaderTitle = document.getElementById('terminal-header-title');
+  const terminalSettingsBtn = document.getElementById('terminal-settings-btn');
+  const terminalBindingDialog = document.getElementById('terminal-binding-dialog');
+  const terminalBindingSelect = document.getElementById('terminal-binding-select');
+  const terminalBindingSaveBtn = document.getElementById('terminal-binding-save');
+  const terminalBindingResetBtn = document.getElementById('terminal-binding-reset');
+  const terminalBindingDoneBtn = document.getElementById('terminal-binding-done');
+  const terminalBindingCloseBtn = document.getElementById('terminal-binding-close');
+  const terminalBindingStatus = document.getElementById('terminal-binding-status');
+  const terminalPaymentDialog = document.getElementById('terminal-payment-dialog');
+  const paymentStatusChip = document.getElementById('payment-status-chip');
+  const paymentAmount = document.getElementById('payment-amount');
+  const paymentBaseAmount = document.getElementById('payment-base-amount');
+  const paymentTipAmount = document.getElementById('payment-tip-amount');
+  const paymentTerminalName = document.getElementById('payment-terminal-name');
+  const paymentMessage = document.getElementById('payment-message');
+  const paymentStartBtn = document.getElementById('payment-start-btn');
+  const paymentCancelBtn = document.getElementById('payment-cancel-btn');
+  const paymentRefreshBtn = document.getElementById('payment-refresh-btn');
+  const paymentRetryBtn = document.getElementById('payment-retry-btn');
+  const paymentCheckoutBtn = document.getElementById('payment-checkout-btn');
+  const paymentCloseBtn = document.getElementById('payment-close-btn');
+  const paymentTipPlusBtn = document.getElementById('payment-tip-plus-btn');
+  const paymentRoundBtn = document.getElementById('payment-round-btn');
+  const paymentTipResetBtn = document.getElementById('payment-tip-reset-btn');
+  const fixedAssignedTerminalId = {{ assigned_terminal.id if assigned_terminal else 'null' }};
+  const fixedAssignedTerminalName = {{ assigned_terminal.name|tojson if assigned_terminal else 'null' }};
+  const hasInactiveTerminal = {{ 'true' if inactive_terminal else 'false' }};
+  const inactiveTerminalName = {{ inactive_terminal.name|tojson if inactive_terminal else 'null' }};
+  const hasAvailableTerminals = {{ 'true' if available_terminals else 'false' }};
+  const browserTerminalStorageKey = 'cashier_terminal_binding_event_{{ event.id }}';
+  let terminalPoller = null;
+  let activePaymentId = null;
+  let paymentContext = {
+    status: 'draft',
+    terminalName: '',
+    baseAmountCents: 0,
+    tipCents: 0,
+    amountCents: 0,
+    message: 'Bereit.',
+  };
+
+  function getTerminalNameById(id) {
+    if (!terminalBindingSelect || !id) {
+      return '';
+    }
+    const option = terminalBindingSelect.querySelector(`option[value="${id}"]`);
+    return option ? option.textContent.trim() : '';
+  }
+
+  function setBindingStatus(message, isError) {
+    if (!terminalBindingStatus) return;
+    terminalBindingStatus.textContent = message || '';
+    terminalBindingStatus.style.color = isError ? '#f87171' : '#cbd5e1';
+  }
+
+  function updateTerminalTitle(terminalName, errorText) {
+    const text = errorText
+      ? `Terminal: Fehler (${errorText})`
+      : `Terminal: ${terminalName || 'nicht gesetzt'}`;
+    if (terminalPanelTitle) {
+      terminalPanelTitle.textContent = text;
+    }
+    if (terminalHeaderTitle) {
+      terminalHeaderTitle.textContent = text;
+    }
+  }
+
+  function applyTerminalBinding(terminalId, terminalName) {
+    if (!terminalSelect) {
+      return;
+    }
+    terminalSelect.value = terminalId || '';
+    updateTerminalTitle(terminalName || '', '');
+    updateTerminalPayState();
+  }
+
+  function applyDefaultTerminalState() {
+    if (!terminalSelect) {
+      return;
+    }
+    terminalSelect.value = '';
+    if (hasInactiveTerminal && inactiveTerminalName) {
+      updateTerminalTitle('', `inaktiv: ${inactiveTerminalName}`);
+    } else if (!hasAvailableTerminals) {
+      updateTerminalTitle('', 'kein freies Terminal');
+    } else {
+      updateTerminalTitle('', '');
+    }
+    updateTerminalPayState();
+  }
+
+  function openBindingDialog() {
+    if (!terminalBindingDialog) return;
+    terminalBindingDialog.classList.add('open');
+    terminalBindingDialog.setAttribute('aria-hidden', 'false');
+    setBindingStatus('');
+  }
+
+  function closeBindingDialog() {
+    if (!terminalBindingDialog) return;
+    terminalBindingDialog.classList.remove('open');
+    terminalBindingDialog.setAttribute('aria-hidden', 'true');
+  }
+
+  function initializeTerminalBinding() {
+    if (!terminalSelect) {
+      return;
+    }
+
+    if (fixedAssignedTerminalId) {
+      applyTerminalBinding(String(fixedAssignedTerminalId), fixedAssignedTerminalName || '');
+      return;
+    }
+
+    const storedTerminalId = window.localStorage.getItem(browserTerminalStorageKey) || '';
+    if (storedTerminalId && getTerminalNameById(storedTerminalId)) {
+      if (terminalBindingSelect) {
+        terminalBindingSelect.value = storedTerminalId;
+      }
+      applyTerminalBinding(storedTerminalId, getTerminalNameById(storedTerminalId));
+      return;
+    }
+
+    if (storedTerminalId) {
+      window.localStorage.removeItem(browserTerminalStorageKey);
+    }
+    applyDefaultTerminalState();
+  }
+
+  function getCartTotal() {
+    const totalElement = document.querySelector('[data-cart-total]');
+    return totalElement ? parseFloat(totalElement.textContent || '0') : 0;
+  }
+
+  function getSelectedTerminal() {
+    if (!terminalSelect) {
+      return null;
+    }
+    return terminalSelect.value || null;
+  }
+
+  function setTerminalStatus(message, state) {
+    if (!terminalStatus) return;
+    terminalStatus.textContent = message;
+    terminalStatus.classList.remove('success', 'error');
+    if (state) {
+      terminalStatus.classList.add(state);
+    }
+  }
+
+  function formatAmount(cents) {
+    return `${(cents / 100).toFixed(2)} CHF`;
+  }
+
+  function openPaymentDialog() {
+    if (!terminalPaymentDialog) return;
+    terminalPaymentDialog.classList.add('open');
+    terminalPaymentDialog.setAttribute('aria-hidden', 'false');
+  }
+
+  function closePaymentDialog() {
+    if (!terminalPaymentDialog) return;
+    terminalPaymentDialog.classList.remove('open');
+    terminalPaymentDialog.setAttribute('aria-hidden', 'true');
+  }
+
+  function renderPaymentDialog() {
+    if (!terminalPaymentDialog) return;
+    const state = paymentContext.status;
+    if (paymentAmount) {
+      paymentAmount.textContent = paymentContext.amountCents > 0 ? formatAmount(paymentContext.amountCents) : '-';
+    }
+    if (paymentBaseAmount) {
+      paymentBaseAmount.textContent = paymentContext.baseAmountCents > 0 ? formatAmount(paymentContext.baseAmountCents) : '-';
+    }
+    if (paymentTipAmount) {
+      paymentTipAmount.textContent = formatAmount(Math.max(0, paymentContext.tipCents || 0));
+    }
+    if (paymentTerminalName) {
+      paymentTerminalName.textContent = paymentContext.terminalName || '-';
+    }
+    if (paymentMessage) {
+      paymentMessage.textContent = paymentContext.message || 'Status wird geladen …';
+    }
+
+    if (paymentStatusChip) {
+      paymentStatusChip.classList.remove('pending', 'success', 'error');
+      if (state === 'success') {
+        paymentStatusChip.textContent = 'Erfolgreich';
+        paymentStatusChip.classList.add('success');
+      } else if (state === 'failed' || state === 'aborted' || state === 'timeout' || state === 'error') {
+        paymentStatusChip.textContent = 'Fehler';
+        paymentStatusChip.classList.add('error');
+      } else if (state === 'draft') {
+        paymentStatusChip.textContent = 'Bereit';
+        paymentStatusChip.classList.add('pending');
+      } else {
+        paymentStatusChip.textContent = 'Laufend';
+        paymentStatusChip.classList.add('pending');
+      }
+    }
+
+    const isDoneSuccess = state === 'success';
+    const isPending = state === 'pending' && !!activePaymentId;
+    const isDraft = state === 'draft';
+    const isRetryState = state === 'failed' || state === 'aborted' || state === 'timeout' || state === 'error';
+    const canEditAmount = !isPending && !isDoneSuccess;
+    if (paymentStartBtn) {
+      paymentStartBtn.style.display = isDraft ? '' : 'none';
+      paymentStartBtn.disabled = paymentContext.amountCents <= 0 || !getSelectedTerminal();
+    }
+    if (paymentCancelBtn) {
+      paymentCancelBtn.style.display = isPending ? '' : 'none';
+      paymentCancelBtn.disabled = !isPending;
+    }
+    if (paymentCheckoutBtn) {
+      paymentCheckoutBtn.style.display = isDoneSuccess ? '' : 'none';
+    }
+    if (paymentRetryBtn) {
+      paymentRetryBtn.style.display = isRetryState ? '' : 'none';
+    }
+    if (paymentRefreshBtn) {
+      paymentRefreshBtn.disabled = !activePaymentId;
+    }
+    if (paymentTipPlusBtn) {
+      paymentTipPlusBtn.disabled = !canEditAmount;
+    }
+    if (paymentRoundBtn) {
+      paymentRoundBtn.disabled = !canEditAmount;
+    }
+    if (paymentTipResetBtn) {
+      paymentTipResetBtn.disabled = !canEditAmount || (paymentContext.tipCents || 0) <= 0;
+    }
+  }
+
+  function updatePaymentState(status, message) {
+    paymentContext.status = status;
+    paymentContext.message = message;
+    renderPaymentDialog();
+  }
+
+  function prepareTerminalPaymentDialog() {
+    const terminalId = getSelectedTerminal();
+    const total = getCartTotal();
+    if (!terminalId || total <= 0) {
+      setTerminalStatus('Bitte Terminal wählen und Betrag prüfen.', 'error');
+      paymentContext = {
+        status: 'error',
+        terminalName: getTerminalNameById(terminalId) || fixedAssignedTerminalName || '',
+        baseAmountCents: Math.round(total * 100),
+        tipCents: 0,
+        amountCents: Math.round(total * 100),
+        message: 'Bitte Terminal wählen und Betrag prüfen.',
+      };
+      renderPaymentDialog();
+      openPaymentDialog();
+      return;
+    }
+
+    const terminalName = fixedAssignedTerminalName || getTerminalNameById(terminalId) || `#${terminalId}`;
+    paymentContext = {
+      status: 'draft',
+      terminalName,
+      baseAmountCents: Math.round(total * 100),
+      tipCents: 0,
+      amountCents: Math.round(total * 100),
+      message: 'Betrag prüfen und Zahlung starten.',
+    };
+    renderPaymentDialog();
+    openPaymentDialog();
+  }
+
+  async function startTerminalPayment() {
+    const terminalId = getSelectedTerminal();
+    const amountCents = paymentContext.amountCents > 0 ? paymentContext.amountCents : Math.round(getCartTotal() * 100);
+    const terminalName = fixedAssignedTerminalName || getTerminalNameById(terminalId) || paymentContext.terminalName || `#${terminalId}`;
+
+    if (!terminalId || amountCents <= 0) {
+      setTerminalStatus('Bitte Terminal wählen und Betrag prüfen.', 'error');
+      updatePaymentState('error', 'Bitte Terminal wählen und Betrag prüfen.');
+      return;
+    }
+
+    paymentContext = {
+      ...paymentContext,
+      status: 'pending',
+      terminalName,
+      amountCents,
+      message: 'Zahlung wird gestartet …',
+    };
+    renderPaymentDialog();
+    openPaymentDialog();
+
+    terminalButton.disabled = true;
+    setTerminalStatus('Zahlung wird gestartet …');
+    try {
+      const response = await fetch('/api/terminal-payments', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          terminal_id: parseInt(terminalId, 10),
+          amount_cents: amountCents,
+          currency: 'CHF',
+        }),
+      });
+      const data = await response.json();
+      if (!data.success) {
+        const errorText = data.error || 'Zahlung konnte nicht gestartet werden.';
+        setTerminalStatus(errorText, 'error');
+        activePaymentId = null;
+        updateTerminalPayState();
+        updatePaymentState('error', errorText);
+        return;
+      }
+      activePaymentId = data.payment_id;
+      setTerminalStatus('Zahlung läuft am Terminal …');
+      updatePaymentState('pending', 'Zahlung läuft am Terminal …');
+      stopPolling();
+      terminalPoller = setInterval(() => pollTerminalStatus(activePaymentId), 2000);
+      await pollTerminalStatus(activePaymentId);
+    } catch (error) {
+      console.error('Start-Fehler:', error);
+      setTerminalStatus('Zahlung konnte nicht gestartet werden.', 'error');
+      activePaymentId = null;
+      updateTerminalPayState();
+      updatePaymentState('error', 'Zahlung konnte nicht gestartet werden.');
+    }
+  }
+
+  function updateTerminalPayState() {
+    if (!terminalButton) return;
+    const total = getCartTotal();
+    const terminalId = getSelectedTerminal();
+    const disabled = total <= 0 || !terminalId || activePaymentId !== null;
+    terminalButton.disabled = disabled;
+    if (terminalEditButton) {
+      terminalEditButton.disabled = disabled;
+    }
+  }
+
+  function stopPolling() {
+    if (terminalPoller) {
+      clearInterval(terminalPoller);
+      terminalPoller = null;
+    }
+  }
+
+  async function pollTerminalStatus(paymentId) {
+    try {
+      const response = await fetch(`/api/terminal-payments/${paymentId}`);
+      const data = await response.json();
+      if (!data.success) {
+        const errorText = data.error || 'Status konnte nicht geladen werden.';
+        setTerminalStatus(errorText, 'error');
+        stopPolling();
+        activePaymentId = null;
+        updateTerminalPayState();
+        updatePaymentState('error', errorText);
+        return;
+      }
+      if (data.status === 'pending') {
+        setTerminalStatus('Zahlung läuft am Terminal …');
+        updatePaymentState('pending', 'Bitte Zahlung direkt am Terminal bestätigen.');
+        return;
+      }
+      if (data.status === 'success') {
+        setTerminalStatus('Zahlung erfolgreich.', 'success');
+        stopPolling();
+        updatePaymentState('success', 'Zahlung erfolgreich. Bestellung kann jetzt abgeschlossen werden.');
+        return;
+      }
+      const statusText = {
+        failed: 'Zahlung fehlgeschlagen.',
+        aborted: 'Zahlung abgebrochen.',
+        timeout: 'Zahlung abgelaufen.',
+      }[data.status] || 'Zahlung beendet.';
+      setTerminalStatus(statusText, 'error');
+      stopPolling();
+      activePaymentId = null;
+      updateTerminalPayState();
+      updatePaymentState(data.status || 'error', statusText);
+    } catch (error) {
+      console.error('Status-Fehler:', error);
+      setTerminalStatus('Status konnte nicht geladen werden.', 'error');
+      stopPolling();
+      activePaymentId = null;
+      updateTerminalPayState();
+      updatePaymentState('error', 'Status konnte nicht geladen werden.');
+    }
+  }
+
+  function addTipCents(deltaCents) {
+    const base = paymentContext.baseAmountCents || Math.round(getCartTotal() * 100);
+    const currentTip = Math.max(0, paymentContext.tipCents || 0);
+    const nextTip = Math.max(0, currentTip + deltaCents);
+    paymentContext.baseAmountCents = base;
+    paymentContext.tipCents = nextTip;
+    paymentContext.amountCents = base + nextTip;
+    if (paymentContext.status === 'error' || paymentContext.status === 'failed' || paymentContext.status === 'aborted' || paymentContext.status === 'timeout') {
+      paymentContext.status = 'draft';
+      paymentContext.message = 'Betrag angepasst. Zahlung kann erneut gestartet werden.';
+    }
+    renderPaymentDialog();
+  }
+
+  function roundAmountUpToTen() {
+    const base = paymentContext.baseAmountCents || Math.round(getCartTotal() * 100);
+    const currentTotal = paymentContext.amountCents || base;
+    const roundedTotal = Math.ceil(currentTotal / 1000) * 1000;
+    paymentContext.baseAmountCents = base;
+    paymentContext.tipCents = Math.max(0, roundedTotal - base);
+    paymentContext.amountCents = base + paymentContext.tipCents;
+    if (paymentContext.status === 'error' || paymentContext.status === 'failed' || paymentContext.status === 'aborted' || paymentContext.status === 'timeout') {
+      paymentContext.status = 'draft';
+      paymentContext.message = 'Betrag aufgerundet. Zahlung kann erneut gestartet werden.';
+    }
+    renderPaymentDialog();
+  }
+
+  function resetTipAmount() {
+    const base = paymentContext.baseAmountCents || Math.round(getCartTotal() * 100);
+    paymentContext.baseAmountCents = base;
+    paymentContext.tipCents = 0;
+    paymentContext.amountCents = base;
+    if (paymentContext.status === 'error' || paymentContext.status === 'failed' || paymentContext.status === 'aborted' || paymentContext.status === 'timeout') {
+      paymentContext.status = 'draft';
+      paymentContext.message = 'Trinkgeld entfernt. Zahlung kann erneut gestartet werden.';
+    }
+    renderPaymentDialog();
+  }
+
+  if (terminalBindingSelect) {
+    terminalBindingSelect.addEventListener('change', () => {
+      setBindingStatus('');
+    });
+  }
+
+  if (terminalSettingsBtn) {
+    terminalSettingsBtn.addEventListener('click', openBindingDialog);
+  }
+  if (terminalBindingDoneBtn) {
+    terminalBindingDoneBtn.addEventListener('click', closeBindingDialog);
+  }
+  if (terminalBindingCloseBtn) {
+    terminalBindingCloseBtn.addEventListener('click', closeBindingDialog);
+  }
+  if (terminalBindingDialog) {
+    terminalBindingDialog.addEventListener('click', (event) => {
+      if (event.target === terminalBindingDialog) {
+        closeBindingDialog();
+      }
+    });
+  }
+
+  if (terminalBindingSaveBtn) {
+    terminalBindingSaveBtn.addEventListener('click', () => {
+      const selectedId = terminalBindingSelect ? terminalBindingSelect.value : '';
+      if (!selectedId) {
+        setBindingStatus('Bitte ein Kartengerät auswählen oder Bindung aufheben.', true);
+        return;
+      }
+      const terminalName = getTerminalNameById(selectedId);
+      window.localStorage.setItem(browserTerminalStorageKey, selectedId);
+      applyTerminalBinding(selectedId, terminalName);
+      setBindingStatus('Bindung gespeichert.');
+      closeBindingDialog();
+    });
+  }
+
+  if (terminalBindingResetBtn) {
+    terminalBindingResetBtn.addEventListener('click', () => {
+      window.localStorage.removeItem(browserTerminalStorageKey);
+      if (terminalBindingSelect) {
+        terminalBindingSelect.value = '';
+      }
+      applyDefaultTerminalState();
+      setBindingStatus('Bindung aufgehoben.');
+      closeBindingDialog();
+    });
+  }
+
+  if (terminalButton) {
+    initializeTerminalBinding();
+    updateTerminalPayState();
+    terminalButton.addEventListener('click', async () => {
+      const total = getCartTotal();
+      const terminalId = getSelectedTerminal();
+      const terminalName = fixedAssignedTerminalName || getTerminalNameById(terminalId) || `#${terminalId}`;
+      paymentContext = {
+        status: 'draft',
+        terminalName,
+        baseAmountCents: Math.round(total * 100),
+        tipCents: 0,
+        amountCents: Math.round(total * 100),
+        message: 'Zahlung wird gestartet …',
+      };
+      await startTerminalPayment();
+    });
+  }
+
+  if (terminalEditButton) {
+    terminalEditButton.addEventListener('click', prepareTerminalPaymentDialog);
+  }
+
+  if (paymentStartBtn) {
+    paymentStartBtn.addEventListener('click', startTerminalPayment);
+  }
+
+  if (paymentCloseBtn) {
+    paymentCloseBtn.addEventListener('click', closePaymentDialog);
+  }
+  if (terminalPaymentDialog) {
+    terminalPaymentDialog.addEventListener('click', (event) => {
+      if (event.target === terminalPaymentDialog) {
+        closePaymentDialog();
+      }
+    });
+  }
+  if (paymentRefreshBtn) {
+    paymentRefreshBtn.addEventListener('click', async () => {
+      if (!activePaymentId) {
+        return;
+      }
+      updatePaymentState('pending', 'Status wird aktualisiert …');
+      await pollTerminalStatus(activePaymentId);
+    });
+  }
+  if (paymentCancelBtn) {
+    paymentCancelBtn.addEventListener('click', async () => {
+      if (!activePaymentId) {
+        return;
+      }
+      updatePaymentState('pending', 'Zahlung wird abgebrochen …');
+      paymentCancelBtn.disabled = true;
+      try {
+        const response = await fetch(`/api/terminal-payments/${activePaymentId}/cancel`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+        });
+        const data = await response.json();
+        if (!data.success) {
+          const errorText = data.error || 'Abbruch nicht möglich.';
+          setTerminalStatus(errorText, 'error');
+          updatePaymentState(data.status || 'error', errorText);
+          if (data.status !== 'pending') {
+            stopPolling();
+            activePaymentId = null;
+            updateTerminalPayState();
+          }
+          return;
+        }
+        stopPolling();
+        activePaymentId = null;
+        updateTerminalPayState();
+        setTerminalStatus('Zahlung abgebrochen.', 'error');
+        updatePaymentState('aborted', 'Zahlung wurde abgebrochen.');
+      } catch (error) {
+        console.error('Cancel-Fehler:', error);
+        setTerminalStatus('Abbruch fehlgeschlagen.', 'error');
+        updatePaymentState('error', 'Abbruch fehlgeschlagen.');
+      }
+    });
+  }
+  if (paymentRetryBtn) {
+    paymentRetryBtn.addEventListener('click', async () => {
+      await startTerminalPayment();
+    });
+  }
+  if (paymentTipPlusBtn) {
+    paymentTipPlusBtn.addEventListener('click', () => {
+      addTipCents(100);
+    });
+  }
+  if (paymentRoundBtn) {
+    paymentRoundBtn.addEventListener('click', () => {
+      roundAmountUpToTen();
+    });
+  }
+  if (paymentTipResetBtn) {
+    paymentTipResetBtn.addEventListener('click', () => {
+      resetTipAmount();
+    });
+  }
+  if (paymentCheckoutBtn) {
+    paymentCheckoutBtn.addEventListener('click', () => {
+      window.location.href = '/cashier/checkout';
+    });
   }
 </script>
 {% endblock %}

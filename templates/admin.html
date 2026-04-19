@@ -238,6 +238,106 @@
   {% endfor %}
 </div>
 
+<!-- Terminals Section -->
+<div class="card">
+  <h2>SumUp Terminals</h2>
+  <div class="muted">Terminals verwalten und mit Events verknüpfen.</div>
+
+  <form method="post" action="{{ url_for('create_terminal') }}" class="stack" style="margin-top: 1rem;">
+    <div class="field-inline">
+      <label class="stack">
+        <span>Name</span>
+        <input type="text" name="name" required>
+      </label>
+      <label class="stack">
+        <span>SumUp Device ID</span>
+        <input
+          type="text"
+          name="sumup_device_id"
+          required
+          placeholder="Reader-ID, z.B. rdr_3MSAFM23CK82VSTT4BN6RWSQ65"
+          pattern="[A-Za-z0-9._:-]{6,120}"
+          title="Empfohlen: Reader-ID (rdr_...). Alternativ wird eine bekannte Device-Identifier-ID automatisch aufgelöst."
+        >
+      </label>
+      <label class="stack">
+        <span>Status</span>
+        <label><input type="checkbox" name="active" checked> Aktiv</label>
+      </label>
+      <button type="submit" class="primary">Terminal hinzufügen</button>
+    </div>
+  </form>
+
+  {% if terminals %}
+    <div class="stack" style="margin-top: 1rem;">
+      {% for terminal in terminals %}
+        <div class="collapsible">
+          <div class="collapsible__header">
+            <div>
+              <strong>{{ terminal.name }}</strong>
+              {% if terminal.active %}
+                <span class="badge badge-green">aktiv</span>
+              {% else %}
+                <span class="badge badge-red">inaktiv</span>
+              {% endif %}
+              {% if terminal.assigned_event_id %}
+                <span class="pill">Event #{{ terminal.assigned_event_id }}</span>
+              {% else %}
+                <span class="pill">frei</span>
+              {% endif %}
+            </div>
+          </div>
+          <div class="collapsible__content">
+            <form method="post" action="{{ url_for('update_terminal', terminal_id=terminal.id) }}" class="stack">
+              <div class="field-inline">
+                <label class="stack">
+                  <span>Name</span>
+                  <input type="text" name="name" value="{{ terminal.name }}" required>
+                </label>
+                <label class="stack">
+                  <span>SumUp Device ID</span>
+                  <input
+                    type="text"
+                    name="sumup_device_id"
+                    value="{{ terminal.sumup_device_id }}"
+                    required
+                    placeholder="Reader-ID, z.B. rdr_3MSAFM23CK82VSTT4BN6RWSQ65"
+                    pattern="[A-Za-z0-9._:-]{6,120}"
+                    title="Empfohlen: Reader-ID (rdr_...). Alternativ wird eine bekannte Device-Identifier-ID automatisch aufgelöst."
+                  >
+                </label>
+                <label class="stack">
+                  <span>Status</span>
+                  <label><input type="checkbox" name="active" {% if terminal.active %}checked{% endif %}> Aktiv</label>
+                </label>
+                <button type="submit" class="primary">Speichern</button>
+                <button
+                  type="button"
+                  class="secondary"
+                  data-terminal-test
+                  data-terminal-id="{{ terminal.id }}"
+                >
+                  Verbindung testen
+                </button>
+              </div>
+            </form>
+            <div
+              class="flash"
+              data-terminal-test-result="{{ terminal.id }}"
+              style="display:none; margin-top: 0.6rem;"
+            ></div>
+            <form method="post" action="{{ url_for('delete_terminal', terminal_id=terminal.id) }}" class="inline" style="margin-top: 0.6rem;">
+              <button type="submit" class="secondary">Terminal löschen</button>
+            </form>
+          </div>
+        </div>
+      {% endfor %}
+    </div>
+  {% else %}
+    <p style="margin-top: 1rem;">Noch keine Terminals angelegt.</p>
+  {% endif %}
+</div>
+
 <!-- Modal for New Event -->
 <div id="new-event-modal" class="modal">
   <div class="modal-content">
@@ -341,6 +441,10 @@
                 <input type="number" step="0.1" min="0.6" max="6" data-price-field="font_size">
               </label>
               <label class="stack">
+                <span>Kasse Schriftgröße (rem)</span>
+                <input type="number" step="0.1" min="0.5" max="2.5" data-price-field="cashier_font_size">
+              </label>
+              <label class="stack">
                 <span>Wechsel-Intervall (Sek.)</span>
                 <input type="number" step="1" min="2" max="120" data-price-field="rotation_seconds">
               </label>
@@ -436,6 +540,161 @@
   </div>
 </div>
 
+<!-- SumUp Credentials Section -->
+<div class="collapsible card" data-collapsible>
+  <div class="collapsible__header">
+    <div>
+      <h2 style="margin:0;">SumUp Zugangsdaten</h2>
+      <div class="muted">API-Token, Merchant Code und optionaler Affiliate-Key für Terminalzahlungen.</div>
+    </div>
+    <button type="button" class="secondary" data-toggle>Details einblenden</button>
+  </div>
+  <div class="collapsible__content" hidden>
+    <form method="post" action="{{ url_for('update_sumup_credentials') }}">
+      <div class="stack">
+        <label for="sumup_access_token">Access Token</label>
+        <input
+          id="sumup_access_token"
+          name="sumup_access_token"
+          type="password"
+          placeholder="{% if sumup_settings.access_token %}Token gesetzt (leer lassen für behalten){% else %}z.B. sandbox token{% endif %}"
+        >
+      </div>
+      <div class="stack" style="margin-top: 1rem;">
+        <label for="sumup_merchant_id">Merchant Code</label>
+        <input
+          id="sumup_merchant_id"
+          name="sumup_merchant_id"
+          type="text"
+          value="{{ sumup_settings.merchant_id or '' }}"
+          placeholder="Optional, z.B. MK10CL2A"
+        >
+        <div class="hint">Optional: Wenn leer, wird der Merchant Code beim Verbindungstest aus dem Token erkannt.</div>
+      </div>
+      <div class="stack" style="margin-top: 1rem;">
+        <label for="sumup_affiliate_key">Affiliate Key (Sandbox)</label>
+        <input
+          id="sumup_affiliate_key"
+          name="sumup_affiliate_key"
+          type="text"
+          value="{{ sumup_settings.affiliate_key or '' }}"
+          placeholder="sup_afk_..."
+        >
+      </div>
+      <div class="stack" style="margin-top: 1rem;">
+        <label for="sumup_base_url">Base URL</label>
+        <input
+          id="sumup_base_url"
+          name="sumup_base_url"
+          type="text"
+          value="{{ sumup_settings.base_url or '' }}"
+          placeholder="https://api.sumup.com"
+        >
+        <div class="hint">Leer lassen für Standard-URL.</div>
+      </div>
+      <div class="field-inline" style="margin-top: 1rem;">
+        <button type="submit">SumUp Zugangsdaten speichern</button>
+        <button type="button" class="secondary" id="sumup-test-connection-btn">Verbindung testen</button>
+        <button type="button" class="secondary" id="sumup-sync-readers-btn">Reader scannen & aktivieren</button>
+        <button type="button" class="secondary" id="sumup-load-readers-status-btn">Reader-Status laden</button>
+        <button type="button" class="secondary" id="sumup-load-payment-logs-btn">Zahlungs-Logs laden</button>
+      </div>
+      <div class="field-inline" style="margin-top: 0.5rem;">
+        <label style="display: inline-flex; align-items: center; gap: 0.4rem;">
+          <input id="sumup-payment-logs-live-toggle" type="checkbox">
+          SumUp API Live-Abgleich bei Anfrage
+        </label>
+        <label style="display: inline-flex; align-items: center; gap: 0.4rem;">
+          <input id="sumup-payment-logs-failed-toggle" type="checkbox" checked>
+          Nur failed/aborted/timeout
+        </label>
+        <label style="display: inline-flex; align-items: center; gap: 0.4rem;">
+          <input id="sumup-payment-logs-diagnostics-toggle" type="checkbox" checked>
+          Rückwirkende Troubleshooting-Details
+        </label>
+        <label style="display: inline-flex; align-items: center; gap: 0.4rem;">
+          <input id="sumup-payment-init-orphan-toggle" type="checkbox" checked>
+          Init ohne erzeugte Zahlung separat
+        </label>
+      </div>
+      <div class="flash" id="sumup-test-result" style="display:none; margin-top: 1rem;"></div>
+      <div class="flash" id="sumup-sync-readers-result" style="display:none; margin-top: 0.6rem;"></div>
+      <div class="flash" id="sumup-readers-status-result" style="display:none; margin-top: 0.6rem;"></div>
+      <div class="flash" id="sumup-payment-logs-result" style="display:none; margin-top: 0.6rem;"></div>
+      <div id="sumup-payment-logs-summary" class="muted" style="display:none; margin-top: 0.6rem;"></div>
+      <div style="margin-top: 0.8rem; overflow-x: auto;">
+        <table id="sumup-readers-status-table" style="display:none; min-width: 940px;">
+          <thead>
+            <tr>
+              <th>Reader</th>
+              <th>Live</th>
+              <th>State</th>
+              <th>Verbindung</th>
+              <th>Akku</th>
+              <th>Firmware</th>
+              <th>Lokal verbunden</th>
+              <th>Fehler</th>
+            </tr>
+          </thead>
+          <tbody id="sumup-readers-status-body"></tbody>
+        </table>
+      </div>
+      <div style="margin-top: 0.8rem; overflow-x: auto;">
+        <table id="sumup-payment-logs-table" style="display:none; min-width: 980px;">
+          <thead>
+            <tr>
+              <th>Transaktion</th>
+              <th>Event</th>
+              <th>Terminal</th>
+              <th>Status</th>
+              <th>SumUp Transaktion</th>
+              <th>Betrag</th>
+              <th>Letzte Aktivität</th>
+              <th>Logs</th>
+              <th>Auffälligkeiten</th>
+            </tr>
+          </thead>
+          <tbody id="sumup-payment-logs-body"></tbody>
+        </table>
+      </div>
+      <div style="margin-top: 0.8rem; overflow-x: auto;">
+        <table id="sumup-init-logs-table" style="display:none; min-width: 980px;">
+          <thead>
+            <tr>
+              <th>Init-ID</th>
+              <th>Zeit</th>
+              <th>Phase</th>
+              <th>Outcome</th>
+              <th>Terminal</th>
+              <th>Zahlung</th>
+              <th>Payload</th>
+            </tr>
+          </thead>
+          <tbody id="sumup-init-logs-body"></tbody>
+        </table>
+      </div>
+      <div id="sumup-payment-detail-panel" class="card" style="display:none; margin-top: 0.8rem; padding: 0.9rem; border: 1px solid #1f2937;">
+        <div id="sumup-payment-detail-header" style="font-weight: 600; margin-bottom: 0.5rem;"></div>
+        <div class="muted" style="margin-bottom: 0.6rem;">Lokaler Verlauf und SumUp API-Daten zur ausgewählten Transaktion.</div>
+        <div style="display: grid; grid-template-columns: 1fr; gap: 0.8rem;">
+          <div>
+            <strong>Init-Versuche (inkl. abgebrochen/abgewiesen)</strong>
+            <div id="sumup-payment-detail-init" style="margin-top: 0.35rem;"></div>
+          </div>
+          <div>
+            <strong>Lokale Teilmeldungen</strong>
+            <div id="sumup-payment-detail-local" style="margin-top: 0.35rem;"></div>
+          </div>
+          <div>
+            <strong>SumUp API Snapshot (live)</strong>
+            <div id="sumup-payment-detail-live" style="margin-top: 0.35rem;"></div>
+          </div>
+        </div>
+      </div>
+    </form>
+  </div>
+</div>
+
 <!-- Network Management Section -->
 <div class="collapsible card" data-collapsible>
   <div class="collapsible__header">
@@ -481,5 +740,576 @@
   {{ price_list_defaults | tojson }}
 </script>
 <script src="{{ url_for('static', filename='js/admin.js', v='5') }}" defer></script>
+<script>
+  document.addEventListener("DOMContentLoaded", () => {
+    const testBtn = document.getElementById("sumup-test-connection-btn");
+    const resultEl = document.getElementById("sumup-test-result");
+    const syncBtn = document.getElementById("sumup-sync-readers-btn");
+    const syncResultEl = document.getElementById("sumup-sync-readers-result");
+    const statusBtn = document.getElementById("sumup-load-readers-status-btn");
+    const statusResultEl = document.getElementById("sumup-readers-status-result");
+    const statusTable = document.getElementById("sumup-readers-status-table");
+    const statusBody = document.getElementById("sumup-readers-status-body");
+    const paymentLogsBtn = document.getElementById("sumup-load-payment-logs-btn");
+    const paymentLogsLiveToggle = document.getElementById("sumup-payment-logs-live-toggle");
+    const paymentLogsFailedToggle = document.getElementById("sumup-payment-logs-failed-toggle");
+    const paymentLogsDiagnosticsToggle = document.getElementById("sumup-payment-logs-diagnostics-toggle");
+    const paymentInitOrphanToggle = document.getElementById("sumup-payment-init-orphan-toggle");
+    const paymentLogsResultEl = document.getElementById("sumup-payment-logs-result");
+    const paymentLogsSummaryEl = document.getElementById("sumup-payment-logs-summary");
+    const paymentLogsTable = document.getElementById("sumup-payment-logs-table");
+    const paymentLogsBody = document.getElementById("sumup-payment-logs-body");
+    const initLogsTable = document.getElementById("sumup-init-logs-table");
+    const initLogsBody = document.getElementById("sumup-init-logs-body");
+    const paymentDetailPanel = document.getElementById("sumup-payment-detail-panel");
+    const paymentDetailHeader = document.getElementById("sumup-payment-detail-header");
+    const paymentDetailInit = document.getElementById("sumup-payment-detail-init");
+    const paymentDetailLocal = document.getElementById("sumup-payment-detail-local");
+    const paymentDetailLive = document.getElementById("sumup-payment-detail-live");
+    if (!testBtn || !resultEl) return;
+
+    const showResult = (message, kind) => {
+      resultEl.style.display = "block";
+      resultEl.classList.remove("error", "success");
+      resultEl.classList.add(kind === "success" ? "success" : "error");
+      resultEl.textContent = message;
+    };
+
+    testBtn.addEventListener("click", async () => {
+      const originalLabel = testBtn.textContent;
+      testBtn.disabled = true;
+      testBtn.textContent = "Teste Verbindung ...";
+      resultEl.style.display = "none";
+
+      try {
+        const response = await fetch("{{ url_for('admin_sumup_connection_test') }}", {
+          method: "POST",
+          headers: {
+            "Accept": "application/json",
+            "X-Requested-With": "XMLHttpRequest",
+          },
+        });
+        const data = await response.json();
+        if (!response.ok || !data.success) {
+          const messageParts = [data.error || "Verbindungstest fehlgeschlagen."];
+          if (data.hint) {
+            messageParts.push(`Hinweis: ${data.hint}`);
+          }
+          if (data.sumup_status_code) {
+            messageParts.push(`HTTP-Status: ${data.sumup_status_code}`);
+          }
+          showResult(messageParts.join(" "), "error");
+          return;
+        }
+
+        const details = [];
+        if (data.api_merchant_id) {
+          details.push(`API Merchant: ${data.api_merchant_id}`);
+        }
+        if (data.configured_merchant_id) {
+          details.push(`Konfiguriert: ${data.configured_merchant_id}`);
+        }
+        let message = data.message || "Verbindung erfolgreich.";
+        if (details.length) {
+          message += ` (${details.join(" | ")})`;
+        }
+        if (data.warning) {
+          message += ` Achtung: ${data.warning}`;
+        }
+        showResult(message, "success");
+      } catch (err) {
+        showResult("Verbindungstest konnte nicht ausgeführt werden. Bitte Seite neu laden und erneut versuchen.", "error");
+      } finally {
+        testBtn.disabled = false;
+        testBtn.textContent = originalLabel;
+      }
+    });
+
+    if (syncBtn && syncResultEl) {
+      const showSyncResult = (message, kind) => {
+        syncResultEl.style.display = "block";
+        syncResultEl.classList.remove("error", "success");
+        syncResultEl.classList.add(kind === "success" ? "success" : "error");
+        syncResultEl.textContent = message;
+      };
+
+      syncBtn.addEventListener("click", async () => {
+        const originalLabel = syncBtn.textContent;
+        syncBtn.disabled = true;
+        syncBtn.textContent = "Scanne Reader ...";
+        syncResultEl.style.display = "none";
+
+        try {
+          const response = await fetch("{{ url_for('admin_sumup_readers_sync') }}", {
+            method: "POST",
+            headers: {
+              "Accept": "application/json",
+              "X-Requested-With": "XMLHttpRequest",
+            },
+          });
+          const data = await response.json();
+
+          if (!response.ok || !data.success) {
+            const parts = [data.error || "Reader-Scan fehlgeschlagen."];
+            if (data.hint) {
+              parts.push(`Hinweis: ${data.hint}`);
+            }
+            showSyncResult(parts.join(" "), "error");
+            return;
+          }
+
+          const msg = [
+            `${data.message}`,
+            `Gefunden: ${data.scanned_count || 0}`,
+            `Neu: ${data.created_count || 0}`,
+            `Aktualisiert: ${data.updated_count || 0}`,
+            `Reaktiviert: ${data.reactivated_count || 0}`,
+          ].join(" | ");
+          showSyncResult(msg, "success");
+          setTimeout(() => window.location.reload(), 900);
+        } catch (err) {
+          showSyncResult("Reader-Scan konnte nicht ausgeführt werden.", "error");
+        } finally {
+          syncBtn.disabled = false;
+          syncBtn.textContent = originalLabel;
+        }
+      });
+    }
+
+    if (statusBtn && statusResultEl && statusTable && statusBody) {
+      let statusRefreshTimer = null;
+
+      const showStatusResult = (message, kind) => {
+        statusResultEl.style.display = "block";
+        statusResultEl.classList.remove("error", "success");
+        statusResultEl.classList.add(kind === "success" ? "success" : "error");
+        statusResultEl.textContent = message;
+      };
+
+      const renderRows = (readers) => {
+        statusBody.innerHTML = "";
+        for (const reader of readers) {
+          const tr = document.createElement("tr");
+          const localTerminal = reader.local_terminal_name
+            ? `${reader.local_terminal_name}${reader.local_terminal_active ? " (aktiv)" : " (inaktiv)"}`
+            : "-";
+          tr.innerHTML = `
+            <td>${reader.reader_name || reader.identifier || "Reader"}<br><small>${reader.reader_id || ""}</small></td>
+            <td>${reader.live_status || reader.account_status || "UNKNOWN"}</td>
+            <td>${reader.live_state || "-"}</td>
+            <td>${reader.connection_type || "-"}</td>
+            <td>${reader.battery_level ?? "-"}${reader.battery_level !== null && reader.battery_level !== undefined ? "%" : ""}</td>
+            <td>${reader.firmware_version || "-"}</td>
+            <td>${localTerminal}</td>
+            <td>${reader.status_error || "-"}</td>
+          `;
+          statusBody.appendChild(tr);
+        }
+        statusTable.style.display = readers.length ? "table" : "none";
+      };
+
+      const loadReaderStatus = async (silent = false) => {
+        const originalLabel = statusBtn.textContent;
+        if (!silent) {
+          statusBtn.disabled = true;
+          statusBtn.textContent = "Lade Status ...";
+          statusResultEl.style.display = "none";
+        }
+
+        try {
+          const response = await fetch("{{ url_for('admin_sumup_readers_status') }}", {
+            method: "GET",
+            headers: {
+              "Accept": "application/json",
+              "X-Requested-With": "XMLHttpRequest",
+            },
+          });
+          const data = await response.json();
+          if (!response.ok || !data.success) {
+            const parts = [data.error || "Reader-Status konnte nicht geladen werden."];
+            if (data.hint) {
+              parts.push(`Hinweis: ${data.hint}`);
+            }
+            showStatusResult(parts.join(" "), "error");
+            return;
+          }
+
+          renderRows(Array.isArray(data.readers) ? data.readers : []);
+          showStatusResult(`Reader-Status geladen. Gefunden: ${data.count || 0}`, "success");
+          if (!statusRefreshTimer) {
+            statusRefreshTimer = setInterval(() => loadReaderStatus(true), 30000);
+          }
+        } catch (_err) {
+          showStatusResult("Reader-Status konnte nicht geladen werden.", "error");
+        } finally {
+          if (!silent) {
+            statusBtn.disabled = false;
+            statusBtn.textContent = originalLabel;
+          }
+        }
+      };
+
+      statusBtn.addEventListener("click", () => {
+        loadReaderStatus(false);
+      });
+    }
+
+    if (paymentLogsBtn && paymentLogsResultEl && paymentLogsSummaryEl && paymentLogsTable && paymentLogsBody && initLogsTable && initLogsBody && paymentDetailPanel && paymentDetailHeader && paymentDetailInit && paymentDetailLocal && paymentDetailLive) {
+      const showPaymentLogsResult = (message, kind) => {
+        paymentLogsResultEl.style.display = "block";
+        paymentLogsResultEl.classList.remove("error", "success");
+        paymentLogsResultEl.classList.add(kind === "success" ? "success" : "error");
+        paymentLogsResultEl.textContent = message;
+      };
+
+      const renderSummary = (summary) => {
+        if (!summary || typeof summary !== "object") {
+          paymentLogsSummaryEl.style.display = "none";
+          return;
+        }
+
+        const statusCounts = summary.status_counts || {};
+        const statusText = Object.entries(statusCounts)
+          .map(([status, count]) => `${status}: ${count}`)
+          .join(" | ");
+        const parts = [
+          `Zahlungen: ${summary.total_payments || 0}`,
+          `Logs: ${summary.total_logs || 0}`,
+          `Init-Versuche: ${summary.total_init_attempts || 0}`,
+          `Fehler-Ereignisse: ${summary.error_event_count || 0}`,
+        ];
+        if (summary.include_live) {
+          parts.push(`Live geprüft: ${summary.live_checked_count || 0}`);
+          parts.push(`Live-Fehler: ${summary.live_error_count || 0}`);
+          parts.push(`Live-Mismatch: ${summary.live_mismatch_count || 0}`);
+          if (summary.live_sync_error && summary.live_sync_error.error) {
+            parts.push(`Live-Abgleich nicht vollständig: ${summary.live_sync_error.error}`);
+          }
+        }
+        if (summary.include_failed_details) {
+          parts.push("Diagnostics: an");
+        }
+        if (summary.init_orphan_only) {
+          parts.push("Init-Filter: nur ohne Zahlung");
+        }
+        if (Array.isArray(summary.status_filter) && summary.status_filter.length) {
+          parts.push(`Filter: ${summary.status_filter.join(', ')}`);
+        }
+        if (statusText) {
+          parts.push(`Status: ${statusText}`);
+        }
+        parts.push(`Init ohne Zahlung: ${summary.orphan_init_attempt_count || 0}`);
+
+        paymentLogsSummaryEl.textContent = parts.join(" | ");
+        paymentLogsSummaryEl.style.display = "block";
+      };
+
+      const formatTs = (isoValue) => {
+        if (!isoValue) return "-";
+        const date = new Date(isoValue);
+        if (Number.isNaN(date.getTime())) return isoValue;
+        return date.toLocaleString();
+      };
+
+      const escapeHtml = (value) => String(value ?? "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/\"/g, "&quot;")
+        .replace(/'/g, "&#39;");
+
+      const prettyPayload = (payload) => {
+        if (payload === null || payload === undefined) return "-";
+        try {
+          return JSON.stringify(payload, null, 2);
+        } catch (_err) {
+          return String(payload);
+        }
+      };
+
+      const renderLogHistoryHtml = (logs) => {
+        if (!Array.isArray(logs) || !logs.length) {
+          return "-";
+        }
+
+        const items = logs
+          .map((entry, index) => {
+            const header = `${index + 1}. ${formatTs(entry.created_at)} - ${entry.event || "-"}`;
+            const payloadText = prettyPayload(entry.payload);
+            return `
+              <details style="margin-bottom: 0.35rem;">
+                <summary>${escapeHtml(header)}</summary>
+                <pre style="white-space: pre-wrap; max-width: 520px; margin: 0.4rem 0 0 0;">${escapeHtml(payloadText)}</pre>
+              </details>
+            `;
+          })
+          .join("");
+
+        return `<div>${items}</div>`;
+      };
+
+      const loadPaymentDetails = async (paymentId) => {
+        paymentDetailPanel.style.display = "block";
+        paymentDetailHeader.textContent = `Lade Details fuer Zahlung #${paymentId} ...`;
+        paymentDetailInit.innerHTML = "<span class='muted'>Lade Init-Versuche ...</span>";
+        paymentDetailLocal.innerHTML = "<span class='muted'>Lade lokale Teilmeldungen ...</span>";
+        paymentDetailLive.innerHTML = "<span class='muted'>Lade SumUp API Daten ...</span>";
+
+        try {
+          const response = await fetch(`/admin/terminal-payments/${paymentId}/details?include_live=1`, {
+            method: "GET",
+            headers: {
+              "Accept": "application/json",
+              "X-Requested-With": "XMLHttpRequest",
+            },
+          });
+          const data = await response.json();
+          if (!response.ok || !data.success || !data.payment) {
+            paymentDetailHeader.textContent = `Details fuer Zahlung #${paymentId}`;
+            paymentDetailInit.innerHTML = "<span class='muted'>Keine Init-Details verfuegbar.</span>";
+            paymentDetailLocal.innerHTML = "<span class='muted'>Keine lokalen Details verfuegbar.</span>";
+            paymentDetailLive.innerHTML = `<pre style='white-space: pre-wrap;'>${escapeHtml(prettyPayload(data))}</pre>`;
+            return;
+          }
+
+          const payment = data.payment;
+          paymentDetailHeader.textContent = `Details fuer Zahlung #${payment.payment_id} (${payment.status || "-"})`;
+          const initEvents = Array.isArray(payment.init_events) ? payment.init_events : [];
+          if (!initEvents.length) {
+            paymentDetailInit.innerHTML = "<span class='muted'>Keine Init-Versuche vorhanden.</span>";
+          } else {
+            const initAsLogRows = initEvents.map((entry) => ({
+              created_at: entry.created_at,
+              event: `${entry.phase || "-"} [${entry.outcome || "-"}]`,
+              payload: entry.payload,
+            }));
+            paymentDetailInit.innerHTML = renderLogHistoryHtml(initAsLogRows);
+          }
+
+          const local = Array.isArray(payment.local_events) ? payment.local_events : [];
+          if (!local.length) {
+            paymentDetailLocal.innerHTML = "<span class='muted'>Keine lokalen Teilmeldungen vorhanden.</span>";
+          } else {
+            paymentDetailLocal.innerHTML = renderLogHistoryHtml(local);
+          }
+
+          paymentDetailLive.innerHTML = `<pre style='white-space: pre-wrap; max-width: 920px;'>${escapeHtml(prettyPayload(payment.sumup_live || {}))}</pre>`;
+        } catch (_err) {
+          paymentDetailHeader.textContent = `Details fuer Zahlung #${paymentId}`;
+          paymentDetailInit.innerHTML = "<span class='muted'>Init-Details konnten nicht geladen werden.</span>";
+          paymentDetailLocal.innerHTML = "<span class='muted'>Lokale Details konnten nicht geladen werden.</span>";
+          paymentDetailLive.innerHTML = "<span class='muted'>SumUp API Daten konnten nicht geladen werden.</span>";
+        }
+      };
+
+      const renderPaymentLogRows = (payments) => {
+        paymentLogsBody.innerHTML = "";
+        for (const payment of payments) {
+          const tr = document.createElement("tr");
+          const amount = Number(payment.amount_cents || 0) / 100;
+          const eventLabel = payment.event_name || (payment.event_id ? `Event #${payment.event_id}` : "-");
+          const logHistoryHtml = renderLogHistoryHtml(payment.logs || []);
+          const issues = [];
+          if ((payment.error_event_count || 0) > 0) {
+            issues.push(`Fehler-Events: ${payment.error_event_count}`);
+          }
+          if ((payment.event_counts || {}).status_not_found) {
+            issues.push(`404-Status: ${payment.event_counts.status_not_found}`);
+          }
+          if ((payment.event_counts || {}).status_inferred_aborted) {
+            issues.push("Abbruch inferiert");
+          }
+          if (payment.sumup_live_error && payment.sumup_live_error.error) {
+            issues.push(`SumUp Live Fehler: ${payment.sumup_live_error.error}`);
+          }
+          if (payment.sumup_live_status && payment.sumup_live_status !== payment.status) {
+            issues.push(`Status-Mismatch lokal/sumup: ${payment.status}/${payment.sumup_live_status}`);
+          }
+
+          const liveSnapshot = payment.sumup_live_checked
+            ? {
+                status: payment.sumup_live_status,
+                error: payment.sumup_live_error,
+                raw: payment.sumup_live_raw,
+              }
+            : null;
+          const liveSnapshotHtml = liveSnapshot
+            ? `<details style="margin-top: 0.35rem;"><summary>SumUp Live Snapshot</summary><pre style="white-space: pre-wrap; max-width: 520px; margin: 0.4rem 0 0 0;">${escapeHtml(prettyPayload(liveSnapshot))}</pre></details>`
+            : "";
+          const diagnostics = payment.diagnostics && typeof payment.diagnostics === "object"
+            ? payment.diagnostics
+            : null;
+          const diagnosticsHtml = diagnostics
+            ? `<details style="margin-top: 0.35rem;"><summary>Troubleshooting-Zusammenfassung</summary><pre style="white-space: pre-wrap; max-width: 520px; margin: 0.4rem 0 0 0;">${escapeHtml(prettyPayload(diagnostics))}</pre></details>`
+            : "";
+
+          tr.innerHTML = `
+            <td><a href="#" data-payment-details-link data-payment-id="${escapeHtml(payment.payment_id || "")}">#${payment.payment_id || "-"}</a></td>
+            <td>${escapeHtml(eventLabel)}</td>
+            <td>${escapeHtml(payment.terminal_name || "-")}</td>
+            <td>${escapeHtml(payment.status || "-")}</td>
+            <td>${escapeHtml(payment.sumup_payment_id || "-")}</td>
+            <td>${escapeHtml(amount.toFixed(2))} ${escapeHtml(payment.currency || "CHF")}</td>
+            <td>${formatTs(payment.latest_event_at || payment.updated_at)}</td>
+            <td>${payment.log_count || 0}</td>
+            <td>${escapeHtml(issues.length ? issues.join(" | ") : "-")}</td>
+          `;
+          paymentLogsBody.appendChild(tr);
+        }
+
+        paymentLogsBody.querySelectorAll("[data-payment-details-link]").forEach((link) => {
+          link.addEventListener("click", (event) => {
+            event.preventDefault();
+            const paymentId = Number(link.getAttribute("data-payment-id") || "0");
+            if (paymentId > 0) {
+              loadPaymentDetails(paymentId);
+            }
+          });
+        });
+
+        paymentLogsTable.style.display = payments.length ? "table" : "none";
+      };
+
+      const renderInitLogRows = (initAttempts) => {
+        initLogsBody.innerHTML = "";
+        if (!Array.isArray(initAttempts) || !initAttempts.length) {
+          initLogsTable.style.display = "none";
+          return;
+        }
+
+        for (const init of initAttempts) {
+          const tr = document.createElement("tr");
+          const terminalLabel = init.terminal_id ? `#${init.terminal_id}` : "-";
+          const paymentLabel = init.terminal_payment_id ? `#${init.terminal_payment_id}` : "-";
+          tr.innerHTML = `
+            <td>${escapeHtml(init.id || "-")}</td>
+            <td>${escapeHtml(formatTs(init.created_at))}</td>
+            <td>${escapeHtml(init.phase || "-")}</td>
+            <td>${escapeHtml(init.outcome || "-")}</td>
+            <td>${escapeHtml(terminalLabel)}</td>
+            <td>${escapeHtml(paymentLabel)}</td>
+            <td><pre style="white-space: pre-wrap; max-width: 520px; margin: 0;">${escapeHtml(prettyPayload(init.payload || {}))}</pre></td>
+          `;
+          initLogsBody.appendChild(tr);
+        }
+
+        initLogsTable.style.display = "table";
+      };
+
+      paymentLogsBtn.addEventListener("click", async () => {
+        const originalLabel = paymentLogsBtn.textContent;
+        paymentLogsBtn.disabled = true;
+        paymentLogsBtn.textContent = "Lade Logs ...";
+        paymentLogsResultEl.style.display = "none";
+
+        try {
+          const includeLive = Boolean(paymentLogsLiveToggle && paymentLogsLiveToggle.checked);
+          const failedOnly = Boolean(paymentLogsFailedToggle && paymentLogsFailedToggle.checked);
+          const includeDiagnostics = Boolean(paymentLogsDiagnosticsToggle && paymentLogsDiagnosticsToggle.checked);
+          const initOrphanOnly = Boolean(paymentInitOrphanToggle && paymentInitOrphanToggle.checked);
+          const params = new URLSearchParams();
+          params.set("limit", "30");
+          if (includeLive) {
+            params.set("include_live", "1");
+          }
+          if (failedOnly) {
+            params.set("status", "failed,aborted,timeout");
+          }
+          if (includeDiagnostics) {
+            params.set("include_failed_details", "1");
+          }
+          if (initOrphanOnly) {
+            params.set("init_orphan_only", "1");
+          }
+          const query = `?${params.toString()}`;
+          const response = await fetch(`{{ url_for('admin_terminal_payment_logs') }}${query}`, {
+            method: "GET",
+            headers: {
+              "Accept": "application/json",
+              "X-Requested-With": "XMLHttpRequest",
+            },
+          });
+          const data = await response.json();
+          if (!response.ok || !data.success) {
+            showPaymentLogsResult(data.error || "Zahlungs-Logs konnten nicht geladen werden.", "error");
+            return;
+          }
+
+          const payments = Array.isArray(data.payments) ? data.payments : [];
+          const initAttempts = Array.isArray(data.init_attempts) ? data.init_attempts : [];
+          renderSummary(data.summary || null);
+          renderPaymentLogRows(payments);
+          renderInitLogRows(initAttempts);
+          showPaymentLogsResult(`Zahlungs-Logs geladen. Zahlungen: ${data.count || 0}`, "success");
+        } catch (_err) {
+          showPaymentLogsResult("Zahlungs-Logs konnten nicht geladen werden.", "error");
+        } finally {
+          paymentLogsBtn.disabled = false;
+          paymentLogsBtn.textContent = originalLabel;
+        }
+      });
+    }
+  });
+
+  document.querySelectorAll("[data-terminal-test]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const terminalId = btn.getAttribute("data-terminal-id");
+      const resultEl = document.querySelector(`[data-terminal-test-result="${terminalId}"]`);
+      if (!terminalId || !resultEl) return;
+
+      const originalLabel = btn.textContent;
+      btn.disabled = true;
+      btn.textContent = "Teste ...";
+      resultEl.style.display = "none";
+
+      const showResult = (message, kind) => {
+        resultEl.style.display = "block";
+        resultEl.classList.remove("error", "success");
+        resultEl.classList.add(kind === "success" ? "success" : "error");
+        resultEl.textContent = message;
+      };
+
+      try {
+        const response = await fetch(`/admin/terminals/${terminalId}/connection-test`, {
+          method: "POST",
+          headers: {
+            "Accept": "application/json",
+            "X-Requested-With": "XMLHttpRequest",
+          },
+        });
+        const data = await response.json();
+
+        if (!response.ok || !data.success) {
+          const parts = [data.error || "Verbindungstest fehlgeschlagen."];
+          if (data.hint) {
+            parts.push(`Hinweis: ${data.hint}`);
+          }
+          showResult(parts.join(" "), "error");
+          return;
+        }
+
+        const details = [
+          `Status: ${data.device_status || "UNKNOWN"}`,
+          `State: ${data.device_state || "UNKNOWN"}`,
+        ];
+        if (data.connection_type) {
+          details.push(`Verbindung: ${data.connection_type}`);
+        }
+        if (data.battery_level !== null && data.battery_level !== undefined) {
+          details.push(`Akku: ${data.battery_level}%`);
+        }
+        if (data.firmware_version) {
+          details.push(`Firmware: ${data.firmware_version}`);
+        }
+        showResult(`${data.message} (${details.join(" | ")})`, "success");
+      } catch (err) {
+        showResult("Verbindungstest konnte nicht ausgeführt werden.", "error");
+      } finally {
+        btn.disabled = false;
+        btn.textContent = originalLabel;
+      }
+    });
+  });
+</script>
 
 {% endblock %}

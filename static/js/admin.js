@@ -375,6 +375,7 @@ document.addEventListener('click', (e) => {
       getTextContent("price-list-defaults-data"),
       {
         font_size: 1.4,
+        cashier_font_size: 1.0,
         rotation_seconds: 10,
         background_mode: "none",
         background_color: "#0b1222",
@@ -1703,6 +1704,9 @@ document.addEventListener('click', (e) => {
       document.querySelectorAll("[data-price-settings]").forEach((wrapper) => {
         const form = wrapper.closest("form");
         const sharedInput = form ? form.querySelector('input[name="shared_settings"]') : null;
+        const cashierFontMirrorInputs = Array.from(
+          form ? form.querySelectorAll("[data-cashier-font-size-field]") : []
+        );
         const productEditor = form ? form.querySelector("[data-product-editor]") : null;
         const defaults = { ...priceDefaults, ...parseJson(wrapper.dataset.defaults, priceDefaults) };
         const current = parseJson(wrapper.dataset.current, {});
@@ -1713,6 +1717,7 @@ document.addEventListener('click', (e) => {
       const normalizeSettings = (data) => {
         const next = { ...defaults, ...(data || {}) };
         next.font_size = clampNumber(next.font_size, defaults.font_size, 0.6, 6);
+        next.cashier_font_size = clampNumber(next.cashier_font_size, defaults.cashier_font_size, 0.5, 2.5);
         next.rotation_seconds = clampNumber(next.rotation_seconds, defaults.rotation_seconds, 2, 120);
         next.background_mode = ["none", "custom"].includes(next.background_mode) ? next.background_mode : defaults.background_mode;
         next.background_color = sanitizeColor(next.background_color || defaults.background_color || fallbackColor);
@@ -1761,6 +1766,9 @@ document.addEventListener('click', (e) => {
             preview.style.display = "none";
           }
         });
+        cashierFontMirrorInputs.forEach((input) => {
+          input.value = settings.cashier_font_size ?? defaults.cashier_font_size ?? "";
+        });
       };
 
 
@@ -1769,7 +1777,12 @@ document.addEventListener('click', (e) => {
         if (!key) return;
         input.addEventListener("input", () => {
           if (input.type === "number") {
-            settings[key] = clampNumber(input.value, defaults[key], key === "rotation_seconds" ? 2 : 0.6, key === "rotation_seconds" ? 120 : 6);
+            settings[key] = clampNumber(
+              input.value,
+              defaults[key],
+              key === "rotation_seconds" ? 2 : key === "cashier_font_size" ? 0.5 : 0.6,
+              key === "rotation_seconds" ? 120 : key === "cashier_font_size" ? 2.5 : 6
+            );
           } else if (input.type === "color") {
             settings[key] = sanitizeColor(input.value || defaults[key] || fallbackColor);
           } else if (input.tagName === "SELECT") {
@@ -1783,6 +1796,22 @@ document.addEventListener('click', (e) => {
           updateShared();
         });
       });
+
+      if (cashierFontMirrorInputs.length) {
+        cashierFontMirrorInputs.forEach((input) => {
+          input.addEventListener("input", () => {
+            settings.cashier_font_size = clampNumber(
+              input.value,
+              defaults.cashier_font_size,
+              0.5,
+              2.5
+            );
+            settings = normalizeSettings(settings);
+            syncInputs();
+            updateShared();
+          });
+        });
+      }
 
       if (imageSelects.length) {
         imageSelects.forEach((select) => {

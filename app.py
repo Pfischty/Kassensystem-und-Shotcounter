@@ -19,11 +19,12 @@ import sqlite3
 import subprocess
 from collections import Counter
 from dataclasses import dataclass
-from datetime import datetime
+from decimal import Decimal, ROUND_HALF_UP
+from datetime import datetime, timezone
 from io import StringIO
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
-from typing import Dict, Iterable, List
+from typing import Dict, Iterable, List, Optional
 
 from flask import (
     Flask,
@@ -41,19 +42,24 @@ from flask import (
 from flask_migrate import Migrate
 from flask_session import Session
 from flask_sqlalchemy import SQLAlchemy
-from sqlalchemy import event, func, text
+from sqlalchemy import event, func, inspect as sqla_inspect, text
 from sqlalchemy.engine import Engine
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import attributes
 from werkzeug.datastructures import FileStorage
 from werkzeug.utils import secure_filename
 
 from credentials_manager import credentials_manager
+from sumup_client import SumUpClient, SumUpClientError
 
 
 # ---------------------------------------------------------------------------
 # App- und DB-Konfiguration
 # ---------------------------------------------------------------------------
 app = Flask(__name__, instance_relative_config=True)
+
+if os.environ.get("KASSENSYSTEM_TESTING", "").strip().lower() in {"1", "true", "yes", "on"}:
+    app.config["TESTING"] = True
 
 is_production = os.environ.get("FLASK_ENV") == "production" or os.environ.get("APP_ENV") == "production"
 
@@ -79,7 +85,11 @@ if not secret_key:
     secret_key = "dev-secret-key"
 
 app.config["SECRET_KEY"] = secret_key
-app.config.setdefault("SQLALCHEMY_DATABASE_URI", f"sqlite:///{Path(app.instance_path) / 'app.db'}")
+db_uri_env = (os.environ.get("SQLALCHEMY_DATABASE_URI") or "").strip()
+if db_uri_env:
+    app.config["SQLALCHEMY_DATABASE_URI"] = db_uri_env
+else:
+    app.config.setdefault("SQLALCHEMY_DATABASE_URI", f"sqlite:///{Path(app.instance_path) / 'app.db'}")
 app.config.setdefault("SQLALCHEMY_TRACK_MODIFICATIONS", False)
 app.config.setdefault("SESSION_TYPE", "filesystem")
 
@@ -136,6 +146,12 @@ def set_sqlite_pragmas(dbapi_connection, _connection_record) -> None:
 # ---------------------------------------------------------------------------
 # Datenbank-Modelle
 # ---------------------------------------------------------------------------
+def utcnow() -> datetime:
+    """Return UTC timestamp as naive datetime for SQLite compatibility."""
+
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
 class Event(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(150), nullable=False)
@@ -146,8 +162,8 @@ class Event(db.Model):
     shared_settings = db.Column(db.JSON, default=dict)
     kassensystem_settings = db.Column(db.JSON, default=dict)
     shotcounter_settings = db.Column(db.JSON, default=dict)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=utcnow)
+    updated_at = db.Column(db.DateTime, default=utcnow, onupdate=utcnow)
 
 
 class Team(db.Model):
@@ -164,7 +180,7 @@ class Team(db.Model):
 class Order(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     event_id = db.Column(db.Integer, db.ForeignKey("event.id", ondelete="CASCADE"), nullable=False)
-    timestamp = db.Column(db.DateTime, default=datetime.utcnow)
+    timestamp = db.Column(db.DateTime, default=utcnow)
     total = db.Column(db.Integer, nullable=False)
 
     event = db.relationship("Event", backref=db.backref("orders", cascade="all, delete-orphan"))
@@ -196,7 +212,7 @@ class OrderLog(db.Model):
     items = db.Column(db.JSON, default=list)  # [{"name": str, "qty": int, "price": int}]
     actor = db.Column(db.String(200))
     user_agent = db.Column(db.String(300))
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=utcnow)
 
     event = db.relationship("Event", backref=db.backref("order_logs", cascade="all, delete-orphan"))
 
@@ -209,11 +225,157 @@ class ShotLog(db.Model):
     amount = db.Column(db.Integer, nullable=False)
     actor = db.Column(db.String(200))
     user_agent = db.Column(db.String(300))
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=utcnow)
 
     event = db.relationship("Event", backref=db.backref("shot_logs", cascade="all, delete-orphan"))
     team = db.relationship("Team")
 
+
+# ---------------------------------------------------------------------------
+# SumUp Terminal Payments
+# ---------------------------------------------------------------------------
+class Terminal(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(120), nullable=False)
+    sumup_device_id = db.Column(db.String(120), nullable=False)
+    active = db.Column(db.Boolean, default=True, nullable=False)
+    assigned_event_id = db.Column(db.Integer, db.ForeignKey("event.id", ondelete="SET NULL"), nullable=True)
+    created_at = db.Column(db.DateTime, default=utcnow)
+    updated_at = db.Column(db.DateTime, default=utcnow, onupdate=utcnow)
+
+    assigned_event = db.relationship("Event", backref=db.backref("terminal_assignment", uselist=False))
+
+
+class TerminalPayment(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    terminal_id = db.Column(db.Integer, db.ForeignKey("terminal.id", ondelete="CASCADE"), nullable=False)
+    event_id = db.Column(db.Integer, db.ForeignKey("event.id", ondelete="CASCADE"), nullable=False)
+    amount_cents = db.Column(db.Integer, nullable=False)
+    currency = db.Column(db.String(5), default="CHF", nullable=False)
+    status = db.Column(db.String(20), default="pending", nullable=False)
+    sumup_payment_id = db.Column(db.String(120))
+    created_at = db.Column(db.DateTime, default=utcnow)
+    updated_at = db.Column(db.DateTime, default=utcnow, onupdate=utcnow)
+
+    terminal = db.relationship("Terminal")
+    event = db.relationship("Event", backref=db.backref("terminal_payments", cascade="all, delete-orphan"))
+
+
+class PaymentLog(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    terminal_payment_id = db.Column(
+        db.Integer, db.ForeignKey("terminal_payment.id", ondelete="CASCADE"), nullable=False
+    )
+    event = db.Column(db.String(40), nullable=False)
+    payload_json = db.Column(db.JSON, default=dict)
+    created_at = db.Column(db.DateTime, default=utcnow)
+
+    terminal_payment = db.relationship("TerminalPayment", backref=db.backref("logs", cascade="all, delete-orphan"))
+
+
+class TerminalPaymentInitLog(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    event_id = db.Column(db.Integer, db.ForeignKey("event.id", ondelete="SET NULL"), nullable=True)
+    terminal_id = db.Column(db.Integer, db.ForeignKey("terminal.id", ondelete="SET NULL"), nullable=True)
+    terminal_payment_id = db.Column(
+        db.Integer, db.ForeignKey("terminal_payment.id", ondelete="SET NULL"), nullable=True
+    )
+    outcome = db.Column(db.String(20), nullable=False)  # started|rejected|failed|success
+    phase = db.Column(db.String(60), nullable=False)
+    payload_json = db.Column(db.JSON, default=dict)
+    created_at = db.Column(db.DateTime, default=utcnow)
+
+    event = db.relationship("Event")
+    terminal = db.relationship("Terminal")
+    terminal_payment = db.relationship("TerminalPayment")
+
+
+def ensure_runtime_schema() -> None:
+    """Create missing tables for existing installs when migrations were not run."""
+
+    required_tables = tuple(sorted(db.metadata.tables.keys()))
+    try:
+        inspector = sqla_inspect(db.engine)
+        existing_tables = set(inspector.get_table_names())
+        missing = [table for table in required_tables if not inspector.has_table(table)]
+        if not missing:
+            return
+
+        db_uri = str(app.config.get("SQLALCHEMY_DATABASE_URI") or "")
+        if db_uri.startswith("sqlite:///") and db_uri != "sqlite:///:memory:":
+            db_file = Path(db_uri.replace("sqlite:///", "", 1))
+            if not existing_tables and db_file.exists() and db_file.stat().st_size > 0:
+                app.logger.warning(
+                    "Keine Tabellen gefunden, obwohl die SQLite-Datei bereits existiert (DB=%s). "
+                    "Versuche Schema-Selbstheilung trotzdem.",
+                    db_file,
+                )
+
+        app.logger.warning("Fehlende Tabellen erkannt: %s. Erstelle fehlende Tabellen.", ", ".join(missing))
+        db.create_all()
+        inspector = sqla_inspect(db.engine)
+        still_missing = [table for table in required_tables if not inspector.has_table(table)]
+        if still_missing:
+            app.logger.error("Schema-Selbstheilung unvollständig. Fehlend: %s", ", ".join(still_missing))
+            raise RuntimeError(f"Schema-Selbstheilung unvollständig. Fehlend: {', '.join(still_missing)}")
+        app.logger.info("Schema-Selbstheilung abgeschlossen.")
+    except Exception as exc:
+        app.logger.error("Schema-Selbstheilung fehlgeschlagen: %s", exc)
+        raise
+
+
+def ensure_runtime_indexes() -> None:
+    """Create runtime indexes required for concurrency-safe payment state handling."""
+
+    try:
+        db.session.execute(
+            text(
+                "CREATE UNIQUE INDEX IF NOT EXISTS "
+                "ux_terminal_payment_pending_terminal "
+                "ON terminal_payment (terminal_id) "
+                "WHERE status = 'pending'"
+            )
+        )
+        db.session.commit()
+    except Exception as exc:
+        db.session.rollback()
+        app.logger.error("Runtime-Index-Erstellung fehlgeschlagen: %s", exc)
+        raise
+
+
+if not app.config.get("TESTING"):
+    with app.app_context():
+        ensure_runtime_schema()
+        ensure_runtime_indexes()
+
+
+_schema_checked = False
+
+
+def ensure_schema_ready() -> None:
+    """Verify critical schema objects before serving requests."""
+
+    global _schema_checked
+    if _schema_checked:
+        return
+
+    inspector = sqla_inspect(db.engine)
+    if not inspector.has_table("event"):
+        ensure_runtime_schema()
+        inspector = sqla_inspect(db.engine)
+        if not inspector.has_table("event"):
+            raise RuntimeError("Tabelle 'event' fehlt weiterhin nach Schema-Selbstheilung.")
+
+    _schema_checked = True
+
+
+def session_get_or_404(model: type[db.Model], object_id: int):
+    """Load object via SQLAlchemy session or abort with 404."""
+
+    obj = db.session.get(model, object_id)
+    if obj is None:
+        abort(404)
+    return obj
 
 # ---------------------------------------------------------------------------
 # CSV Export Helpers
@@ -232,6 +394,356 @@ def csv_response(filename: str, headers: List[str], rows: Iterable[Iterable[obje
         mimetype="text/csv",
         headers={"Content-Disposition": f"attachment; filename={filename}"},
     )
+
+
+# ---------------------------------------------------------------------------
+# SumUp Helpers
+# ---------------------------------------------------------------------------
+def _sumup_settings() -> Dict[str, Optional[str]]:
+    creds = credentials_manager.get_credentials()
+    configured_merchant = (
+        os.environ.get("SUMUP_MERCHANT_CODE")
+        or os.environ.get("SUMUP_MERCHANT_ID")
+        or creds.get("sumup_merchant_id")
+    )
+    return {
+        "access_token": os.environ.get("SUMUP_ACCESS_TOKEN") or creds.get("sumup_access_token"),
+        "merchant_id": configured_merchant,
+        "base_url": os.environ.get("SUMUP_BASE_URL") or creds.get("sumup_base_url"),
+        "affiliate_key": os.environ.get("SUMUP_AFFILIATE_KEY") or creds.get("sumup_affiliate_key"),
+    }
+
+
+def _extract_merchant_from_profile(profile: Dict[str, object]) -> str:
+    if not isinstance(profile, dict):
+        return ""
+    merchant_profile = profile.get("merchant_profile")
+    merchant_profile = merchant_profile if isinstance(merchant_profile, dict) else {}
+    return str(
+        profile.get("merchant_code")
+        or profile.get("merchant_id")
+        or merchant_profile.get("merchant_code")
+        or merchant_profile.get("merchant_id")
+        or ""
+    ).strip()
+
+
+def _sumup_client() -> SumUpClient:
+    settings = _sumup_settings()
+    access_token = settings.get("access_token")
+    configured_merchant = (settings.get("merchant_id") or "").strip()
+    base_url = settings.get("base_url") or "https://api.sumup.com"
+    affiliate_key = settings.get("affiliate_key")
+    if not access_token:
+        raise SumUpClientError(
+            "SumUp Access Token fehlt.",
+            error_type="config",
+            hint="Im Adminbereich unter 'SumUp Zugangsdaten' den Access Token hinterlegen.",
+        )
+    if not configured_merchant:
+        raise SumUpClientError(
+            "SumUp Merchant Code fehlt.",
+            error_type="config",
+            hint="Bitte im Adminbereich den Verbindungstest ausführen, damit der Merchant Code aus dem Token übernommen wird.",
+        )
+
+    return SumUpClient(
+        access_token=access_token,
+        merchant_id=configured_merchant,
+        base_url=base_url,
+        affiliate_key=affiliate_key,
+    )
+
+
+def _sumup_error_payload(exc: SumUpClientError, *, context: str) -> Dict[str, object]:
+    message = str(exc) or "Unbekannter SumUp Fehler"
+    hint = exc.hint
+    if not hint:
+        if exc.error_type == "config":
+            hint = "Bitte SumUp Zugangsdaten im Adminbereich prüfen und speichern."
+        elif exc.error_type == "network":
+            hint = "Bitte Netzwerk, DNS und Internetzugriff des Geräts prüfen."
+        elif exc.error_type == "decode":
+            hint = "SumUp hat eine unerwartete Antwort geliefert. Bitte erneut versuchen."
+        elif exc.status_code in {401, 403}:
+            hint = "Token/Merchant-ID prüfen und sicherstellen, dass die API-Berechtigung aktiv ist."
+        elif exc.status_code == 404:
+            hint = "Reader-ID (z. B. rdr_...), Merchant-Code und Base URL prüfen."
+        elif exc.status_code == 429:
+            hint = "Zu viele Anfragen. Kurz warten und erneut versuchen."
+
+    payload: Dict[str, object] = {
+        "success": False,
+        "error": message,
+        "context": context,
+        "error_type": exc.error_type,
+        "hint": hint,
+    }
+    if exc.status_code is not None:
+        payload["sumup_status_code"] = exc.status_code
+    if exc.detail:
+        payload["technical_detail"] = exc.detail[:800]
+    return payload
+
+
+def _sumup_http_status_for_error(exc: SumUpClientError) -> int:
+    if exc.error_type == "config":
+        return 400
+    if exc.status_code in {401, 403}:
+        return 401
+    if exc.status_code in {404, 429}:
+        return 502
+    return 502
+
+
+def _amount_to_cents(amount: int | float | str) -> int:
+    value = Decimal(str(amount)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    return int(value * 100)
+
+
+def _parse_terminal_payment_request(payload: Dict[str, object]) -> tuple[Optional[int], Optional[int], str, Optional[Response]]:
+    """Validate and normalize terminal payment request payload."""
+
+    try:
+        terminal_id = int(payload.get("terminal_id") or 0)
+    except (TypeError, ValueError):
+        return None, None, "CHF", (jsonify({"success": False, "error": "Terminal-ID ist ungültig."}), 400)
+
+    try:
+        amount_cents = int(payload.get("amount_cents") or 0)
+    except (TypeError, ValueError):
+        return None, None, "CHF", (jsonify({"success": False, "error": "Betrag ist ungültig."}), 400)
+
+    currency_raw = payload.get("currency")
+    currency = (str(currency_raw).upper() if currency_raw is not None else "CHF").strip() or "CHF"
+
+    if terminal_id <= 0:
+        return None, None, currency, (jsonify({"success": False, "error": "Terminal fehlt."}), 400)
+    if amount_cents <= 0:
+        return None, None, currency, (jsonify({"success": False, "error": "Betrag muss größer 0 sein."}), 400)
+
+    return terminal_id, amount_cents, currency, None
+
+
+def _log_terminal_payment_event(payment: TerminalPayment, event_name: str, payload: Dict) -> None:
+    db.session.add(PaymentLog(terminal_payment_id=payment.id, event=event_name, payload_json=payload))
+
+
+def _log_terminal_payment_init_event(
+    *,
+    event: Optional[Event],
+    terminal: Optional[Terminal],
+    payment: Optional[TerminalPayment],
+    phase: str,
+    outcome: str,
+    payload: Dict,
+    commit_now: bool = False,
+) -> None:
+    db.session.add(
+        TerminalPaymentInitLog(
+            event_id=event.id if event else None,
+            terminal_id=terminal.id if terminal else None,
+            terminal_payment_id=payment.id if payment else None,
+            phase=phase,
+            outcome=outcome,
+            payload_json=payload,
+        )
+    )
+    if commit_now:
+        try:
+            db.session.commit()
+        except SQLAlchemyError as exc:
+            db.session.rollback()
+            app.logger.warning("Init-Log konnte nicht gespeichert werden (%s): %s", phase, exc)
+
+
+def _map_sumup_status(status: Optional[str]) -> str:
+    if not status:
+        return "pending"
+    normalized = status.strip().lower()
+    if normalized in {"paid", "successful", "success", "completed"}:
+        return "success"
+    if normalized in {"failed", "declined", "error"}:
+        return "failed"
+    if normalized in {"aborted", "cancelled", "canceled"}:
+        return "aborted"
+    if normalized in {"timeout", "timed_out", "expired"}:
+        return "timeout"
+    return "pending"
+
+
+def _terminal_payment_timeout_seconds() -> int:
+    return int(os.environ.get("SUMUP_PAYMENT_TIMEOUT_SECONDS", "120"))
+
+
+def _status_not_found_abort_grace_seconds() -> int:
+    return int(os.environ.get("SUMUP_STATUS_NOT_FOUND_ABORT_GRACE_SECONDS", "12"))
+
+
+def _maybe_infer_aborted_from_reader_state(
+    payment: TerminalPayment,
+    *,
+    client: SumUpClient,
+    elapsed_seconds: float,
+) -> None:
+    """Infer aborted state when SumUp status lookup is not available but reader is idle."""
+
+    if elapsed_seconds < _status_not_found_abort_grace_seconds():
+        return
+    if not getattr(payment, "terminal", None):
+        return
+    if not hasattr(client, "get_reader_status"):
+        return
+
+    try:
+        reader_status = client.get_reader_status(payment.terminal.sumup_device_id)
+    except SumUpClientError as exc:
+        _log_terminal_payment_event(
+            payment,
+            "reader_status_error",
+            {"error": str(exc), "status_code": exc.status_code},
+        )
+        return
+
+    live = reader_status.get("data") if isinstance(reader_status.get("data"), dict) else {}
+    live_state = str(live.get("state") or "").strip().upper()
+    live_status = str(live.get("status") or "").strip().upper()
+
+    if live_state == "IDLE" and live_status in {"ONLINE", ""}:
+        payment.status = "aborted"
+        _log_terminal_payment_event(
+            payment,
+            "status_inferred_aborted",
+            {
+                "reason": "status_not_found_reader_idle",
+                "elapsed": elapsed_seconds,
+                "reader_state": live_state,
+                "reader_status": live_status,
+            },
+        )
+
+
+def _reconcile_pending_terminal_payment(payment: TerminalPayment, *, client: Optional[SumUpClient] = None) -> str:
+    """Refresh a pending terminal payment status from SumUp and timeout heuristics."""
+
+    if payment.status != "pending":
+        return payment.status
+
+    elapsed = (utcnow() - payment.created_at).total_seconds()
+    if elapsed >= _terminal_payment_timeout_seconds():
+        payment.status = "timeout"
+        _log_terminal_payment_event(payment, "timeout", {"elapsed": elapsed})
+        return payment.status
+
+    if not payment.sumup_payment_id:
+        return payment.status
+
+    sumup_client = client or _sumup_client()
+    try:
+        response = sumup_client.get_payment_status(payment.sumup_payment_id)
+        new_status = _map_sumup_status(response.status)
+        if new_status != payment.status:
+            payment.status = new_status
+            _log_terminal_payment_event(payment, "status_update", response.raw)
+    except SumUpClientError as exc:
+        if exc.status_code == 404:
+            # Reader checkouts may be accepted before a transaction lookup is available.
+            _log_terminal_payment_event(
+                payment,
+                "status_not_found",
+                {"error": str(exc), "status_code": exc.status_code},
+            )
+            _maybe_infer_aborted_from_reader_state(
+                payment,
+                client=sumup_client,
+                elapsed_seconds=elapsed,
+            )
+            return payment.status
+        raise
+
+    return payment.status
+
+
+def _resolve_terminal_assignment(event: Event) -> tuple[Optional[Terminal], Optional[Terminal]]:
+    assigned_terminal = Terminal.query.filter_by(assigned_event_id=event.id).first()
+    if assigned_terminal and assigned_terminal.active:
+        return assigned_terminal, None
+    if assigned_terminal and not assigned_terminal.active:
+        return None, assigned_terminal
+    return None, None
+
+
+def _available_terminals_for_event(event: Event) -> List[Terminal]:
+    assigned_terminal, _ = _resolve_terminal_assignment(event)
+    if assigned_terminal:
+        return []
+    return (
+        Terminal.query.filter_by(active=True, assigned_event_id=None)
+        .order_by(Terminal.name.asc())
+        .all()
+    )
+
+
+def _assign_terminal_to_event(event: Event, terminal_id: Optional[int]) -> None:
+    Terminal.query.filter_by(assigned_event_id=event.id).update({"assigned_event_id": None})
+    if not terminal_id:
+        return
+    terminal = db.session.get(Terminal, terminal_id)
+    if not terminal:
+        raise ValueError("Terminal nicht gefunden.")
+    terminal.assigned_event_id = event.id
+
+
+def _validate_terminal_payload(name: str, device_id: str, *, terminal_id: Optional[int] = None) -> tuple[str, str]:
+    terminal_name = (name or "").strip()
+    sumup_device_id = (device_id or "").strip()
+
+    if not terminal_name:
+        raise ValueError("Terminalname ist erforderlich.")
+    if len(terminal_name) < 2:
+        raise ValueError("Terminalname muss mindestens 2 Zeichen lang sein.")
+    if len(terminal_name) > 120:
+        raise ValueError("Terminalname darf maximal 120 Zeichen lang sein.")
+
+    if not sumup_device_id:
+        raise ValueError("SumUp Device-ID ist erforderlich.")
+    if len(sumup_device_id) < 6:
+        raise ValueError("SumUp Device-ID muss mindestens 6 Zeichen lang sein.")
+    if len(sumup_device_id) > 120:
+        raise ValueError("SumUp Device-ID darf maximal 120 Zeichen lang sein.")
+
+    allowed = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._:-")
+    if any(char not in allowed for char in sumup_device_id):
+        raise ValueError("Ungültige Device-ID. Erlaubt sind Buchstaben, Zahlen sowie . _ : -")
+
+    existing_name = Terminal.query.filter(func.lower(Terminal.name) == terminal_name.lower())
+    existing_device = Terminal.query.filter(func.lower(Terminal.sumup_device_id) == sumup_device_id.lower())
+    if terminal_id is not None:
+        existing_name = existing_name.filter(Terminal.id != terminal_id)
+        existing_device = existing_device.filter(Terminal.id != terminal_id)
+
+    if existing_name.first():
+        raise ValueError("Ein Terminal mit diesem Namen existiert bereits.")
+    if existing_device.first():
+        raise ValueError("Diese SumUp Device-ID ist bereits einem anderen Terminal zugeordnet.")
+
+    return terminal_name, sumup_device_id
+
+
+def _build_unique_terminal_name(base_name: str, *, exclude_terminal_id: Optional[int] = None) -> str:
+    base = (base_name or "").strip() or "SumUp Reader"
+    candidate = base[:120]
+    index = 2
+
+    while True:
+        query = Terminal.query.filter(func.lower(Terminal.name) == candidate.lower())
+        if exclude_terminal_id is not None:
+            query = query.filter(Terminal.id != exclude_terminal_id)
+        if not query.first():
+            return candidate
+        suffix = f" ({index})"
+        candidate = f"{base[: max(1, 120 - len(suffix))]}{suffix}"
+        index += 1
 
 
 # ---------------------------------------------------------------------------
@@ -308,6 +820,7 @@ DEFAULT_SHOTCOUNTER_SETTINGS: Dict[str, int | float | str] = {
 
 DEFAULT_PRICE_LIST_SETTINGS: Dict[str, int | float | str | list] = {
     "font_size": 1.4,  # rem
+    "cashier_font_size": 1.0,  # rem scale for cashier page
     "rotation_seconds": 10,
     "background_mode": "none",  # none | custom
     "background_color": "#0b1222",
@@ -315,6 +828,16 @@ DEFAULT_PRICE_LIST_SETTINGS: Dict[str, int | float | str | list] = {
 }
 
 HEX_COLOR_PATTERN = re.compile(r"^#([0-9a-fA-F]{6}|[0-9a-fA-F]{3})$")
+
+
+def _coerce_bool(value) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "ja", "on"}
+    return False
 
 
 def parse_json_field(raw_value: str | None) -> Dict:
@@ -427,6 +950,19 @@ def save_price_list_image(file: FileStorage | None, event_id: int) -> str | None
     if not file or not file.filename:
         return None
 
+    if not allowed_file(file.filename):
+        return None
+
+    ext = file.filename.rsplit(".", 1)[1].lower()
+    filename = f"pl_{event_id}_{secrets.token_hex(8)}.{ext}"
+    filepath = Path(app.config["UPLOAD_FOLDER"]) / filename
+    try:
+        file.save(str(filepath))
+        return filename
+    except Exception as exc:
+        app.logger.error("Fehler beim Speichern des Preisliste-Hintergrundbildes: %s", exc)
+        return None
+
 
 def save_managed_image(file: FileStorage | None) -> str | None:
     if not file or not file.filename:
@@ -521,17 +1057,6 @@ def _remove_image_references(filename: str) -> None:
 
     if changed:
         db.session.commit()
-    if not allowed_file(file.filename):
-        return None
-    ext = file.filename.rsplit(".", 1)[1].lower()
-    filename = f"pl_{event_id}_{secrets.token_hex(8)}.{ext}"
-    filepath = Path(app.config["UPLOAD_FOLDER"]) / filename
-    try:
-        file.save(str(filepath))
-        return filename
-    except Exception as exc:
-        app.logger.error("Fehler beim Speichern des Preisliste-Hintergrundbildes: %s", exc)
-        return None
 
 
 def validate_shotcounter_settings(raw: dict | None) -> Dict[str, int | float | str]:
@@ -577,6 +1102,9 @@ def validate_price_list_settings(raw: dict | None) -> Dict[str, int | float | st
     incoming = raw if isinstance(raw, dict) else {}
     settings["font_size"] = _sanitize_font_size(
         incoming.get("font_size"), float(DEFAULT_PRICE_LIST_SETTINGS["font_size"])
+    )
+    settings["cashier_font_size"] = _sanitize_font_size(
+        incoming.get("cashier_font_size"), float(DEFAULT_PRICE_LIST_SETTINGS["cashier_font_size"])
     )
     settings["rotation_seconds"] = _sanitize_rotation_seconds(
         incoming.get("rotation_seconds"), int(DEFAULT_PRICE_LIST_SETTINGS["rotation_seconds"])
@@ -658,7 +1186,7 @@ def resolve_button_config(event: Event | None) -> List[ButtonConfig]:
                     or default_color_lookup.get(item.get("css_class", ""))
                     or "#1f2a44",
                     category=item.get("category", "Standard"),
-                    has_depot=item.get("has_depot") is True,
+                    has_depot=_coerce_bool(item.get("has_depot")),
                     depot_price=depot_price,
                     priority=priority,
                 )
@@ -720,7 +1248,7 @@ def validate_and_normalize_buttons(settings: Dict | None) -> Dict:
                 "css_class": item.get("css_class") or "custom",
                 "color": item.get("color"),
                 "category": item.get("category") or "Standard",
-                "has_depot": item.get("has_depot") is True,
+                "has_depot": _coerce_bool(item.get("has_depot")),
                 "priority": priority,
             }
         )
@@ -825,6 +1353,23 @@ def _admin_auth_required() -> Response:
 
 
 @app.before_request
+def enforce_schema_ready():
+    if request.endpoint == "static":
+        return None
+    try:
+        ensure_schema_ready()
+    except (RuntimeError, SQLAlchemyError) as exc:
+        app.logger.error("Datenbankschema nicht bereit: %s", exc)
+        accept = request.headers.get("Accept", "")
+        is_xhr = request.headers.get("X-Requested-With") == "XMLHttpRequest"
+        message = "Datenbankschema fehlt oder ist beschädigt. Bitte Anwendung neu starten und Logs prüfen."
+        if is_xhr or "application/json" in accept:
+            return jsonify({"success": False, "error": message}), 500
+        return Response(message, 500)
+    return None
+
+
+@app.before_request
 def enforce_admin_auth():
     if not request.path.startswith("/admin"):
         return None
@@ -910,7 +1455,7 @@ def health():
 
 @app.route("/events/<int:event_id>")
 def event_detail(event_id: int):
-    event = Event.query.get_or_404(event_id)
+    event = session_get_or_404(Event, event_id)
     stats = event_statistics(event)
     label_map = {btn.name: (btn.label or btn.name) for btn in resolve_button_config(event)}
     order_logs = (
@@ -944,7 +1489,7 @@ def event_detail(event_id: int):
 
 @app.route("/events/<int:event_id>/export/order_logs.csv")
 def export_order_logs(event_id: int):
-    event = Event.query.get_or_404(event_id)
+    event = session_get_or_404(Event, event_id)
     logs = OrderLog.query.filter_by(event_id=event.id).order_by(OrderLog.created_at.asc()).all()
     label_map = {btn.name: (btn.label or btn.name) for btn in resolve_button_config(event)}
 
@@ -979,7 +1524,7 @@ def export_order_logs(event_id: int):
 
 @app.route("/events/<int:event_id>/export/shot_logs.csv")
 def export_shot_logs(event_id: int):
-    event = Event.query.get_or_404(event_id)
+    event = session_get_or_404(Event, event_id)
     logs = ShotLog.query.filter_by(event_id=event.id).order_by(ShotLog.created_at.asc()).all()
 
     rows = [
@@ -1001,7 +1546,7 @@ def export_shot_logs(event_id: int):
 
 @app.route("/events/<int:event_id>/export/drink_sales.csv")
 def export_drink_sales(event_id: int):
-    event = Event.query.get_or_404(event_id)
+    event = session_get_or_404(Event, event_id)
     label_map = {btn.name: (btn.label or btn.name) for btn in resolve_button_config(event)}
     sales = (
         db.session.query(DrinkSale.name, func.coalesce(func.sum(DrinkSale.quantity), 0))
@@ -1022,6 +1567,8 @@ def export_drink_sales(event_id: int):
 def admin():
     events = Event.query.order_by(Event.created_at.desc()).all()
     active_event = get_active_event()
+    terminals = Terminal.query.order_by(Terminal.name.asc()).all()
+    sumup_settings = _sumup_settings()
     default_button_presets = [button.__dict__ for button in DEFAULT_BUTTONS]
     button_map = {event.id: [btn.__dict__ for btn in resolve_button_config(event)] for event in events}
     kass_settings = {event.id: {**(event.kassensystem_settings or {}), "items": button_map[event.id]} for event in events}
@@ -1052,6 +1599,8 @@ def admin():
         "admin.html",
         events=events,
         active_event=active_event,
+        terminals=terminals,
+        sumup_settings=sumup_settings,
         default_buttons=default_button_presets,
         event_buttons=button_map,
         kass_settings=kass_settings,
@@ -1067,8 +1616,9 @@ def admin():
 
 @app.route("/admin/events/<int:event_id>/settings")
 def admin_event_settings(event_id: int):
-    event = Event.query.get_or_404(event_id)
+    event = session_get_or_404(Event, event_id)
     events = Event.query.order_by(Event.created_at.desc()).all()
+    terminals = Terminal.query.order_by(Terminal.name.asc()).all()
     default_button_presets = [button.__dict__ for button in DEFAULT_BUTTONS]
     button_map = {evt.id: [btn.__dict__ for btn in resolve_button_config(evt)] for evt in events}
     kass_settings = {evt.id: {**(evt.kassensystem_settings or {}), "items": button_map[evt.id]} for evt in events}
@@ -1094,6 +1644,7 @@ def admin_event_settings(event_id: int):
         "event_settings.html",
         event=event,
         events=events,
+        terminals=terminals,
         default_buttons=default_button_presets,
         event_buttons=button_map,
         kass_settings=kass_settings,
@@ -1255,9 +1806,11 @@ def create_event():
 
 @app.route("/admin/events/<int:event_id>/update", methods=["POST"])
 def update_event(event_id: int):
-    event = Event.query.get_or_404(event_id)
+    event = session_get_or_404(Event, event_id)
     event.kassensystem_enabled = bool(request.form.get("kassensystem_enabled"))
     event.shotcounter_enabled = bool(request.form.get("shotcounter_enabled"))
+    terminal_id_raw = (request.form.get("assigned_terminal_id") or "").strip()
+    terminal_id = int(terminal_id_raw) if terminal_id_raw else None
 
     is_ajax = request.headers.get("X-Requested-With") == "XMLHttpRequest"
 
@@ -1270,6 +1823,7 @@ def update_event(event_id: int):
             parse_json_field(request.form.get("kassensystem_settings"))
         )
         event.shotcounter_settings = validate_shotcounter_settings(parse_json_field(request.form.get("shotcounter_settings")))
+        _assign_terminal_to_event(event, terminal_id)
     except ValueError as exc:
         if is_ajax:
             return jsonify({"success": False, "error": str(exc)}), 400
@@ -1284,9 +1838,642 @@ def update_event(event_id: int):
     return redirect(_redirect_target("admin"))
 
 
+@app.route("/admin/terminals", methods=["POST"])
+def create_terminal():
+    name = request.form.get("name") or ""
+    device_id = request.form.get("sumup_device_id") or ""
+    active = bool(request.form.get("active"))
+    try:
+        terminal_name, sumup_device_id = _validate_terminal_payload(name, device_id)
+    except ValueError as exc:
+        flash(str(exc), "error")
+        return redirect(url_for("admin"))
+    terminal = Terminal(name=terminal_name, sumup_device_id=sumup_device_id, active=active)
+    db.session.add(terminal)
+    db.session.commit()
+    flash("Terminal wurde angelegt.", "success")
+    app.logger.info("Terminal angelegt: %s", terminal_name)
+    return redirect(url_for("admin"))
+
+
+@app.route("/admin/terminals/<int:terminal_id>/update", methods=["POST"])
+def update_terminal(terminal_id: int):
+    terminal = session_get_or_404(Terminal, terminal_id)
+    name = request.form.get("name") or ""
+    device_id = request.form.get("sumup_device_id") or ""
+    try:
+        terminal_name, sumup_device_id = _validate_terminal_payload(name, device_id, terminal_id=terminal.id)
+    except ValueError as exc:
+        flash(str(exc), "error")
+        return redirect(url_for("admin"))
+    terminal.name = terminal_name
+    terminal.sumup_device_id = sumup_device_id
+    terminal.active = bool(request.form.get("active"))
+    db.session.commit()
+    flash("Terminal wurde aktualisiert.", "success")
+    app.logger.info("Terminal aktualisiert: %s", terminal.name)
+    return redirect(url_for("admin"))
+
+
+@app.route("/admin/terminals/<int:terminal_id>/delete", methods=["POST"])
+def delete_terminal(terminal_id: int):
+    terminal = session_get_or_404(Terminal, terminal_id)
+    terminal_name = terminal.name
+    db.session.delete(terminal)
+    db.session.commit()
+    flash("Terminal wurde gelöscht.", "success")
+    app.logger.info("Terminal gelöscht: %s", terminal_name)
+    return redirect(url_for("admin"))
+
+
+@app.route("/admin/sumup-credentials", methods=["POST"])
+def update_sumup_credentials():
+    access_token = (request.form.get("sumup_access_token") or "").strip() or None
+    merchant_id = (request.form.get("sumup_merchant_id") or "").strip() or None
+    base_url = (request.form.get("sumup_base_url") or "").strip() or None
+    affiliate_key = (request.form.get("sumup_affiliate_key") or "").strip() or None
+
+    if base_url and not base_url.startswith(("http://", "https://")):
+        flash("SumUp Base URL muss mit http:// oder https:// beginnen.", "error")
+        return redirect(url_for("admin"))
+
+    success, error = credentials_manager.update_sumup_credentials(
+        access_token=access_token,
+        merchant_id=merchant_id,
+        base_url=base_url,
+        affiliate_key=affiliate_key,
+    )
+    if not success:
+        flash(f"SumUp Zugangsdaten konnten nicht gespeichert werden: {error}", "error")
+        return redirect(url_for("admin"))
+
+    flash("SumUp Zugangsdaten wurden gespeichert.", "success")
+    app.logger.info("SumUp Zugangsdaten aktualisiert")
+    return redirect(url_for("admin"))
+
+
+@app.route("/admin/sumup-connection-test", methods=["POST"])
+def admin_sumup_connection_test():
+    settings = _sumup_settings()
+    access_token = settings.get("access_token")
+    configured_merchant = (settings.get("merchant_id") or "").strip()
+    base_url = settings.get("base_url") or "https://api.sumup.com"
+    affiliate_key = settings.get("affiliate_key")
+
+    if not access_token:
+        exc = SumUpClientError(
+            "SumUp Access Token fehlt.",
+            error_type="config",
+            hint="Im Adminbereich unter 'SumUp Zugangsdaten' den Access Token hinterlegen.",
+        )
+        payload = _sumup_error_payload(exc, context="sumup_connection_test")
+        return jsonify(payload), _sumup_http_status_for_error(exc)
+
+    try:
+        # Use a bootstrap client without requiring a configured merchant,
+        # so we can derive the merchant from the token and persist it.
+        client = SumUpClient(
+            access_token=access_token,
+            merchant_id=configured_merchant or None,
+            base_url=base_url,
+            affiliate_key=affiliate_key,
+        )
+        profile = client.get_profile()
+    except SumUpClientError as exc:
+        payload = _sumup_error_payload(exc, context="sumup_connection_test")
+        app.logger.warning("SumUp Verbindungstest fehlgeschlagen: %s", payload.get("error"))
+        return jsonify(payload), _sumup_http_status_for_error(exc)
+
+    api_merchant = _extract_merchant_from_profile(profile)
+    persisted_merchant = None
+    warning = None
+
+    if api_merchant and api_merchant != configured_merchant:
+        success, error = credentials_manager.update_sumup_credentials(merchant_id=api_merchant)
+        if success:
+            configured_merchant = api_merchant
+            persisted_merchant = api_merchant
+            app.logger.info("SumUp Merchant Code aus Token übernommen: %s", api_merchant)
+        else:
+            warning = f"Merchant Code konnte nicht gespeichert werden: {error}"
+
+    if not warning and configured_merchant and api_merchant and configured_merchant != api_merchant:
+        warning = (
+            "Konfigurierter Merchant stimmt nicht mit dem Token-Merchant überein. "
+            "Bitte Einstellungen prüfen."
+        )
+
+    if not warning and not configured_merchant and not api_merchant:
+        warning = "Merchant Code konnte nicht aus dem Token bestimmt werden. Bitte manuell eintragen."
+
+    return jsonify(
+        {
+            "success": True,
+            "message": "Verbindung zu SumUp erfolgreich.",
+            "configured_merchant_id": configured_merchant or None,
+            "api_merchant_id": api_merchant or None,
+            "persisted_merchant_id": persisted_merchant,
+            "warning": warning,
+        }
+    )
+
+
+@app.route("/admin/sumup-readers-sync", methods=["POST"])
+def admin_sumup_readers_sync():
+    try:
+        client = _sumup_client()
+        readers = client.list_readers()
+    except SumUpClientError as exc:
+        payload = _sumup_error_payload(exc, context="sumup_readers_sync")
+        app.logger.warning("SumUp Reader-Sync fehlgeschlagen: %s", payload.get("error"))
+        return jsonify(payload), _sumup_http_status_for_error(exc)
+
+    created = 0
+    updated = 0
+    reactivated = 0
+    scanned: List[Dict[str, object]] = []
+
+    for reader in readers:
+        if not isinstance(reader, dict):
+            continue
+        reader_id = str(reader.get("id") or "").strip()
+        if not reader_id:
+            continue
+
+        details = reader.get("details") if isinstance(reader.get("details"), dict) else {}
+        preferred_name = (
+            str(reader.get("name") or "").strip()
+            or str(details.get("identifier") or "").strip()
+            or f"Reader {reader_id[-6:]}"
+        )
+
+        existing = Terminal.query.filter(func.lower(Terminal.sumup_device_id) == reader_id.lower()).first()
+        if existing:
+            changed = False
+            if not existing.active:
+                existing.active = True
+                reactivated += 1
+                changed = True
+            if not existing.name.strip():
+                existing.name = _build_unique_terminal_name(preferred_name, exclude_terminal_id=existing.id)
+                changed = True
+            if changed:
+                updated += 1
+            terminal_name = existing.name
+        else:
+            terminal_name = _build_unique_terminal_name(preferred_name)
+            db.session.add(Terminal(name=terminal_name, sumup_device_id=reader_id, active=True))
+            created += 1
+
+        scanned.append(
+            {
+                "reader_id": reader_id,
+                "name": terminal_name,
+                "model": details.get("model"),
+                "identifier": details.get("identifier"),
+                "status": details.get("status"),
+            }
+        )
+
+    db.session.commit()
+
+    return jsonify(
+        {
+            "success": True,
+            "message": "Reader-Sync abgeschlossen.",
+            "scanned_count": len(scanned),
+            "created_count": created,
+            "updated_count": updated,
+            "reactivated_count": reactivated,
+            "readers": scanned,
+        }
+    )
+
+
+@app.route("/admin/sumup-readers-status")
+def admin_sumup_readers_status():
+    try:
+        client = _sumup_client()
+        readers = client.list_readers()
+    except SumUpClientError as exc:
+        payload = _sumup_error_payload(exc, context="sumup_readers_status")
+        app.logger.warning("SumUp Reader-Status fehlgeschlagen: %s", payload.get("error"))
+        return jsonify(payload), _sumup_http_status_for_error(exc)
+
+    local_terminals = {
+        str(terminal.sumup_device_id or "").strip().lower(): terminal
+        for terminal in Terminal.query.order_by(Terminal.name.asc()).all()
+    }
+
+    status_items: List[Dict[str, object]] = []
+    for reader in readers:
+        if not isinstance(reader, dict):
+            continue
+        reader_id = str(reader.get("id") or "").strip()
+        if not reader_id:
+            continue
+
+        details = reader.get("details") if isinstance(reader.get("details"), dict) else {}
+        live = {}
+        status_error = None
+        try:
+            live_response = client.get_reader_status(reader_id)
+            live = live_response.get("data") if isinstance(live_response.get("data"), dict) else {}
+        except SumUpClientError as exc:
+            status_error = str(exc)
+
+        local_terminal = local_terminals.get(reader_id.lower())
+        status_items.append(
+            {
+                "reader_id": reader_id,
+                "reader_name": str(reader.get("name") or "").strip() or None,
+                "model": details.get("model"),
+                "identifier": details.get("identifier"),
+                "account_status": details.get("status"),
+                "live_status": live.get("status"),
+                "live_state": live.get("state"),
+                "battery_level": live.get("battery_level"),
+                "connection_type": live.get("connection_type"),
+                "firmware_version": live.get("firmware_version"),
+                "last_activity": live.get("last_activity"),
+                "status_error": status_error,
+                "local_terminal_id": local_terminal.id if local_terminal else None,
+                "local_terminal_name": local_terminal.name if local_terminal else None,
+                "local_terminal_active": local_terminal.active if local_terminal else None,
+            }
+        )
+
+    return jsonify(
+        {
+            "success": True,
+            "message": "Reader-Status geladen.",
+            "count": len(status_items),
+            "readers": status_items,
+        }
+    )
+
+
+@app.route("/admin/terminal-payments/logs")
+def admin_terminal_payment_logs():
+    try:
+        limit = int(request.args.get("limit", 30))
+    except (TypeError, ValueError):
+        return jsonify({"success": False, "error": "Ungültiger Limit-Wert."}), 400
+
+    limit = max(1, min(limit, 200))
+    include_live = str(request.args.get("include_live") or "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+    include_failed_details = str(request.args.get("include_failed_details") or "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+    init_orphan_only = str(request.args.get("init_orphan_only") or "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+    status_values_raw = (request.args.get("status") or "").strip()
+    status_values = [part.strip().lower() for part in status_values_raw.split(",") if part.strip()]
+    allowed_status = {"pending", "success", "failed", "aborted", "timeout"}
+    invalid_status = [value for value in status_values if value not in allowed_status]
+    if invalid_status:
+        return jsonify({"success": False, "error": f"Ungültiger Status-Filter: {', '.join(invalid_status)}"}), 400
+
+    terminal_id_raw = request.args.get("terminal_id")
+    terminal_id: Optional[int] = None
+    if terminal_id_raw not in (None, ""):
+        try:
+            terminal_id = int(terminal_id_raw)
+        except (TypeError, ValueError):
+            return jsonify({"success": False, "error": "Ungültige Terminal-ID."}), 400
+
+    query = TerminalPayment.query.order_by(TerminalPayment.id.desc())
+    if terminal_id is not None:
+        query = query.filter(TerminalPayment.terminal_id == terminal_id)
+    if status_values:
+        query = query.filter(TerminalPayment.status.in_(status_values))
+
+    payments = query.limit(limit).all()
+    payment_ids = [payment.id for payment in payments]
+
+    init_query = TerminalPaymentInitLog.query.order_by(TerminalPaymentInitLog.id.desc())
+    if terminal_id is not None:
+        init_query = init_query.filter(TerminalPaymentInitLog.terminal_id == terminal_id)
+    if init_orphan_only:
+        init_query = init_query.filter(TerminalPaymentInitLog.terminal_payment_id.is_(None))
+    recent_init_attempts = init_query.limit(limit).all()
+    orphan_init_attempt_count = sum(1 for log in recent_init_attempts if log.terminal_payment_id is None)
+
+    sumup_client: Optional[SumUpClient] = None
+    live_sync_error: Optional[Dict[str, object]] = None
+    if include_live:
+        try:
+            sumup_client = _sumup_client()
+        except SumUpClientError as exc:
+            live_sync_error = _sumup_error_payload(exc, context="terminal_payment_logs_live")
+
+    logs_by_payment: Dict[int, List[PaymentLog]] = {}
+    if payment_ids:
+        logs = (
+            PaymentLog.query.filter(PaymentLog.terminal_payment_id.in_(payment_ids))
+            .order_by(PaymentLog.id.desc())
+            .all()
+        )
+        for log in logs:
+            logs_by_payment.setdefault(log.terminal_payment_id, []).append(log)
+
+    items: List[Dict[str, object]] = []
+    status_counts: Counter[str] = Counter()
+    global_event_counts: Counter[str] = Counter()
+    total_logs = 0
+    total_error_events = 0
+    live_checked_count = 0
+    live_error_count = 0
+    live_mismatch_count = 0
+
+    for payment in payments:
+        status_counts[payment.status or "unknown"] += 1
+        payment_logs = logs_by_payment.get(payment.id, [])
+        payment_event_counts: Counter[str] = Counter(
+            log.event for log in payment_logs if isinstance(log.event, str) and log.event
+        )
+        global_event_counts.update(payment_event_counts)
+        total_logs += len(payment_logs)
+        error_events = (
+            payment_event_counts.get("error", 0)
+            + payment_event_counts.get("status_not_found", 0)
+            + payment_event_counts.get("reader_status_error", 0)
+        )
+        total_error_events += error_events
+        latest_log = payment_logs[0] if payment_logs else None
+        chronological_logs = list(reversed(payment_logs))
+
+        diagnostics = None
+        if include_failed_details:
+            diagnostic_error_events = {"error", "status_not_found", "reader_status_error", "status_inferred_aborted"}
+            first_error_at = None
+            last_error_at = None
+            error_messages: List[str] = []
+            seen_messages = set()
+            status_codes: List[int] = []
+            seen_codes = set()
+
+            for log in chronological_logs:
+                payload = log.payload_json if isinstance(log.payload_json, dict) else {}
+                if log.event in diagnostic_error_events:
+                    ts = log.created_at.isoformat() if log.created_at else None
+                    if first_error_at is None:
+                        first_error_at = ts
+                    last_error_at = ts
+
+                    message = (
+                        str(payload.get("error") or payload.get("technical_detail") or payload.get("hint") or "").strip()
+                    )
+                    if message and message not in seen_messages:
+                        seen_messages.add(message)
+                        error_messages.append(message)
+
+                    status_code_value = payload.get("sumup_status_code") or payload.get("status_code")
+                    if isinstance(status_code_value, int) and status_code_value not in seen_codes:
+                        seen_codes.add(status_code_value)
+                        status_codes.append(status_code_value)
+
+            diagnostics = {
+                "first_event_at": chronological_logs[0].created_at.isoformat() if chronological_logs and chronological_logs[0].created_at else None,
+                "last_event_at": payment_logs[0].created_at.isoformat() if payment_logs and payment_logs[0].created_at else None,
+                "first_error_at": first_error_at,
+                "last_error_at": last_error_at,
+                "error_messages": error_messages[:10],
+                "sumup_status_codes": status_codes,
+                "event_sequence": [log.event for log in chronological_logs if log.event][:20],
+            }
+
+        sumup_live_status = None
+        sumup_live_raw = None
+        sumup_live_error = None
+        if include_live and payment.sumup_payment_id and sumup_client is not None:
+            live_checked_count += 1
+            try:
+                live_response = sumup_client.get_payment_status(payment.sumup_payment_id)
+                sumup_live_status = _map_sumup_status(live_response.status)
+                sumup_live_raw = live_response.raw
+                if sumup_live_status and payment.status and sumup_live_status != payment.status:
+                    live_mismatch_count += 1
+            except SumUpClientError as exc:
+                live_error_count += 1
+                sumup_live_error = _sumup_error_payload(exc, context="terminal_payment_logs_live")
+
+        items.append(
+            {
+                "payment_id": payment.id,
+                "status": payment.status,
+                "sumup_payment_id": payment.sumup_payment_id,
+                "amount_cents": payment.amount_cents,
+                "currency": payment.currency,
+                "created_at": payment.created_at.isoformat() if payment.created_at else None,
+                "updated_at": payment.updated_at.isoformat() if payment.updated_at else None,
+                "terminal_id": payment.terminal_id,
+                "terminal_name": payment.terminal.name if payment.terminal else None,
+                "event_id": payment.event_id,
+                "event_name": payment.event.name if payment.event else None,
+                "log_count": len(payment_logs),
+                "event_counts": dict(payment_event_counts),
+                "error_event_count": error_events,
+                "latest_event": latest_log.event if latest_log else None,
+                "latest_event_at": latest_log.created_at.isoformat() if latest_log and latest_log.created_at else None,
+                "latest_payload": latest_log.payload_json if latest_log else None,
+                "diagnostics": diagnostics,
+                "sumup_live_checked": bool(include_live and payment.sumup_payment_id),
+                "sumup_live_status": sumup_live_status,
+                "sumup_live_raw": sumup_live_raw,
+                "sumup_live_error": sumup_live_error,
+                "logs": [
+                    {
+                        "id": log.id,
+                        "event": log.event,
+                        "payload": log.payload_json,
+                        "created_at": log.created_at.isoformat() if log.created_at else None,
+                    }
+                    for log in payment_logs
+                ],
+            }
+        )
+
+    return jsonify(
+        {
+            "success": True,
+            "count": len(items),
+            "init_attempts": [
+                {
+                    "id": log.id,
+                    "phase": log.phase,
+                    "outcome": log.outcome,
+                    "event_id": log.event_id,
+                    "terminal_id": log.terminal_id,
+                    "terminal_payment_id": log.terminal_payment_id,
+                    "payload": log.payload_json,
+                    "created_at": log.created_at.isoformat() if log.created_at else None,
+                }
+                for log in recent_init_attempts
+            ],
+            "summary": {
+                "total_payments": len(items),
+                "total_logs": total_logs,
+                "total_init_attempts": len(recent_init_attempts),
+                "status_counts": dict(status_counts),
+                "event_counts": dict(global_event_counts),
+                "error_event_count": total_error_events,
+                "include_live": include_live,
+                "include_failed_details": include_failed_details,
+                "init_orphan_only": init_orphan_only,
+                "status_filter": status_values,
+                "live_checked_count": live_checked_count,
+                "live_error_count": live_error_count,
+                "live_mismatch_count": live_mismatch_count,
+                "live_sync_error": live_sync_error,
+                "orphan_init_attempt_count": orphan_init_attempt_count,
+            },
+            "payments": items,
+        }
+    )
+
+
+@app.route("/admin/terminal-payments/<int:payment_id>/details")
+def admin_terminal_payment_details(payment_id: int):
+    include_live = str(request.args.get("include_live") or "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+    payment = db.session.get(TerminalPayment, payment_id)
+    if payment is None:
+        return jsonify({"success": False, "error": "Zahlung nicht gefunden."}), 404
+
+    logs = (
+        PaymentLog.query.filter_by(terminal_payment_id=payment.id)
+        .order_by(PaymentLog.id.asc())
+        .all()
+    )
+    init_logs = (
+        TerminalPaymentInitLog.query.filter_by(terminal_payment_id=payment.id)
+        .order_by(TerminalPaymentInitLog.id.asc())
+        .all()
+    )
+
+    local_events = [
+        {
+            "id": log.id,
+            "event": log.event,
+            "payload": log.payload_json,
+            "created_at": log.created_at.isoformat() if log.created_at else None,
+        }
+        for log in logs
+    ]
+
+    sumup_live = {
+        "checked": False,
+        "status": None,
+        "raw": None,
+        "error": None,
+    }
+    if include_live and payment.sumup_payment_id:
+        sumup_live["checked"] = True
+        try:
+            client = _sumup_client()
+            response = client.get_payment_status(payment.sumup_payment_id)
+            sumup_live["status"] = _map_sumup_status(response.status)
+            sumup_live["raw"] = response.raw
+        except SumUpClientError as exc:
+            sumup_live["error"] = _sumup_error_payload(exc, context="terminal_payment_details_live")
+
+    return jsonify(
+        {
+            "success": True,
+            "payment": {
+                "payment_id": payment.id,
+                "status": payment.status,
+                "sumup_payment_id": payment.sumup_payment_id,
+                "amount_cents": payment.amount_cents,
+                "currency": payment.currency,
+                "created_at": payment.created_at.isoformat() if payment.created_at else None,
+                "updated_at": payment.updated_at.isoformat() if payment.updated_at else None,
+                "terminal_id": payment.terminal_id,
+                "terminal_name": payment.terminal.name if payment.terminal else None,
+                "event_id": payment.event_id,
+                "event_name": payment.event.name if payment.event else None,
+                "local_events": local_events,
+                "init_events": [
+                    {
+                        "id": log.id,
+                        "phase": log.phase,
+                        "outcome": log.outcome,
+                        "payload": log.payload_json,
+                        "created_at": log.created_at.isoformat() if log.created_at else None,
+                    }
+                    for log in init_logs
+                ],
+                "sumup_live": sumup_live,
+            },
+        }
+    )
+
+
+@app.route("/admin/terminals/<int:terminal_id>/connection-test", methods=["POST"])
+def admin_terminal_connection_test(terminal_id: int):
+    terminal = session_get_or_404(Terminal, terminal_id)
+
+    try:
+        client = _sumup_client()
+        status_response = client.get_reader_status(terminal.sumup_device_id)
+    except SumUpClientError as exc:
+        payload = _sumup_error_payload(exc, context="terminal_connection_test")
+        payload["terminal_id"] = terminal.id
+        payload["terminal_name"] = terminal.name
+        payload["device_id"] = terminal.sumup_device_id
+        app.logger.warning(
+            "Terminal-Verbindungstest fehlgeschlagen (Terminal %s / %s): %s",
+            terminal.id,
+            terminal.sumup_device_id,
+            payload.get("error"),
+        )
+        return jsonify(payload), _sumup_http_status_for_error(exc)
+
+    data = status_response.get("data") if isinstance(status_response.get("data"), dict) else {}
+    device_status = (data.get("status") or "UNKNOWN").upper()
+    state = (data.get("state") or "UNKNOWN").upper()
+
+    return jsonify(
+        {
+            "success": True,
+            "message": "Terminal-Verbindung erfolgreich geprüft.",
+            "terminal_id": terminal.id,
+            "terminal_name": terminal.name,
+            "device_id": terminal.sumup_device_id,
+            "device_status": device_status,
+            "device_state": state,
+            "battery_level": data.get("battery_level"),
+            "battery_temperature": data.get("battery_temperature"),
+            "connection_type": data.get("connection_type"),
+            "firmware_version": data.get("firmware_version"),
+            "last_activity": data.get("last_activity"),
+            "raw": data,
+        }
+    )
+
+
 @app.route("/admin/events/<int:event_id>/activate", methods=["POST"])
 def activate_event(event_id: int):
-    event = Event.query.get_or_404(event_id)
+    event = session_get_or_404(Event, event_id)
     Event.query.update({"is_active": False})
     event.is_active = True
     event.is_archived = False
@@ -1298,13 +2485,292 @@ def activate_event(event_id: int):
 
 @app.route("/admin/events/<int:event_id>/archive", methods=["POST"])
 def archive_event(event_id: int):
-    event = Event.query.get_or_404(event_id)
+    event = session_get_or_404(Event, event_id)
     event.is_archived = True
     event.is_active = False
     db.session.commit()
     app.logger.info("Event archiviert: %s", event.name)
     flash(f"Event '{event.name}' wurde archiviert.", "success")
     return redirect(url_for("admin"))
+
+
+# ---------------------------------------------------------------------------
+# SumUp Terminal API
+# ---------------------------------------------------------------------------
+@app.route("/api/terminals")
+def api_terminals():
+    event = require_active_event(kassensystem=True)
+    terminals = (
+        Terminal.query.filter_by(active=True)
+        .order_by(Terminal.name.asc())
+        .all()
+    )
+    return jsonify(
+        {
+            "terminals": [
+                {
+                    "id": terminal.id,
+                    "name": terminal.name,
+                    "assigned_event_id": terminal.assigned_event_id,
+                    "device_id": terminal.sumup_device_id,
+                    "is_free": terminal.assigned_event_id in (None, event.id),
+                }
+                for terminal in terminals
+            ]
+        }
+    )
+
+
+@app.route("/api/terminal-payments", methods=["POST"])
+def api_create_terminal_payment():
+    event = require_active_event(kassensystem=True)
+    payload = request.get_json(silent=True) or {}
+    terminal_id, amount_cents, currency, payload_error = _parse_terminal_payment_request(payload)
+    if payload_error:
+        _log_terminal_payment_init_event(
+            event=event,
+            terminal=None,
+            payment=None,
+            phase="request_validation",
+            outcome="rejected",
+            payload={"reason": "invalid_payload", "request": payload},
+            commit_now=True,
+        )
+        return payload_error
+
+    terminal = db.session.get(Terminal, terminal_id)
+    if not terminal:
+        _log_terminal_payment_init_event(
+            event=event,
+            terminal=None,
+            payment=None,
+            phase="terminal_lookup",
+            outcome="rejected",
+            payload={"reason": "terminal_not_found", "terminal_id": terminal_id, "request": payload},
+            commit_now=True,
+        )
+        return jsonify({"success": False, "error": "Terminal nicht gefunden."}), 404
+    if not terminal.active:
+        _log_terminal_payment_init_event(
+            event=event,
+            terminal=terminal,
+            payment=None,
+            phase="terminal_validation",
+            outcome="rejected",
+            payload={"reason": "terminal_inactive", "terminal_id": terminal.id},
+            commit_now=True,
+        )
+        return jsonify({"success": False, "error": "Terminal ist deaktiviert."}), 400
+    assigned_terminal, _ = _resolve_terminal_assignment(event)
+    if assigned_terminal and assigned_terminal.id != terminal.id:
+        _log_terminal_payment_init_event(
+            event=event,
+            terminal=terminal,
+            payment=None,
+            phase="terminal_assignment",
+            outcome="rejected",
+            payload={
+                "reason": "assigned_to_other_terminal",
+                "assigned_terminal_id": assigned_terminal.id,
+                "selected_terminal_id": terminal.id,
+            },
+            commit_now=True,
+        )
+        return jsonify({"success": False, "error": "Kasse ist fest einem anderen Terminal zugeordnet."}), 400
+    if terminal.assigned_event_id not in (None, event.id):
+        _log_terminal_payment_init_event(
+            event=event,
+            terminal=terminal,
+            payment=None,
+            phase="terminal_assignment",
+            outcome="rejected",
+            payload={
+                "reason": "terminal_assigned_elsewhere",
+                "assigned_event_id": terminal.assigned_event_id,
+                "current_event_id": event.id,
+            },
+            commit_now=True,
+        )
+        return jsonify({"success": False, "error": "Terminal ist bereits belegt."}), 400
+
+    _log_terminal_payment_init_event(
+        event=event,
+        terminal=terminal,
+        payment=None,
+        phase="init_request",
+        outcome="started",
+        payload={"amount_cents": amount_cents, "currency": currency, "request": payload},
+    )
+
+    pending_payment = TerminalPayment.query.filter_by(terminal_id=terminal.id, status="pending").first()
+    sumup_client: Optional[SumUpClient] = None
+    if pending_payment:
+        try:
+            sumup_client = _sumup_client()
+            _reconcile_pending_terminal_payment(pending_payment, client=sumup_client)
+            db.session.commit()
+        except SumUpClientError as exc:
+            error_payload = _sumup_error_payload(exc, context="terminal_payment_reconcile")
+            _log_terminal_payment_init_event(
+                event=event,
+                terminal=terminal,
+                payment=pending_payment,
+                phase="pending_reconcile",
+                outcome="failed",
+                payload=error_payload,
+                commit_now=True,
+            )
+            return jsonify({**error_payload, "status": pending_payment.status}), _sumup_http_status_for_error(exc)
+
+        if pending_payment.status == "pending":
+            _log_terminal_payment_init_event(
+                event=event,
+                terminal=terminal,
+                payment=pending_payment,
+                phase="pending_check",
+                outcome="rejected",
+                payload={"reason": "already_active_payment", "pending_payment_id": pending_payment.id},
+                commit_now=True,
+            )
+            return jsonify({"success": False, "error": "Terminal hat bereits eine aktive Zahlung."}), 409
+
+    payment = TerminalPayment(
+        terminal_id=terminal.id,
+        event_id=event.id,
+        amount_cents=amount_cents,
+        currency=currency,
+        status="pending",
+    )
+    db.session.add(payment)
+    try:
+        db.session.flush()
+    except IntegrityError:
+        db.session.rollback()
+        _log_terminal_payment_init_event(
+            event=event,
+            terminal=terminal,
+            payment=None,
+            phase="payment_row_create",
+            outcome="rejected",
+            payload={"reason": "active_payment_integrity_conflict"},
+            commit_now=True,
+        )
+        return jsonify({"success": False, "error": "Terminal hat bereits eine aktive Zahlung."}), 409
+
+    _log_terminal_payment_init_event(
+        event=event,
+        terminal=terminal,
+        payment=payment,
+        phase="payment_row_create",
+        outcome="success",
+        payload={"payment_id": payment.id},
+    )
+
+    reference = f"{event.name}-{payment.id}-{utcnow().strftime('%Y%m%d%H%M%S')}"
+    try:
+        client = sumup_client or _sumup_client()
+        response = client.create_terminal_payment(
+            amount_cents=amount_cents,
+            currency=currency,
+            device_id=terminal.sumup_device_id,
+            reference=reference,
+        )
+        payment.sumup_payment_id = response.payment_id
+        payment.status = _map_sumup_status(response.status)
+        _log_terminal_payment_event(payment, "request_sent", response.raw)
+        _log_terminal_payment_init_event(
+            event=event,
+            terminal=terminal,
+            payment=payment,
+            phase="sumup_create",
+            outcome="success",
+            payload={"sumup_payment_id": response.payment_id, "status": payment.status, "raw": response.raw},
+        )
+        db.session.commit()
+        return jsonify({"success": True, "payment_id": payment.id, "status": payment.status})
+    except SumUpClientError as exc:
+        payment.status = "failed"
+        error_payload = _sumup_error_payload(exc, context="terminal_payment_create")
+        _log_terminal_payment_event(payment, "error", error_payload)
+        _log_terminal_payment_init_event(
+            event=event,
+            terminal=terminal,
+            payment=payment,
+            phase="sumup_create",
+            outcome="failed",
+            payload=error_payload,
+        )
+        db.session.commit()
+        response_payload = {**error_payload, "payment_id": payment.id, "status": payment.status}
+        return jsonify(response_payload), _sumup_http_status_for_error(exc)
+
+
+@app.route("/api/terminal-payments/<int:payment_id>")
+def api_terminal_payment_status(payment_id: int):
+    event = require_active_event(kassensystem=True)
+    payment = TerminalPayment.query.filter_by(id=payment_id, event_id=event.id).first_or_404()
+    if payment.status == "pending" and payment.sumup_payment_id:
+        try:
+            _reconcile_pending_terminal_payment(payment)
+            db.session.commit()
+        except SumUpClientError as exc:
+            error_payload = _sumup_error_payload(exc, context="terminal_payment_status")
+            _log_terminal_payment_event(payment, "error", error_payload)
+            db.session.commit()
+            response_payload = {**error_payload, "status": payment.status}
+            return jsonify(response_payload), _sumup_http_status_for_error(exc)
+
+    return jsonify(
+        {
+            "success": True,
+            "payment_id": payment.id,
+            "status": payment.status,
+            "terminal_id": payment.terminal_id,
+            "amount_cents": payment.amount_cents,
+            "currency": payment.currency,
+        }
+    )
+
+
+@app.route("/api/terminal-payments/<int:payment_id>/cancel", methods=["POST"])
+def api_terminal_payment_cancel(payment_id: int):
+    event = require_active_event(kassensystem=True)
+    payment = TerminalPayment.query.filter_by(id=payment_id, event_id=event.id).first_or_404()
+
+    if payment.status != "pending":
+        return jsonify(
+            {
+                "success": False,
+                "error": "Zahlung ist nicht mehr aktiv.",
+                "payment_id": payment.id,
+                "status": payment.status,
+            }
+        ), 409
+
+    terminal = db.session.get(Terminal, payment.terminal_id)
+    if not terminal:
+        return jsonify({"success": False, "error": "Terminal nicht gefunden.", "status": payment.status}), 404
+
+    try:
+        response_raw = _sumup_client().cancel_terminal_payment(
+            payment_id=payment.sumup_payment_id or str(payment.id),
+            device_id=terminal.sumup_device_id,
+        )
+        payment.status = "aborted"
+        _log_terminal_payment_event(payment, "cancel_requested", {"raw": response_raw})
+        db.session.commit()
+        return jsonify({"success": True, "payment_id": payment.id, "status": payment.status})
+    except SumUpClientError as exc:
+        # If cancel is not possible anymore, try to reconcile and return current status.
+        try:
+            _reconcile_pending_terminal_payment(payment)
+            db.session.commit()
+        except SumUpClientError:
+            db.session.rollback()
+        error_payload = _sumup_error_payload(exc, context="terminal_payment_cancel")
+        _log_terminal_payment_event(payment, "cancel_error", error_payload)
+        db.session.commit()
+        return jsonify({**error_payload, "success": False, "status": payment.status}), _sumup_http_status_for_error(exc)
 
 
 @app.route("/admin/credentials", methods=["POST"])
@@ -1719,7 +3185,9 @@ def _get_cart_data(event):
     label_map = {button.name: (button.label or button.name) for button in buttons}
     items = session.get(cart_key(event), [])
     prices = {button.name: button.price_with_depot for button in buttons}
+    depot_prices = {button.name: (button.depot_price if button.has_depot else 0) for button in buttons}
     total = sum(prices.get(item, 0) for item in items)
+    depot_total = sum(depot_prices.get(item, 0) for item in items)
     grouped = Counter(items).items()
     detailed_items = [
         {
@@ -1734,6 +3202,7 @@ def _get_cart_data(event):
     return {
         "items": detailed_items,
         "total": total,
+        "depot_total": depot_total,
         "item_count": len(items)
     }
 
@@ -1758,6 +3227,11 @@ def cashier():
     category_order = kass_settings.get("category_order") or []
     category_visibility = kass_settings.get("category_visibility") or {}
     cart_data = _get_cart_data(event)
+    price_settings = resolve_price_list_settings(event)
+    assigned_terminal, inactive_terminal = _resolve_terminal_assignment(event)
+    available_terminals = _available_terminals_for_event(event)
+    sumup_settings = _sumup_settings()
+    sumup_configured = bool(sumup_settings.get("access_token") and sumup_settings.get("merchant_id"))
     
     # Group buttons by category
     buttons_by_category: Dict[str, List[ButtonConfig]] = {}
@@ -1798,8 +3272,14 @@ def cashier():
         buttons_by_category=buttons_by_category, 
         items=cart_data["items"], 
         total=cart_data["total"], 
+        depot_total=cart_data["depot_total"],
+        cashier_font_size=float(price_settings.get("cashier_font_size", 1.0)),
         event=event,
-        auto_reload=auto_reload
+        auto_reload=auto_reload,
+        assigned_terminal=assigned_terminal,
+        inactive_terminal=inactive_terminal,
+        available_terminals=available_terminals,
+        sumup_configured=sumup_configured,
     )
 
 
@@ -2209,7 +3689,7 @@ def uploaded_file(filename: str):
 @app.route("/admin/events/<int:event_id>/background", methods=["POST"])
 def upload_background(event_id: int):
     """Upload or delete background image for an event."""
-    event = Event.query.get_or_404(event_id)
+    event = session_get_or_404(Event, event_id)
     
     # Check if user wants to delete the background
     if request.form.get("delete_background"):
@@ -2265,7 +3745,7 @@ def upload_background(event_id: int):
 @app.route("/admin/events/<int:event_id>/price-list/background", methods=["POST"])
 def upload_price_list_background(event_id: int):
     """Upload or delete background image for the price list view."""
-    event = Event.query.get_or_404(event_id)
+    event = session_get_or_404(Event, event_id)
     shared_settings = validate_shared_settings(event.shared_settings or {})
     price_settings = validate_price_list_settings(shared_settings.get("price_list"))
 
