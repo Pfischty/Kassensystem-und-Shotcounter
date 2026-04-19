@@ -81,7 +81,7 @@ def test_shotcounter_tracks_shots(client):
     client.post("/shotcounter/shots", data={"team_id": team_id, "amount": 3})
 
     with app.app_context():
-        team = Team.query.get(team_id)
+        team = db.session.get(Team, team_id)
         assert team.shots == 3
 
 
@@ -168,7 +168,7 @@ def test_auto_reload_setting_can_be_disabled(client):
     )
     
     with app.app_context():
-        event = Event.query.get(event_id)
+        event = db.session.get(Event, event_id)
         assert event is not None
         # When checkbox is not in form during update, it should be set to False
         # But our current logic preserves it or defaults to True
@@ -264,7 +264,7 @@ def test_event_category_update(client):
     
     # Verify categories are saved
     with app.app_context():
-        updated_event = Event.query.get(event.id)
+        updated_event = db.session.get(Event, event.id)
         items = updated_event.kassensystem_settings.get("items", [])
         assert len(items) == 2
         
@@ -372,7 +372,7 @@ def test_product_editor_preserves_data(client):
     
     # Verify products were updated correctly
     with app.app_context():
-        updated_event = Event.query.get(event_id)
+        updated_event = db.session.get(Event, event_id)
         items = updated_event.kassensystem_settings.get("items", [])
         assert len(items) == 3
         
@@ -493,7 +493,7 @@ def test_category_order_preserves_item_order(client):
     # The expected order should be ["Essen", "Alkohol", "Getränke"] based on item order
     # This is what the JavaScript fix ensures happens
     with app.app_context():
-        event = Event.query.get(event_id)
+        event = db.session.get(Event, event_id)
         price_settings = event.shared_settings.get("price_list", {})
         enabled_categories = price_settings.get("enabled_categories", [])
         
@@ -588,7 +588,7 @@ def test_update_terminal_rejects_duplicate_name(client):
     assert "Ein Terminal mit diesem Namen existiert bereits." in response.get_data(as_text=True)
 
     with app.app_context():
-        unchanged = Terminal.query.get(target_id)
+        unchanged = db.session.get(Terminal, target_id)
         assert unchanged is not None
         assert unchanged.name == "Fix Süd"
 
@@ -660,6 +660,91 @@ def test_terminal_connection_test_handles_sumup_error(client, monkeypatch):
     assert data["context"] == "terminal_connection_test"
     assert data["terminal_id"] == terminal_id
     assert "Resource not found" in data["error"]
+
+
+def test_sumup_connection_test_persists_api_merchant(client, monkeypatch):
+    monkeypatch.setattr(
+        app_module,
+        "_sumup_settings",
+        lambda: {
+            "access_token": "token-123",
+            "merchant_id": "",
+            "base_url": "https://api.sumup.com",
+            "affiliate_key": None,
+        },
+    )
+
+    class FakeClient:
+        def __init__(self, **kwargs):
+            assert kwargs["access_token"] == "token-123"
+
+        def get_profile(self):
+            return {"merchant_code": "MH4H92C7"}
+
+    monkeypatch.setattr(app_module, "SumUpClient", FakeClient)
+
+    persisted = {}
+
+    def fake_update_sumup_credentials(**kwargs):
+        persisted.update(kwargs)
+        return True, None
+
+    monkeypatch.setattr(app_module.credentials_manager, "update_sumup_credentials", fake_update_sumup_credentials)
+
+    response = client.post("/admin/sumup-connection-test")
+    assert response.status_code == 200
+    data = response.get_json()
+    assert data["success"] is True
+    assert data["configured_merchant_id"] == "MH4H92C7"
+    assert data["api_merchant_id"] == "MH4H92C7"
+    assert data["persisted_merchant_id"] == "MH4H92C7"
+    assert persisted["merchant_id"] == "MH4H92C7"
+
+
+def test_sumup_client_uses_configured_merchant_without_profile_lookup(monkeypatch):
+    monkeypatch.setattr(
+        app_module,
+        "_sumup_settings",
+        lambda: {
+            "access_token": "token-123",
+            "merchant_id": "MH4H92C7",
+            "base_url": "https://api.sumup.com",
+            "affiliate_key": None,
+        },
+    )
+
+    calls = []
+
+    class FakeClient:
+        def __init__(self, **kwargs):
+            calls.append(kwargs)
+
+        def get_profile(self):
+            raise AssertionError("get_profile must not be called in payment hot-path")
+
+    monkeypatch.setattr(app_module, "SumUpClient", FakeClient)
+
+    app_module._sumup_client()
+    assert len(calls) == 1
+    assert calls[0]["merchant_id"] == "MH4H92C7"
+
+
+def test_sumup_client_requires_configured_merchant(monkeypatch):
+    monkeypatch.setattr(
+        app_module,
+        "_sumup_settings",
+        lambda: {
+            "access_token": "token-123",
+            "merchant_id": "",
+            "base_url": "https://api.sumup.com",
+            "affiliate_key": None,
+        },
+    )
+
+    with pytest.raises(SumUpClientError) as exc_info:
+        app_module._sumup_client()
+
+    assert "Merchant Code fehlt" in str(exc_info.value)
 
 
 def test_sumup_readers_sync_creates_new_terminals(client, monkeypatch):

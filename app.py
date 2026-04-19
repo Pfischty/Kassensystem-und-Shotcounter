@@ -20,7 +20,7 @@ import subprocess
 from collections import Counter
 from dataclasses import dataclass
 from decimal import Decimal, ROUND_HALF_UP
-from datetime import datetime
+from datetime import datetime, timezone
 from io import StringIO
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
@@ -139,6 +139,12 @@ def set_sqlite_pragmas(dbapi_connection, _connection_record) -> None:
 # ---------------------------------------------------------------------------
 # Datenbank-Modelle
 # ---------------------------------------------------------------------------
+def utcnow() -> datetime:
+    """Return UTC timestamp as naive datetime for SQLite compatibility."""
+
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
 class Event(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(150), nullable=False)
@@ -149,8 +155,8 @@ class Event(db.Model):
     shared_settings = db.Column(db.JSON, default=dict)
     kassensystem_settings = db.Column(db.JSON, default=dict)
     shotcounter_settings = db.Column(db.JSON, default=dict)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=utcnow)
+    updated_at = db.Column(db.DateTime, default=utcnow, onupdate=utcnow)
 
 
 class Team(db.Model):
@@ -167,7 +173,7 @@ class Team(db.Model):
 class Order(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     event_id = db.Column(db.Integer, db.ForeignKey("event.id", ondelete="CASCADE"), nullable=False)
-    timestamp = db.Column(db.DateTime, default=datetime.utcnow)
+    timestamp = db.Column(db.DateTime, default=utcnow)
     total = db.Column(db.Integer, nullable=False)
 
     event = db.relationship("Event", backref=db.backref("orders", cascade="all, delete-orphan"))
@@ -199,7 +205,7 @@ class OrderLog(db.Model):
     items = db.Column(db.JSON, default=list)  # [{"name": str, "qty": int, "price": int}]
     actor = db.Column(db.String(200))
     user_agent = db.Column(db.String(300))
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=utcnow)
 
     event = db.relationship("Event", backref=db.backref("order_logs", cascade="all, delete-orphan"))
 
@@ -212,7 +218,7 @@ class ShotLog(db.Model):
     amount = db.Column(db.Integer, nullable=False)
     actor = db.Column(db.String(200))
     user_agent = db.Column(db.String(300))
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=utcnow)
 
     event = db.relationship("Event", backref=db.backref("shot_logs", cascade="all, delete-orphan"))
     team = db.relationship("Team")
@@ -227,8 +233,8 @@ class Terminal(db.Model):
     sumup_device_id = db.Column(db.String(120), nullable=False)
     active = db.Column(db.Boolean, default=True, nullable=False)
     assigned_event_id = db.Column(db.Integer, db.ForeignKey("event.id", ondelete="SET NULL"), nullable=True)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=utcnow)
+    updated_at = db.Column(db.DateTime, default=utcnow, onupdate=utcnow)
 
     assigned_event = db.relationship("Event", backref=db.backref("terminal_assignment", uselist=False))
 
@@ -241,8 +247,8 @@ class TerminalPayment(db.Model):
     currency = db.Column(db.String(5), default="CHF", nullable=False)
     status = db.Column(db.String(20), default="pending", nullable=False)
     sumup_payment_id = db.Column(db.String(120))
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=utcnow)
+    updated_at = db.Column(db.DateTime, default=utcnow, onupdate=utcnow)
 
     terminal = db.relationship("Terminal")
     event = db.relationship("Event", backref=db.backref("terminal_payments", cascade="all, delete-orphan"))
@@ -255,7 +261,7 @@ class PaymentLog(db.Model):
     )
     event = db.Column(db.String(40), nullable=False)
     payload_json = db.Column(db.JSON, default=dict)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=utcnow)
 
     terminal_payment = db.relationship("TerminalPayment", backref=db.backref("logs", cascade="all, delete-orphan"))
 
@@ -317,6 +323,15 @@ def ensure_schema_ready() -> None:
 
     _schema_checked = True
 
+
+def session_get_or_404(model: type[db.Model], object_id: int):
+    """Load object via SQLAlchemy session or abort with 404."""
+
+    obj = db.session.get(model, object_id)
+    if obj is None:
+        abort(404)
+    return obj
+
 # ---------------------------------------------------------------------------
 # CSV Export Helpers
 # ---------------------------------------------------------------------------
@@ -368,43 +383,10 @@ def _extract_merchant_from_profile(profile: Dict[str, object]) -> str:
     ).strip()
 
 
-def _resolve_merchant_code(
-    *,
-    access_token: str,
-    base_url: str,
-    affiliate_key: Optional[str],
-    configured_merchant: Optional[str],
-) -> str:
-    configured = (configured_merchant or "").strip()
-    bootstrap_client = SumUpClient(
-        access_token=access_token,
-        merchant_id=None,
-        base_url=base_url,
-        affiliate_key=affiliate_key,
-    )
-    profile = bootstrap_client.get_profile()
-    api_merchant = _extract_merchant_from_profile(profile)
-    if api_merchant:
-        if configured and configured != api_merchant:
-            app.logger.warning(
-                "SumUp Merchant-Mismatch erkannt: konfiguriert=%s, API=%s. Nutze API-Merchant.",
-                configured,
-                api_merchant,
-            )
-        return api_merchant
-    if configured:
-        return configured
-    raise SumUpClientError(
-        "SumUp Merchant Code konnte nicht aus dem Token bestimmt werden.",
-        error_type="config",
-        hint="Bitte im Adminbereich den Merchant Code setzen oder Token/Berechtigungen prüfen.",
-    )
-
-
 def _sumup_client() -> SumUpClient:
     settings = _sumup_settings()
     access_token = settings.get("access_token")
-    configured_merchant = settings.get("merchant_id")
+    configured_merchant = (settings.get("merchant_id") or "").strip()
     base_url = settings.get("base_url") or "https://api.sumup.com"
     affiliate_key = settings.get("affiliate_key")
     if not access_token:
@@ -413,17 +395,16 @@ def _sumup_client() -> SumUpClient:
             error_type="config",
             hint="Im Adminbereich unter 'SumUp Zugangsdaten' den Access Token hinterlegen.",
         )
-
-    merchant_id = _resolve_merchant_code(
-        access_token=access_token,
-        base_url=base_url,
-        affiliate_key=affiliate_key,
-        configured_merchant=configured_merchant,
-    )
+    if not configured_merchant:
+        raise SumUpClientError(
+            "SumUp Merchant Code fehlt.",
+            error_type="config",
+            hint="Bitte im Adminbereich den Verbindungstest ausführen, damit der Merchant Code aus dem Token übernommen wird.",
+        )
 
     return SumUpClient(
         access_token=access_token,
-        merchant_id=merchant_id,
+        merchant_id=configured_merchant,
         base_url=base_url,
         affiliate_key=affiliate_key,
     )
@@ -522,7 +503,7 @@ def _assign_terminal_to_event(event: Event, terminal_id: Optional[int]) -> None:
     Terminal.query.filter_by(assigned_event_id=event.id).update({"assigned_event_id": None})
     if not terminal_id:
         return
-    terminal = Terminal.query.get(terminal_id)
+    terminal = db.session.get(Terminal, terminal_id)
     if not terminal:
         raise ValueError("Terminal nicht gefunden.")
     terminal.assigned_event_id = event.id
@@ -1275,7 +1256,7 @@ def health():
 
 @app.route("/events/<int:event_id>")
 def event_detail(event_id: int):
-    event = Event.query.get_or_404(event_id)
+    event = session_get_or_404(Event, event_id)
     stats = event_statistics(event)
     label_map = {btn.name: (btn.label or btn.name) for btn in resolve_button_config(event)}
     order_logs = (
@@ -1309,7 +1290,7 @@ def event_detail(event_id: int):
 
 @app.route("/events/<int:event_id>/export/order_logs.csv")
 def export_order_logs(event_id: int):
-    event = Event.query.get_or_404(event_id)
+    event = session_get_or_404(Event, event_id)
     logs = OrderLog.query.filter_by(event_id=event.id).order_by(OrderLog.created_at.asc()).all()
     label_map = {btn.name: (btn.label or btn.name) for btn in resolve_button_config(event)}
 
@@ -1344,7 +1325,7 @@ def export_order_logs(event_id: int):
 
 @app.route("/events/<int:event_id>/export/shot_logs.csv")
 def export_shot_logs(event_id: int):
-    event = Event.query.get_or_404(event_id)
+    event = session_get_or_404(Event, event_id)
     logs = ShotLog.query.filter_by(event_id=event.id).order_by(ShotLog.created_at.asc()).all()
 
     rows = [
@@ -1366,7 +1347,7 @@ def export_shot_logs(event_id: int):
 
 @app.route("/events/<int:event_id>/export/drink_sales.csv")
 def export_drink_sales(event_id: int):
-    event = Event.query.get_or_404(event_id)
+    event = session_get_or_404(Event, event_id)
     label_map = {btn.name: (btn.label or btn.name) for btn in resolve_button_config(event)}
     sales = (
         db.session.query(DrinkSale.name, func.coalesce(func.sum(DrinkSale.quantity), 0))
@@ -1436,7 +1417,7 @@ def admin():
 
 @app.route("/admin/events/<int:event_id>/settings")
 def admin_event_settings(event_id: int):
-    event = Event.query.get_or_404(event_id)
+    event = session_get_or_404(Event, event_id)
     events = Event.query.order_by(Event.created_at.desc()).all()
     terminals = Terminal.query.order_by(Terminal.name.asc()).all()
     default_button_presets = [button.__dict__ for button in DEFAULT_BUTTONS]
@@ -1626,7 +1607,7 @@ def create_event():
 
 @app.route("/admin/events/<int:event_id>/update", methods=["POST"])
 def update_event(event_id: int):
-    event = Event.query.get_or_404(event_id)
+    event = session_get_or_404(Event, event_id)
     event.kassensystem_enabled = bool(request.form.get("kassensystem_enabled"))
     event.shotcounter_enabled = bool(request.form.get("shotcounter_enabled"))
     terminal_id_raw = (request.form.get("assigned_terminal_id") or "").strip()
@@ -1678,7 +1659,7 @@ def create_terminal():
 
 @app.route("/admin/terminals/<int:terminal_id>/update", methods=["POST"])
 def update_terminal(terminal_id: int):
-    terminal = Terminal.query.get_or_404(terminal_id)
+    terminal = session_get_or_404(Terminal, terminal_id)
     name = request.form.get("name") or ""
     device_id = request.form.get("sumup_device_id") or ""
     try:
@@ -1697,7 +1678,7 @@ def update_terminal(terminal_id: int):
 
 @app.route("/admin/terminals/<int:terminal_id>/delete", methods=["POST"])
 def delete_terminal(terminal_id: int):
-    terminal = Terminal.query.get_or_404(terminal_id)
+    terminal = session_get_or_404(Terminal, terminal_id)
     terminal_name = terminal.name
     db.session.delete(terminal)
     db.session.commit()
@@ -1734,23 +1715,57 @@ def update_sumup_credentials():
 
 @app.route("/admin/sumup-connection-test", methods=["POST"])
 def admin_sumup_connection_test():
+    settings = _sumup_settings()
+    access_token = settings.get("access_token")
+    configured_merchant = (settings.get("merchant_id") or "").strip()
+    base_url = settings.get("base_url") or "https://api.sumup.com"
+    affiliate_key = settings.get("affiliate_key")
+
+    if not access_token:
+        exc = SumUpClientError(
+            "SumUp Access Token fehlt.",
+            error_type="config",
+            hint="Im Adminbereich unter 'SumUp Zugangsdaten' den Access Token hinterlegen.",
+        )
+        payload = _sumup_error_payload(exc, context="sumup_connection_test")
+        return jsonify(payload), _sumup_http_status_for_error(exc)
+
     try:
-        client = _sumup_client()
+        # Use a bootstrap client without requiring a configured merchant,
+        # so we can derive the merchant from the token and persist it.
+        client = SumUpClient(
+            access_token=access_token,
+            merchant_id=configured_merchant or None,
+            base_url=base_url,
+            affiliate_key=affiliate_key,
+        )
         profile = client.get_profile()
     except SumUpClientError as exc:
         payload = _sumup_error_payload(exc, context="sumup_connection_test")
         app.logger.warning("SumUp Verbindungstest fehlgeschlagen: %s", payload.get("error"))
         return jsonify(payload), _sumup_http_status_for_error(exc)
 
-    configured_merchant = (_sumup_settings().get("merchant_id") or "").strip()
     api_merchant = _extract_merchant_from_profile(profile)
-
+    persisted_merchant = None
     warning = None
-    if configured_merchant and api_merchant and configured_merchant != api_merchant:
+
+    if api_merchant and api_merchant != configured_merchant:
+        success, error = credentials_manager.update_sumup_credentials(merchant_id=api_merchant)
+        if success:
+            configured_merchant = api_merchant
+            persisted_merchant = api_merchant
+            app.logger.info("SumUp Merchant Code aus Token übernommen: %s", api_merchant)
+        else:
+            warning = f"Merchant Code konnte nicht gespeichert werden: {error}"
+
+    if not warning and configured_merchant and api_merchant and configured_merchant != api_merchant:
         warning = (
             "Konfigurierter Merchant stimmt nicht mit dem Token-Merchant überein. "
-            "Für API-Aufrufe wird automatisch der Merchant aus dem Token verwendet."
+            "Bitte Einstellungen prüfen."
         )
+
+    if not warning and not configured_merchant and not api_merchant:
+        warning = "Merchant Code konnte nicht aus dem Token bestimmt werden. Bitte manuell eintragen."
 
     return jsonify(
         {
@@ -1758,6 +1773,7 @@ def admin_sumup_connection_test():
             "message": "Verbindung zu SumUp erfolgreich.",
             "configured_merchant_id": configured_merchant or None,
             "api_merchant_id": api_merchant or None,
+            "persisted_merchant_id": persisted_merchant,
             "warning": warning,
         }
     )
@@ -1900,7 +1916,7 @@ def admin_sumup_readers_status():
 
 @app.route("/admin/terminals/<int:terminal_id>/connection-test", methods=["POST"])
 def admin_terminal_connection_test(terminal_id: int):
-    terminal = Terminal.query.get_or_404(terminal_id)
+    terminal = session_get_or_404(Terminal, terminal_id)
 
     try:
         client = _sumup_client()
@@ -1943,7 +1959,7 @@ def admin_terminal_connection_test(terminal_id: int):
 
 @app.route("/admin/events/<int:event_id>/activate", methods=["POST"])
 def activate_event(event_id: int):
-    event = Event.query.get_or_404(event_id)
+    event = session_get_or_404(Event, event_id)
     Event.query.update({"is_active": False})
     event.is_active = True
     event.is_archived = False
@@ -1955,7 +1971,7 @@ def activate_event(event_id: int):
 
 @app.route("/admin/events/<int:event_id>/archive", methods=["POST"])
 def archive_event(event_id: int):
-    event = Event.query.get_or_404(event_id)
+    event = session_get_or_404(Event, event_id)
     event.is_archived = True
     event.is_active = False
     db.session.commit()
@@ -2003,7 +2019,7 @@ def api_create_terminal_payment():
     if amount_cents <= 0:
         return jsonify({"success": False, "error": "Betrag muss größer 0 sein."}), 400
 
-    terminal = Terminal.query.get(terminal_id)
+    terminal = db.session.get(Terminal, terminal_id)
     if not terminal:
         return jsonify({"success": False, "error": "Terminal nicht gefunden."}), 404
     if not terminal.active:
@@ -2027,7 +2043,7 @@ def api_create_terminal_payment():
     db.session.add(payment)
     db.session.flush()
 
-    reference = f"{event.name}-{payment.id}-{datetime.utcnow().strftime('%Y%m%d%H%M%S')}"
+    reference = f"{event.name}-{payment.id}-{utcnow().strftime('%Y%m%d%H%M%S')}"
     try:
         client = _sumup_client()
         response = client.create_terminal_payment(
@@ -2056,7 +2072,7 @@ def api_terminal_payment_status(payment_id: int):
     payment = TerminalPayment.query.filter_by(id=payment_id, event_id=event.id).first_or_404()
     if payment.status == "pending" and payment.sumup_payment_id:
         timeout_seconds = _terminal_payment_timeout_seconds()
-        elapsed = (datetime.utcnow() - payment.created_at).total_seconds()
+        elapsed = (utcnow() - payment.created_at).total_seconds()
         if elapsed >= timeout_seconds:
             payment.status = "timeout"
             _log_terminal_payment_event(payment, "timeout", {"elapsed": elapsed})
@@ -3009,7 +3025,7 @@ def uploaded_file(filename: str):
 @app.route("/admin/events/<int:event_id>/background", methods=["POST"])
 def upload_background(event_id: int):
     """Upload or delete background image for an event."""
-    event = Event.query.get_or_404(event_id)
+    event = session_get_or_404(Event, event_id)
     
     # Check if user wants to delete the background
     if request.form.get("delete_background"):
@@ -3065,7 +3081,7 @@ def upload_background(event_id: int):
 @app.route("/admin/events/<int:event_id>/price-list/background", methods=["POST"])
 def upload_price_list_background(event_id: int):
     """Upload or delete background image for the price list view."""
-    event = Event.query.get_or_404(event_id)
+    event = session_get_or_404(Event, event_id)
     shared_settings = validate_shared_settings(event.shared_settings or {})
     price_settings = validate_price_list_settings(shared_settings.get("price_list"))
 
