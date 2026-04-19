@@ -174,6 +174,54 @@ class SumUpClient:
             raw=response,
         )
 
+    def cancel_terminal_payment(self, *, payment_id: str, device_id: Optional[str] = None) -> Dict[str, Any]:
+        """Cancel an in-flight terminal payment using available SumUp endpoints.
+
+        SumUp APIs vary across accounts/integration generations, so we try
+        multiple known endpoint variants and return the first successful result.
+        """
+
+        pid = (payment_id or "").strip()
+        if not pid:
+            raise SumUpClientError("Payment-ID fehlt.", error_type="validation")
+
+        errors: list[SumUpClientError] = []
+
+        def _try(method: str, path: str) -> Optional[Dict[str, Any]]:
+            try:
+                return self._request(method, path)
+            except SumUpClientError as exc:
+                if exc.status_code in {404, 405}:
+                    errors.append(exc)
+                    return None
+                raise
+
+        # Legacy terminal payments cancel variants.
+        response = _try("POST", f"/v0.1/terminal/payments/{pid}/cancel")
+        if response is not None:
+            return response
+
+        response = _try("DELETE", f"/v0.1/terminal/payments/{pid}")
+        if response is not None:
+            return response
+
+        # Reader checkout variants.
+        if device_id:
+            merchant_id = self._require_merchant_id()
+            reader_id = self._resolve_reader_id(device_id)
+
+            response = _try("DELETE", f"/v0.1/merchants/{merchant_id}/readers/{reader_id}/checkout/{pid}")
+            if response is not None:
+                return response
+
+            response = _try("POST", f"/v0.1/merchants/{merchant_id}/readers/{reader_id}/checkout/{pid}/cancel")
+            if response is not None:
+                return response
+
+        if errors:
+            raise errors[-1]
+        return {}
+
     def get_profile(self) -> Dict[str, Any]:
         """Fetch merchant profile data to validate credentials and connectivity."""
         return self._request("GET", "/v0.1/me")

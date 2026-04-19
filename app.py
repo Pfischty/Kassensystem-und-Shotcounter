@@ -2718,6 +2718,47 @@ def api_terminal_payment_status(payment_id: int):
     )
 
 
+@app.route("/api/terminal-payments/<int:payment_id>/cancel", methods=["POST"])
+def api_terminal_payment_cancel(payment_id: int):
+    event = require_active_event(kassensystem=True)
+    payment = TerminalPayment.query.filter_by(id=payment_id, event_id=event.id).first_or_404()
+
+    if payment.status != "pending":
+        return jsonify(
+            {
+                "success": False,
+                "error": "Zahlung ist nicht mehr aktiv.",
+                "payment_id": payment.id,
+                "status": payment.status,
+            }
+        ), 409
+
+    terminal = db.session.get(Terminal, payment.terminal_id)
+    if not terminal:
+        return jsonify({"success": False, "error": "Terminal nicht gefunden.", "status": payment.status}), 404
+
+    try:
+        response_raw = _sumup_client().cancel_terminal_payment(
+            payment_id=payment.sumup_payment_id or str(payment.id),
+            device_id=terminal.sumup_device_id,
+        )
+        payment.status = "aborted"
+        _log_terminal_payment_event(payment, "cancel_requested", {"raw": response_raw})
+        db.session.commit()
+        return jsonify({"success": True, "payment_id": payment.id, "status": payment.status})
+    except SumUpClientError as exc:
+        # If cancel is not possible anymore, try to reconcile and return current status.
+        try:
+            _reconcile_pending_terminal_payment(payment)
+            db.session.commit()
+        except SumUpClientError:
+            db.session.rollback()
+        error_payload = _sumup_error_payload(exc, context="terminal_payment_cancel")
+        _log_terminal_payment_event(payment, "cancel_error", error_payload)
+        db.session.commit()
+        return jsonify({**error_payload, "success": False, "status": payment.status}), _sumup_http_status_for_error(exc)
+
+
 @app.route("/admin/credentials", methods=["POST"])
 def update_credentials():
     """Route zum Aktualisieren der Admin-Credentials über das Webinterface.

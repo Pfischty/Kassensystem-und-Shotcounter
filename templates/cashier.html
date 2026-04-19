@@ -100,7 +100,7 @@
     display:flex;
     flex-direction:column;
     gap:0.4rem;
-    flex:0 0 200px;
+    flex:0 0 250px;
     align-self:flex-start;
   }
   .summary-actions a { width:100%; }
@@ -163,6 +163,42 @@
     justify-content: flex-end;
     gap: 0.5rem;
     flex-wrap: wrap;
+  }
+  .payment-status-chip {
+    display: inline-flex;
+    align-items: center;
+    border-radius: 999px;
+    padding: 0.2rem 0.55rem;
+    border: 1px solid var(--border);
+    font-size: 0.86rem;
+    font-weight: 600;
+  }
+  .payment-status-chip.pending { color: #facc15; }
+  .payment-status-chip.success { color: #22c55e; }
+  .payment-status-chip.error { color: #f87171; }
+  .payment-summary {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.55rem;
+  }
+  .payment-summary .hint {
+    margin-top: 0.15rem;
+  }
+  .payment-message {
+    border: 1px dashed var(--border);
+    border-radius: 10px;
+    padding: 0.55rem 0.65rem;
+    background: rgba(255,255,255,0.02);
+    min-height: 2.3rem;
+    color: #e2e8f0;
+  }
+  .payment-amount-tools {
+    display: flex;
+    gap: 0.45rem;
+    flex-wrap: wrap;
+  }
+  .payment-amount-tools button {
+    min-height: 40px;
   }
   
   /* Category grouping (compact) */
@@ -248,7 +284,8 @@
             <div class="hint">SumUp Zugangsdaten fehlen. Bitte im Adminbereich hinterlegen.</div>
           {% else %}
             <input type="hidden" id="terminal-select" value="">
-            <button class="primary" id="terminal-pay-btn" type="button">Zahlung am Terminal starten</button>
+            <button class="primary" id="terminal-pay-btn" type="button">Zahlung starten</button>
+            <button class="secondary" id="terminal-edit-btn" type="button">Zahlung bearbeiten</button>
             <div id="terminal-payment-status" class="terminal-status">Bereit.</div>
           {% endif %}
         </div>
@@ -318,6 +355,50 @@
           <button id="terminal-binding-save" class="primary" type="button">Bindung speichern</button>
         {% endif %}
         <button id="terminal-binding-done" class="secondary" type="button">Fertig</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="dialog-backdrop" id="terminal-payment-dialog" aria-hidden="true">
+    <div class="dialog-card" role="dialog" aria-modal="true" aria-labelledby="terminal-payment-title">
+      <div class="dialog-header">
+        <h3 id="terminal-payment-title" style="margin:0;">Terminalzahlung</h3>
+        <span id="payment-status-chip" class="payment-status-chip pending">Laufend</span>
+      </div>
+      <div class="payment-summary">
+        <div>
+          <strong>Betrag gesamt</strong>
+          <div class="hint" id="payment-amount">-</div>
+        </div>
+        <div>
+          <strong>Terminal</strong>
+          <div class="hint" id="payment-terminal-name">-</div>
+        </div>
+        <div>
+          <strong>Grundbetrag</strong>
+          <div class="hint" id="payment-base-amount">-</div>
+        </div>
+        <div>
+          <strong>Trinkgeld</strong>
+          <div class="hint" id="payment-tip-amount">0.00 CHF</div>
+        </div>
+      </div>
+      <div class="payment-amount-tools">
+        <button id="payment-tip-plus-btn" type="button" class="secondary">+1 CHF</button>
+        <button id="payment-round-btn" type="button" class="secondary">Auf 10er aufrunden</button>
+        <button id="payment-tip-reset-btn" type="button" class="secondary">Trinkgeld entfernen</button>
+      </div>
+      <div>
+        <strong>Aktueller Status</strong>
+        <div id="payment-message" class="payment-message">Bereit.</div>
+      </div>
+      <div class="dialog-actions">
+        <button id="payment-start-btn" type="button" class="primary" style="display:none;">Zahlung starten</button>
+        <button id="payment-cancel-btn" type="button" class="secondary" style="display:none;">Zahlung abbrechen</button>
+        <button id="payment-refresh-btn" type="button" class="secondary">Aktualisieren</button>
+        <button id="payment-retry-btn" type="button" class="secondary" style="display:none;">Erneut versuchen</button>
+        <button id="payment-checkout-btn" type="button" class="primary" style="display:none;">Bestellung abschliessen</button>
+        <button id="payment-close-btn" type="button" class="secondary">Schliessen</button>
       </div>
     </div>
   </div>
@@ -444,6 +525,7 @@
   }
 
   const terminalButton = document.getElementById('terminal-pay-btn');
+  const terminalEditButton = document.getElementById('terminal-edit-btn');
   const terminalSelect = document.getElementById('terminal-select');
   const terminalStatus = document.getElementById('terminal-payment-status');
   const terminalPanelTitle = document.getElementById('terminal-panel-title');
@@ -456,6 +538,22 @@
   const terminalBindingDoneBtn = document.getElementById('terminal-binding-done');
   const terminalBindingCloseBtn = document.getElementById('terminal-binding-close');
   const terminalBindingStatus = document.getElementById('terminal-binding-status');
+  const terminalPaymentDialog = document.getElementById('terminal-payment-dialog');
+  const paymentStatusChip = document.getElementById('payment-status-chip');
+  const paymentAmount = document.getElementById('payment-amount');
+  const paymentBaseAmount = document.getElementById('payment-base-amount');
+  const paymentTipAmount = document.getElementById('payment-tip-amount');
+  const paymentTerminalName = document.getElementById('payment-terminal-name');
+  const paymentMessage = document.getElementById('payment-message');
+  const paymentStartBtn = document.getElementById('payment-start-btn');
+  const paymentCancelBtn = document.getElementById('payment-cancel-btn');
+  const paymentRefreshBtn = document.getElementById('payment-refresh-btn');
+  const paymentRetryBtn = document.getElementById('payment-retry-btn');
+  const paymentCheckoutBtn = document.getElementById('payment-checkout-btn');
+  const paymentCloseBtn = document.getElementById('payment-close-btn');
+  const paymentTipPlusBtn = document.getElementById('payment-tip-plus-btn');
+  const paymentRoundBtn = document.getElementById('payment-round-btn');
+  const paymentTipResetBtn = document.getElementById('payment-tip-reset-btn');
   const fixedAssignedTerminalId = {{ assigned_terminal.id if assigned_terminal else 'null' }};
   const fixedAssignedTerminalName = {{ assigned_terminal.name|tojson if assigned_terminal else 'null' }};
   const hasInactiveTerminal = {{ 'true' if inactive_terminal else 'false' }};
@@ -464,6 +562,14 @@
   const browserTerminalStorageKey = 'cashier_terminal_binding_event_{{ event.id }}';
   let terminalPoller = null;
   let activePaymentId = null;
+  let paymentContext = {
+    status: 'draft',
+    terminalName: '',
+    baseAmountCents: 0,
+    tipCents: 0,
+    amountCents: 0,
+    message: 'Bereit.',
+  };
 
   function getTerminalNameById(id) {
     if (!terminalBindingSelect || !id) {
@@ -574,12 +680,196 @@
     }
   }
 
+  function formatAmount(cents) {
+    return `${(cents / 100).toFixed(2)} CHF`;
+  }
+
+  function openPaymentDialog() {
+    if (!terminalPaymentDialog) return;
+    terminalPaymentDialog.classList.add('open');
+    terminalPaymentDialog.setAttribute('aria-hidden', 'false');
+  }
+
+  function closePaymentDialog() {
+    if (!terminalPaymentDialog) return;
+    terminalPaymentDialog.classList.remove('open');
+    terminalPaymentDialog.setAttribute('aria-hidden', 'true');
+  }
+
+  function renderPaymentDialog() {
+    if (!terminalPaymentDialog) return;
+    const state = paymentContext.status;
+    if (paymentAmount) {
+      paymentAmount.textContent = paymentContext.amountCents > 0 ? formatAmount(paymentContext.amountCents) : '-';
+    }
+    if (paymentBaseAmount) {
+      paymentBaseAmount.textContent = paymentContext.baseAmountCents > 0 ? formatAmount(paymentContext.baseAmountCents) : '-';
+    }
+    if (paymentTipAmount) {
+      paymentTipAmount.textContent = formatAmount(Math.max(0, paymentContext.tipCents || 0));
+    }
+    if (paymentTerminalName) {
+      paymentTerminalName.textContent = paymentContext.terminalName || '-';
+    }
+    if (paymentMessage) {
+      paymentMessage.textContent = paymentContext.message || 'Status wird geladen …';
+    }
+
+    if (paymentStatusChip) {
+      paymentStatusChip.classList.remove('pending', 'success', 'error');
+      if (state === 'success') {
+        paymentStatusChip.textContent = 'Erfolgreich';
+        paymentStatusChip.classList.add('success');
+      } else if (state === 'failed' || state === 'aborted' || state === 'timeout' || state === 'error') {
+        paymentStatusChip.textContent = 'Fehler';
+        paymentStatusChip.classList.add('error');
+      } else if (state === 'draft') {
+        paymentStatusChip.textContent = 'Bereit';
+        paymentStatusChip.classList.add('pending');
+      } else {
+        paymentStatusChip.textContent = 'Laufend';
+        paymentStatusChip.classList.add('pending');
+      }
+    }
+
+    const isDoneSuccess = state === 'success';
+    const isPending = state === 'pending' && !!activePaymentId;
+    const isDraft = state === 'draft';
+    const isRetryState = state === 'failed' || state === 'aborted' || state === 'timeout' || state === 'error';
+    const canEditAmount = !isPending && !isDoneSuccess;
+    if (paymentStartBtn) {
+      paymentStartBtn.style.display = isDraft ? '' : 'none';
+      paymentStartBtn.disabled = paymentContext.amountCents <= 0 || !getSelectedTerminal();
+    }
+    if (paymentCancelBtn) {
+      paymentCancelBtn.style.display = isPending ? '' : 'none';
+      paymentCancelBtn.disabled = !isPending;
+    }
+    if (paymentCheckoutBtn) {
+      paymentCheckoutBtn.style.display = isDoneSuccess ? '' : 'none';
+    }
+    if (paymentRetryBtn) {
+      paymentRetryBtn.style.display = isRetryState ? '' : 'none';
+    }
+    if (paymentRefreshBtn) {
+      paymentRefreshBtn.disabled = !activePaymentId;
+    }
+    if (paymentTipPlusBtn) {
+      paymentTipPlusBtn.disabled = !canEditAmount;
+    }
+    if (paymentRoundBtn) {
+      paymentRoundBtn.disabled = !canEditAmount;
+    }
+    if (paymentTipResetBtn) {
+      paymentTipResetBtn.disabled = !canEditAmount || (paymentContext.tipCents || 0) <= 0;
+    }
+  }
+
+  function updatePaymentState(status, message) {
+    paymentContext.status = status;
+    paymentContext.message = message;
+    renderPaymentDialog();
+  }
+
+  function prepareTerminalPaymentDialog() {
+    const terminalId = getSelectedTerminal();
+    const total = getCartTotal();
+    if (!terminalId || total <= 0) {
+      setTerminalStatus('Bitte Terminal wählen und Betrag prüfen.', 'error');
+      paymentContext = {
+        status: 'error',
+        terminalName: getTerminalNameById(terminalId) || fixedAssignedTerminalName || '',
+        baseAmountCents: Math.round(total * 100),
+        tipCents: 0,
+        amountCents: Math.round(total * 100),
+        message: 'Bitte Terminal wählen und Betrag prüfen.',
+      };
+      renderPaymentDialog();
+      openPaymentDialog();
+      return;
+    }
+
+    const terminalName = fixedAssignedTerminalName || getTerminalNameById(terminalId) || `#${terminalId}`;
+    paymentContext = {
+      status: 'draft',
+      terminalName,
+      baseAmountCents: Math.round(total * 100),
+      tipCents: 0,
+      amountCents: Math.round(total * 100),
+      message: 'Betrag prüfen und Zahlung starten.',
+    };
+    renderPaymentDialog();
+    openPaymentDialog();
+  }
+
+  async function startTerminalPayment() {
+    const terminalId = getSelectedTerminal();
+    const amountCents = paymentContext.amountCents > 0 ? paymentContext.amountCents : Math.round(getCartTotal() * 100);
+    const terminalName = fixedAssignedTerminalName || getTerminalNameById(terminalId) || paymentContext.terminalName || `#${terminalId}`;
+
+    if (!terminalId || amountCents <= 0) {
+      setTerminalStatus('Bitte Terminal wählen und Betrag prüfen.', 'error');
+      updatePaymentState('error', 'Bitte Terminal wählen und Betrag prüfen.');
+      return;
+    }
+
+    paymentContext = {
+      ...paymentContext,
+      status: 'pending',
+      terminalName,
+      amountCents,
+      message: 'Zahlung wird gestartet …',
+    };
+    renderPaymentDialog();
+    openPaymentDialog();
+
+    terminalButton.disabled = true;
+    setTerminalStatus('Zahlung wird gestartet …');
+    try {
+      const response = await fetch('/api/terminal-payments', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          terminal_id: parseInt(terminalId, 10),
+          amount_cents: amountCents,
+          currency: 'CHF',
+        }),
+      });
+      const data = await response.json();
+      if (!data.success) {
+        const errorText = data.error || 'Zahlung konnte nicht gestartet werden.';
+        setTerminalStatus(errorText, 'error');
+        activePaymentId = null;
+        updateTerminalPayState();
+        updatePaymentState('error', errorText);
+        return;
+      }
+      activePaymentId = data.payment_id;
+      setTerminalStatus('Zahlung läuft am Terminal …');
+      updatePaymentState('pending', 'Zahlung läuft am Terminal …');
+      stopPolling();
+      terminalPoller = setInterval(() => pollTerminalStatus(activePaymentId), 2000);
+      await pollTerminalStatus(activePaymentId);
+    } catch (error) {
+      console.error('Start-Fehler:', error);
+      setTerminalStatus('Zahlung konnte nicht gestartet werden.', 'error');
+      activePaymentId = null;
+      updateTerminalPayState();
+      updatePaymentState('error', 'Zahlung konnte nicht gestartet werden.');
+    }
+  }
+
   function updateTerminalPayState() {
     if (!terminalButton) return;
     const total = getCartTotal();
     const terminalId = getSelectedTerminal();
     const disabled = total <= 0 || !terminalId || activePaymentId !== null;
     terminalButton.disabled = disabled;
+    if (terminalEditButton) {
+      terminalEditButton.disabled = disabled;
+    }
   }
 
   function stopPolling() {
@@ -594,20 +884,23 @@
       const response = await fetch(`/api/terminal-payments/${paymentId}`);
       const data = await response.json();
       if (!data.success) {
-        setTerminalStatus(data.error || 'Status konnte nicht geladen werden.', 'error');
+        const errorText = data.error || 'Status konnte nicht geladen werden.';
+        setTerminalStatus(errorText, 'error');
         stopPolling();
         activePaymentId = null;
         updateTerminalPayState();
+        updatePaymentState('error', errorText);
         return;
       }
       if (data.status === 'pending') {
         setTerminalStatus('Zahlung läuft am Terminal …');
+        updatePaymentState('pending', 'Bitte Zahlung direkt am Terminal bestätigen.');
         return;
       }
       if (data.status === 'success') {
-        setTerminalStatus('Zahlung erfolgreich. Bestellung wird abgeschlossen …', 'success');
+        setTerminalStatus('Zahlung erfolgreich.', 'success');
         stopPolling();
-        window.location.href = '/cashier/checkout';
+        updatePaymentState('success', 'Zahlung erfolgreich. Bestellung kann jetzt abgeschlossen werden.');
         return;
       }
       const statusText = {
@@ -619,13 +912,55 @@
       stopPolling();
       activePaymentId = null;
       updateTerminalPayState();
+      updatePaymentState(data.status || 'error', statusText);
     } catch (error) {
       console.error('Status-Fehler:', error);
       setTerminalStatus('Status konnte nicht geladen werden.', 'error');
       stopPolling();
       activePaymentId = null;
       updateTerminalPayState();
+      updatePaymentState('error', 'Status konnte nicht geladen werden.');
     }
+  }
+
+  function addTipCents(deltaCents) {
+    const base = paymentContext.baseAmountCents || Math.round(getCartTotal() * 100);
+    const currentTip = Math.max(0, paymentContext.tipCents || 0);
+    const nextTip = Math.max(0, currentTip + deltaCents);
+    paymentContext.baseAmountCents = base;
+    paymentContext.tipCents = nextTip;
+    paymentContext.amountCents = base + nextTip;
+    if (paymentContext.status === 'error' || paymentContext.status === 'failed' || paymentContext.status === 'aborted' || paymentContext.status === 'timeout') {
+      paymentContext.status = 'draft';
+      paymentContext.message = 'Betrag angepasst. Zahlung kann erneut gestartet werden.';
+    }
+    renderPaymentDialog();
+  }
+
+  function roundAmountUpToTen() {
+    const base = paymentContext.baseAmountCents || Math.round(getCartTotal() * 100);
+    const currentTotal = paymentContext.amountCents || base;
+    const roundedTotal = Math.ceil(currentTotal / 1000) * 1000;
+    paymentContext.baseAmountCents = base;
+    paymentContext.tipCents = Math.max(0, roundedTotal - base);
+    paymentContext.amountCents = base + paymentContext.tipCents;
+    if (paymentContext.status === 'error' || paymentContext.status === 'failed' || paymentContext.status === 'aborted' || paymentContext.status === 'timeout') {
+      paymentContext.status = 'draft';
+      paymentContext.message = 'Betrag aufgerundet. Zahlung kann erneut gestartet werden.';
+    }
+    renderPaymentDialog();
+  }
+
+  function resetTipAmount() {
+    const base = paymentContext.baseAmountCents || Math.round(getCartTotal() * 100);
+    paymentContext.baseAmountCents = base;
+    paymentContext.tipCents = 0;
+    paymentContext.amountCents = base;
+    if (paymentContext.status === 'error' || paymentContext.status === 'failed' || paymentContext.status === 'aborted' || paymentContext.status === 'timeout') {
+      paymentContext.status = 'draft';
+      paymentContext.message = 'Trinkgeld entfernt. Zahlung kann erneut gestartet werden.';
+    }
+    renderPaymentDialog();
   }
 
   if (terminalBindingSelect) {
@@ -682,42 +1017,109 @@
     initializeTerminalBinding();
     updateTerminalPayState();
     terminalButton.addEventListener('click', async () => {
-      const terminalId = getSelectedTerminal();
       const total = getCartTotal();
-      if (!terminalId || total <= 0) {
-        setTerminalStatus('Bitte Terminal wählen und Betrag prüfen.', 'error');
+      const terminalId = getSelectedTerminal();
+      const terminalName = fixedAssignedTerminalName || getTerminalNameById(terminalId) || `#${terminalId}`;
+      paymentContext = {
+        status: 'draft',
+        terminalName,
+        baseAmountCents: Math.round(total * 100),
+        tipCents: 0,
+        amountCents: Math.round(total * 100),
+        message: 'Zahlung wird gestartet …',
+      };
+      await startTerminalPayment();
+    });
+  }
+
+  if (terminalEditButton) {
+    terminalEditButton.addEventListener('click', prepareTerminalPaymentDialog);
+  }
+
+  if (paymentStartBtn) {
+    paymentStartBtn.addEventListener('click', startTerminalPayment);
+  }
+
+  if (paymentCloseBtn) {
+    paymentCloseBtn.addEventListener('click', closePaymentDialog);
+  }
+  if (terminalPaymentDialog) {
+    terminalPaymentDialog.addEventListener('click', (event) => {
+      if (event.target === terminalPaymentDialog) {
+        closePaymentDialog();
+      }
+    });
+  }
+  if (paymentRefreshBtn) {
+    paymentRefreshBtn.addEventListener('click', async () => {
+      if (!activePaymentId) {
         return;
       }
-      terminalButton.disabled = true;
-      setTerminalStatus('Zahlung wird gestartet …');
+      updatePaymentState('pending', 'Status wird aktualisiert …');
+      await pollTerminalStatus(activePaymentId);
+    });
+  }
+  if (paymentCancelBtn) {
+    paymentCancelBtn.addEventListener('click', async () => {
+      if (!activePaymentId) {
+        return;
+      }
+      updatePaymentState('pending', 'Zahlung wird abgebrochen …');
+      paymentCancelBtn.disabled = true;
       try {
-        const response = await fetch('/api/terminal-payments', {
+        const response = await fetch(`/api/terminal-payments/${activePaymentId}/cancel`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
           },
-          body: JSON.stringify({
-            terminal_id: parseInt(terminalId, 10),
-            amount_cents: Math.round(total * 100),
-            currency: 'CHF',
-          }),
         });
         const data = await response.json();
         if (!data.success) {
-          setTerminalStatus(data.error || 'Zahlung konnte nicht gestartet werden.', 'error');
-          terminalButton.disabled = false;
+          const errorText = data.error || 'Abbruch nicht möglich.';
+          setTerminalStatus(errorText, 'error');
+          updatePaymentState(data.status || 'error', errorText);
+          if (data.status !== 'pending') {
+            stopPolling();
+            activePaymentId = null;
+            updateTerminalPayState();
+          }
           return;
         }
-        activePaymentId = data.payment_id;
-        setTerminalStatus('Zahlung läuft am Terminal …');
         stopPolling();
-        terminalPoller = setInterval(() => pollTerminalStatus(activePaymentId), 2000);
-        await pollTerminalStatus(activePaymentId);
+        activePaymentId = null;
+        updateTerminalPayState();
+        setTerminalStatus('Zahlung abgebrochen.', 'error');
+        updatePaymentState('aborted', 'Zahlung wurde abgebrochen.');
       } catch (error) {
-        console.error('Start-Fehler:', error);
-        setTerminalStatus('Zahlung konnte nicht gestartet werden.', 'error');
-        terminalButton.disabled = false;
+        console.error('Cancel-Fehler:', error);
+        setTerminalStatus('Abbruch fehlgeschlagen.', 'error');
+        updatePaymentState('error', 'Abbruch fehlgeschlagen.');
       }
+    });
+  }
+  if (paymentRetryBtn) {
+    paymentRetryBtn.addEventListener('click', async () => {
+      await startTerminalPayment();
+    });
+  }
+  if (paymentTipPlusBtn) {
+    paymentTipPlusBtn.addEventListener('click', () => {
+      addTipCents(100);
+    });
+  }
+  if (paymentRoundBtn) {
+    paymentRoundBtn.addEventListener('click', () => {
+      roundAmountUpToTen();
+    });
+  }
+  if (paymentTipResetBtn) {
+    paymentTipResetBtn.addEventListener('click', () => {
+      resetTipAmount();
+    });
+  }
+  if (paymentCheckoutBtn) {
+    paymentCheckoutBtn.addEventListener('click', () => {
+      window.location.href = '/cashier/checkout';
     });
   }
 </script>
