@@ -1228,7 +1228,7 @@ def create_event():
         if "auto_reload_on_add" in request.form:
             shared_settings["auto_reload_on_add"] = bool(request.form.get("auto_reload_on_add"))
         else:
-            shared_settings["auto_reload_on_add"] = True
+            shared_settings["auto_reload_on_add"] = False
 
         shared_settings = validate_shared_settings(shared_settings)
         

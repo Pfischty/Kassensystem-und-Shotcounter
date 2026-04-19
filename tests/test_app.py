@@ -127,14 +127,14 @@ def test_cashier_remove_last_ajax_mode(client):
     assert data["cart"]["item_count"] == 1
 
 
-def test_auto_reload_setting_defaults_to_true(client):
-    """Test that auto_reload_on_add defaults to true for backward compatibility."""
+def test_auto_reload_setting_defaults_to_false(client):
+    """Test that auto_reload_on_add defaults to false (opt-in)."""
     event = _create_and_activate_event(client)
     
     with app.app_context():
         event = Event.query.filter_by(name="Test Event").first()
-        # If shared_settings is None or doesn't have the key, it should default to True
-        assert event.shared_settings is None or event.shared_settings.get("auto_reload_on_add", True) is True
+        assert event.shared_settings is not None
+        assert event.shared_settings.get("auto_reload_on_add") is False
 
 
 def test_auto_reload_setting_can_be_disabled(client):
