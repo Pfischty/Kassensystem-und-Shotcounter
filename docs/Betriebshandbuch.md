@@ -23,7 +23,7 @@ Im typischen Eventbetrieb gehören dazu:
 
 ## 2. Vorbereitung vor dem Event
 
-### 2.1 Raspberry Pi einschalten
+### 2.1 Raspberry Pi setup
 
 1. Raspberry Pi mit Strom verbinden.
 2. PoE Injector mit Strom verbinden.
@@ -39,7 +39,7 @@ Im typischen Eventbetrieb gehören dazu:
 3. Tablet oder Laptop ebenfalls mit demselben Netz verbinden.
 4. Falls auch das nicht funktioniert, `http://192.168.50.1:8000` verwenden.
 
-![QR-Code für http://192.168.50.1:8000](assets/qr_kassensystem_192_168_50_1_8000.png)
+![QR-Code für http://192.168.50.1:8000](assets/qr_kassensystem_192_168_50_1_8000.png){ width=200px }
 
 Direktdateien:
 

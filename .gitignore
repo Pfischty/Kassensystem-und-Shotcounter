@@ -16,4 +16,7 @@ instance/
 # Credentials (not to be committed)
 credentials.json
 
+# Generated docs output
+output/
+
 .DS_Store

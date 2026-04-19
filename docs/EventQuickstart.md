@@ -6,14 +6,14 @@ Diese Seite ist für den schnellen Start am Event gedacht. Sie enthält nur die 
 
 Falls das Gerät noch nicht im Event-Netz ist, zuerst den WLAN-QR-Code scannen:
 
-![QR-Code für das Event-WLAN](assets/qr_wifi_nsa_proxy.png)
+![QR-Code für das Event-WLAN](assets/qr_wifi_nsa_proxy.png){ width=200px }
 
 
 ## 2. Kasse öffnen
 
 Danach den QR-Code für die Kasse scannen:
 
-![QR-Code für die Kasse](assets/qr_kassensystem_cashier_192_168_50_1_8000.png)
+![QR-Code für die Kasse](assets/qr_kassensystem_cashier_192_168_50_1_8000.png){ width=200px }
 
 Direktlink zur Kasse:
 
