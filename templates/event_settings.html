@@ -390,6 +390,13 @@
     </div>
 
       <div class="tabs__panel" data-tab-panel="cashier">
+        <div class="stack" style="margin-bottom: 0.8rem; max-width: 280px;">
+          <strong>Kasse Darstellung</strong>
+          <label class="stack">
+            <span>Kasse Schriftgröße (rem)</span>
+            <input type="number" step="0.1" min="0.5" max="2.5" data-cashier-font-size-field>
+          </label>
+        </div>
         <div class="product-editor product-editor--compact" data-product-editor data-editor-mode="cashier" data-scope="{{ event.id }}-cashier" data-items='{{ event_buttons.get(event.id, default_buttons) | tojson }}'>
           <div class="product-editor__top">
             <div>

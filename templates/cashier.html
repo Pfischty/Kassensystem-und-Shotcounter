@@ -5,6 +5,7 @@
 
 <style>
   .cashier-page {
+    font-size: calc(1rem * var(--cashier-font-scale, 1));
     display: flex;
     flex-direction: column;
     gap: 0.5rem;
@@ -41,7 +42,7 @@
   .cashier-tile:hover { transform: translateY(-2px); box-shadow:0 12px 30px rgba(0,0,0,0.3); }
   .action-buttons { display:flex; gap:0.75rem; flex-wrap: wrap; }
   .action-buttons button { padding:0.9rem 1.1rem; font-size:1rem; }
-  .checkout-btn { padding:1.25rem 1.65rem; font-size:1.1rem; min-height:72px; }
+  .checkout-btn { padding:1.25rem 1.65rem; font-size:1.1em; min-height:72px; }
   .summary-card { display:flex; flex-direction:column; gap:0.45rem; min-height: 200px; }
   .event-controls {
     display:flex;
@@ -59,7 +60,7 @@
     white-space: nowrap;
   }
   .event-terminal {
-    font-size: 0.9rem;
+    font-size: 0.9em;
     color: #cbd5e1;
     white-space: nowrap;
     flex: 1 1 auto;
@@ -141,7 +142,7 @@
   .order-depot-note {
     margin-top: 0;
     text-align: right;
-    font-size: 0.9rem;
+    font-size: 0.9em;
     color: #9ca3af;
     font-weight: 600;
     font-variant-numeric: tabular-nums;
@@ -151,7 +152,7 @@
     text-align: right;
     white-space: nowrap;
     font-weight: 800;
-    font-size: 1.45rem;
+    font-size: 1.45em;
     color: #f8fafc;
     font-variant-numeric: tabular-nums;
   }
@@ -179,10 +180,10 @@
   .summary-actions button {
     width: 100%;
     min-height:60px;
-    font-size:1rem;
+    font-size:1em;
     padding:0.85rem 1.2rem;
   }
-  .hint { font-size: 0.9rem; color: #cbd5e1; }
+  .hint { font-size: 0.9em; color: #cbd5e1; }
   .terminal-panel {
     border: 1px dashed var(--border);
     border-radius: 10px;
@@ -193,7 +194,7 @@
     gap: 0.4rem;
   }
   .terminal-status {
-    font-size: 0.95rem;
+    font-size: 0.95em;
     color: #cbd5e1;
     min-height: 1.4rem;
   }
@@ -282,7 +283,7 @@
   }
   .category-title {
     margin: 0 0 0.25rem 0;
-    font-size: 0.85rem;
+    font-size: 0.85em;
     font-weight: 600;
     color: #94a3b8;
     text-transform: uppercase;
@@ -302,7 +303,7 @@
   }
 </style>
 
-<div class="cashier-page">
+<div class="cashier-page" style="--cashier-font-scale: {{ cashier_font_size }};">
   <div class="card summary-card">
     <div class="summary-body">
       <div class="order-section">

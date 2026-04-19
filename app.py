@@ -820,6 +820,7 @@ DEFAULT_SHOTCOUNTER_SETTINGS: Dict[str, int | float | str] = {
 
 DEFAULT_PRICE_LIST_SETTINGS: Dict[str, int | float | str | list] = {
     "font_size": 1.4,  # rem
+    "cashier_font_size": 1.0,  # rem scale for cashier page
     "rotation_seconds": 10,
     "background_mode": "none",  # none | custom
     "background_color": "#0b1222",
@@ -1101,6 +1102,9 @@ def validate_price_list_settings(raw: dict | None) -> Dict[str, int | float | st
     incoming = raw if isinstance(raw, dict) else {}
     settings["font_size"] = _sanitize_font_size(
         incoming.get("font_size"), float(DEFAULT_PRICE_LIST_SETTINGS["font_size"])
+    )
+    settings["cashier_font_size"] = _sanitize_font_size(
+        incoming.get("cashier_font_size"), float(DEFAULT_PRICE_LIST_SETTINGS["cashier_font_size"])
     )
     settings["rotation_seconds"] = _sanitize_rotation_seconds(
         incoming.get("rotation_seconds"), int(DEFAULT_PRICE_LIST_SETTINGS["rotation_seconds"])
@@ -3223,6 +3227,7 @@ def cashier():
     category_order = kass_settings.get("category_order") or []
     category_visibility = kass_settings.get("category_visibility") or {}
     cart_data = _get_cart_data(event)
+    price_settings = resolve_price_list_settings(event)
     assigned_terminal, inactive_terminal = _resolve_terminal_assignment(event)
     available_terminals = _available_terminals_for_event(event)
     sumup_settings = _sumup_settings()
@@ -3268,6 +3273,7 @@ def cashier():
         items=cart_data["items"], 
         total=cart_data["total"], 
         depot_total=cart_data["depot_total"],
+        cashier_font_size=float(price_settings.get("cashier_font_size", 1.0)),
         event=event,
         auto_reload=auto_reload,
         assigned_terminal=assigned_terminal,
