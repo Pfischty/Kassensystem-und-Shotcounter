@@ -829,6 +829,16 @@ DEFAULT_PRICE_LIST_SETTINGS: Dict[str, int | float | str | list] = {
 HEX_COLOR_PATTERN = re.compile(r"^#([0-9a-fA-F]{6}|[0-9a-fA-F]{3})$")
 
 
+def _coerce_bool(value) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "ja", "on"}
+    return False
+
+
 def parse_json_field(raw_value: str | None) -> Dict:
     if not raw_value:
         return {}
@@ -1172,7 +1182,7 @@ def resolve_button_config(event: Event | None) -> List[ButtonConfig]:
                     or default_color_lookup.get(item.get("css_class", ""))
                     or "#1f2a44",
                     category=item.get("category", "Standard"),
-                    has_depot=item.get("has_depot") is True,
+                    has_depot=_coerce_bool(item.get("has_depot")),
                     depot_price=depot_price,
                     priority=priority,
                 )
@@ -1234,7 +1244,7 @@ def validate_and_normalize_buttons(settings: Dict | None) -> Dict:
                 "css_class": item.get("css_class") or "custom",
                 "color": item.get("color"),
                 "category": item.get("category") or "Standard",
-                "has_depot": item.get("has_depot") is True,
+                "has_depot": _coerce_bool(item.get("has_depot")),
                 "priority": priority,
             }
         )
@@ -3171,7 +3181,9 @@ def _get_cart_data(event):
     label_map = {button.name: (button.label or button.name) for button in buttons}
     items = session.get(cart_key(event), [])
     prices = {button.name: button.price_with_depot for button in buttons}
+    depot_prices = {button.name: (button.depot_price if button.has_depot else 0) for button in buttons}
     total = sum(prices.get(item, 0) for item in items)
+    depot_total = sum(depot_prices.get(item, 0) for item in items)
     grouped = Counter(items).items()
     detailed_items = [
         {
@@ -3186,6 +3198,7 @@ def _get_cart_data(event):
     return {
         "items": detailed_items,
         "total": total,
+        "depot_total": depot_total,
         "item_count": len(items)
     }
 
@@ -3254,6 +3267,7 @@ def cashier():
         buttons_by_category=buttons_by_category, 
         items=cart_data["items"], 
         total=cart_data["total"], 
+        depot_total=cart_data["depot_total"],
         event=event,
         auto_reload=auto_reload,
         assigned_terminal=assigned_terminal,

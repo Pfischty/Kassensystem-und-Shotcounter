@@ -84,19 +84,21 @@
   }
   .icon-button:hover { background: rgba(255,255,255,0.12); transform: translateY(-1px); }
   .icon-button svg { width: 16px; height: 16px; }
-  .summary-body { display:flex; gap:0.6rem; align-items:stretch; }
+  .summary-body { display:flex; gap:0.6rem; align-items:stretch; min-height: 280px; }
   .order-section {
     display: flex;
     flex-direction: column;
     flex: 1;
     min-width: 0;
+    min-height: 0;
     gap: 0.35rem;
   }
   .order-list-wrap {
     display: flex;
     flex-direction: column;
-    min-height: 130px;
-    max-height: 200px;
+    flex: 1 1 auto;
+    min-height: 170px;
+    max-height: none;
     overflow: auto;
     border: 1px dashed var(--border);
     border-radius: 10px;
@@ -130,28 +132,28 @@
     text-overflow: ellipsis;
     white-space: nowrap;
   }
-  .order-total-row {
-    margin-top: 0.55rem;
+  .order-total-block {
+    margin-top: 0.45rem;
     padding-top: 0.55rem;
     border-top: 2px solid rgba(148, 163, 184, 0.45);
-    display: flex;
-    justify-content: flex-end;
-    gap: 0.65rem;
-    align-items: baseline;
+    text-align: right;
+  }
+  .order-depot-note {
+    margin-top: 0;
+    text-align: right;
+    font-size: 0.9rem;
+    color: #9ca3af;
+    font-weight: 600;
     font-variant-numeric: tabular-nums;
   }
-  .order-total-label,
   .order-total-value {
+    margin-top: 0.1rem;
     text-align: right;
     white-space: nowrap;
     font-weight: 800;
     font-size: 1.45rem;
     color: #f8fafc;
-  }
-  .order-total-value {
-    display: inline-block;
-    min-width: 7.2ch;
-    text-align: right;
+    font-variant-numeric: tabular-nums;
   }
   .summary-actions-header {
     display: flex;
@@ -320,8 +322,8 @@
             <p style="margin:0;">Noch keine Artikel im Warenkorb.</p>
           {% endif %}
         </div>
-        <div class="order-total-row">
-          <div class="order-total-label">Total</div>
+        <div class="order-total-block">
+          <div class="order-depot-note">inkl. Depot <span data-cart-depot>{{ depot_total }}</span> CHF</div>
           <div class="order-total-value"><strong data-cart-total>{{ total }}</strong> CHF</div>
         </div>
       </div>
@@ -541,6 +543,10 @@
     if (totalElement) {
       totalElement.textContent = cartData.total;
     }
+      const depotElement = document.querySelector('[data-cart-depot]');
+      if (depotElement) {
+        depotElement.textContent = cartData.depot_total || 0;
+      }
 
     updateTerminalPayState();
     
