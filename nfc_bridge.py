@@ -163,12 +163,30 @@ def _post_json(path: str, payload: dict, token: str) -> None:
         resp.read()
 
 
+def _describe_post_error(exc: Exception) -> str:
+    """Übersetzt einen HTTP-Fehler in eine Meldung, die direkt zur Ursache führt.
+
+    Ein 403 sieht auf den ersten Blick wie ein Erreichbarkeitsproblem aus,
+    ist aber praktisch immer ein Token-Mismatch mit instance/nfc_secret.txt
+    (z. B. weil die Datei neu erzeugt wurde, während die App schon lief).
+    """
+
+    if isinstance(exc, error.HTTPError) and exc.code == 403:
+        return (
+            f"{exc} - Token stimmt nicht mit {SECRET_FILE} überein. "
+            "Die App liest den Token inzwischen bei jeder Anfrage frisch ein, "
+            "das sollte sich also von selbst lösen; bleibt es bestehen, prüfen, "
+            "ob Bridge und App dasselbe instance/-Verzeichnis sehen."
+        )
+    return str(exc)
+
+
 def send_scan(uid: str, token: str) -> None:
     try:
         _post_json("/internal/nfc/scan", {"uid": uid}, token)
         logger.info("Scan gemeldet: UID=%s", uid)
     except (error.URLError, error.HTTPError, TimeoutError) as exc:
-        logger.warning("Scan konnte nicht gemeldet werden (App erreichbar?): %s", exc)
+        logger.warning("Scan konnte nicht gemeldet werden: %s", _describe_post_error(exc))
 
 
 def send_heartbeat(token: str, reader_name: str | None, error_message: str | None = None) -> None:
@@ -179,7 +197,7 @@ def send_heartbeat(token: str, reader_name: str | None, error_message: str | Non
             token,
         )
     except (error.URLError, error.HTTPError, TimeoutError) as exc:
-        logger.debug("Heartbeat konnte nicht gemeldet werden: %s", exc)
+        logger.debug("Heartbeat konnte nicht gemeldet werden: %s", _describe_post_error(exc))
 
 
 def get_uid(connection) -> str | None:

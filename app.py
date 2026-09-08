@@ -3798,10 +3798,21 @@ def _normalize_uid(raw: str | None) -> str | None:
 
 
 def _nfc_bridge_authorized() -> bool:
-    """Nur der lokale NFC-Bridge-Prozess darf Scans/Heartbeats einliefern."""
+    """Nur der lokale NFC-Bridge-Prozess darf Scans/Heartbeats einliefern.
+
+    Der Token wird bei jeder Anfrage frisch von der Festplatte gelesen statt
+    nur die beim App-Start gecachte NFC_BRIDGE_TOKEN-Konstante zu vergleichen.
+    Grund: Wird instance/nfc_secret.txt neu erzeugt, während die App schon
+    läuft (z. B. versehentlich gelöscht, aus einem Backup wiederhergestellt,
+    o. Ä.), würde die App sonst jede Anfrage der Bridge mit 403 ablehnen, bis
+    sie manuell neu gestartet wird - und der Fehler sieht dabei aus wie ein
+    Erreichbarkeitsproblem, nicht wie ein Token-Mismatch. Ein Datei-Read pro
+    Anfrage ist bei der geringen Frequenz (alle paar Sekunden) vernachlässigbar.
+    """
 
     token = request.headers.get("X-Nfc-Token", "")
-    if not secrets.compare_digest(token, NFC_BRIDGE_TOKEN):
+    current_token = _load_or_create_nfc_secret()
+    if not secrets.compare_digest(token, current_token):
         return False
     remote_addr = request.remote_addr or ""
     return remote_addr in {"127.0.0.1", "::1", "localhost"}
