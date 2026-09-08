@@ -272,6 +272,7 @@ class NfcCard(db.Model):
     label = db.Column(db.String(150))
     created_at = db.Column(db.DateTime, default=utcnow)
     last_scanned_at = db.Column(db.DateTime)
+    last_shot_booked_at = db.Column(db.DateTime)
 
     event = db.relationship("Event", backref=db.backref("nfc_cards", cascade="all, delete-orphan"))
     team = db.relationship("Team", backref=db.backref("nfc_cards", cascade="all, delete-orphan"))
@@ -430,10 +431,34 @@ def ensure_runtime_indexes() -> None:
         raise
 
 
+def ensure_nfc_card_schema() -> None:
+    """Fügt nachträglich neue NfcCard-Spalten hinzu (Self-Healing wie
+    ensure_runtime_schema, aber per ALTER TABLE statt CREATE TABLE - denn
+    db.create_all() legt nur fehlende TABELLEN an, ändert aber keine
+    bereits existierenden). Nötig, weil Installationen, die das NFC-Feature
+    schon vor dieser Spalte genutzt haben, sonst mit 'no such column'
+    abstürzen würden."""
+
+    try:
+        inspector = sqla_inspect(db.engine)
+        if not inspector.has_table("nfc_card"):
+            return  # wird von ensure_runtime_schema() frisch mit allen Spalten angelegt
+        existing_columns = {col["name"] for col in inspector.get_columns("nfc_card")}
+        if "last_shot_booked_at" not in existing_columns:
+            db.session.execute(text("ALTER TABLE nfc_card ADD COLUMN last_shot_booked_at DATETIME"))
+            db.session.commit()
+            app.logger.info("Spalte 'last_shot_booked_at' zu nfc_card hinzugefügt (Schema-Selbstheilung).")
+    except Exception as exc:
+        db.session.rollback()
+        app.logger.error("NfcCard-Schema-Selbstheilung fehlgeschlagen: %s", exc)
+        raise
+
+
 if not app.config.get("TESTING"):
     with app.app_context():
         ensure_runtime_schema()
         ensure_runtime_indexes()
+        ensure_nfc_card_schema()
 
 
 _schema_checked = False
@@ -3730,6 +3755,14 @@ def add_shots():
     )
     db.session.commit()
     app.logger.info("%s Shots zu Team %s hinzugefügt (Event %s)", amount, team.name, event.name)
+
+    nfc_uid = _normalize_uid(request.form.get("nfc_uid"))
+    if nfc_uid:
+        card = NfcCard.query.filter_by(uid=nfc_uid, event_id=event.id).first()
+        if card:
+            card.last_shot_booked_at = utcnow()
+            db.session.commit()
+
     flash("Shots verbucht.", "success")
     return redirect(_redirect_target())
 
@@ -3785,6 +3818,10 @@ def delete_team(team_id: int):
 # ---------------------------------------------------------------------------
 NFC_PROGRAM_TIMEOUT_SECONDS = 60
 NFC_SCAN_DEBOUNCE_SECONDS = 4
+# Nach dem Buchen von Shots wird dieselbe Karte für eine Weile ignoriert,
+# damit das Popup nicht sofort wieder aufspringt, nur weil die Karte noch
+# auf dem Leser liegt (z. B. während das Personal sie gerade zurückgibt).
+NFC_POST_BOOKING_COOLDOWN_SECONDS = 10
 NFC_UID_PATTERN = re.compile(r"^[0-9A-F]{6,40}$")
 
 
@@ -4119,6 +4156,16 @@ def nfc_poll():
     # vertrauen: Zwischen Erkennung und Abholung kann die Karte inzwischen
     # (z. B. per Anlernen) einem Team zugeordnet worden sein.
     card = NfcCard.query.filter_by(uid=latest.uid, event_id=event.id).first()
+
+    if card and card.last_shot_booked_at:
+        cooldown_ends = card.last_shot_booked_at + timedelta(seconds=NFC_POST_BOOKING_COOLDOWN_SECONDS)
+        if utcnow() < cooldown_ends:
+            # Karte liegt vermutlich noch auf dem Leser, kurz nachdem gerade
+            # für sie gebucht wurde - Popup unterdrücken, statt es sofort
+            # wieder aufspringen zu lassen.
+            db.session.commit()
+            return jsonify({"success": True, "scan": None})
+
     team_payload = None
     if card:
         team_payload = {"id": card.team.id, "name": card.team.name, "shots": card.team.shots}

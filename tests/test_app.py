@@ -9,7 +9,9 @@ from sqlalchemy.exc import IntegrityError
 from app import (
     Event,
     NFC_BRIDGE_TOKEN,
+    NFC_POST_BOOKING_COOLDOWN_SECONDS,
     NfcCard,
+    NfcScanEvent,
     Order,
     PaymentLog,
     Team,
@@ -175,6 +177,55 @@ def test_nfc_quick_bind_creates_team_and_card(client):
 
     with app.app_context():
         assert NfcCard.query.filter_by(uid="04AA00", event_id=event.id).count() == 1
+
+
+def test_add_shots_via_nfc_starts_post_booking_cooldown(client):
+    """Nach dem Buchen per Karte soll dieselbe Karte für eine Weile keinen
+    neuen Popup-Scan mehr auslösen (siehe NFC_POST_BOOKING_COOLDOWN_SECONDS)."""
+
+    event = _create_and_activate_event(client)
+    bind_resp = client.post(
+        "/shotcounter/nfc/cards",
+        data=json.dumps({"uid": "04C00101", "new_team_name": "Cooldown Team"}),
+        content_type="application/json",
+    )
+    team_id = bind_resp.get_json()["team"]["id"]
+
+    client.post("/shotcounter/shots", data={"team_id": team_id, "amount": 2, "nfc_uid": "04C00101"})
+
+    with app.app_context():
+        card = NfcCard.query.filter_by(uid="04C00101", event_id=event.id).first()
+        assert card.last_shot_booked_at is not None
+
+        # Ein Scan direkt danach soll wegen des Cooldowns unterdrückt werden.
+        db.session.add(NfcScanEvent(event_id=event.id, uid="04C00101"))
+        db.session.commit()
+
+    poll = client.get("/shotcounter/nfc/poll").get_json()
+    assert poll["scan"] is None
+
+
+def test_nfc_poll_resumes_after_cooldown_expires(client):
+    event = _create_and_activate_event(client)
+    bind_resp = client.post(
+        "/shotcounter/nfc/cards",
+        data=json.dumps({"uid": "04C00102", "new_team_name": "Abgelaufen Team"}),
+        content_type="application/json",
+    )
+    team_id = bind_resp.get_json()["team"]["id"]
+
+    with app.app_context():
+        card = NfcCard.query.filter_by(uid="04C00102", event_id=event.id).first()
+        card.last_shot_booked_at = app_module.utcnow() - timedelta(
+            seconds=NFC_POST_BOOKING_COOLDOWN_SECONDS + 5
+        )
+        db.session.add(NfcScanEvent(event_id=event.id, uid="04C00102"))
+        db.session.commit()
+
+    poll = client.get("/shotcounter/nfc/poll").get_json()
+    assert poll["scan"] is not None
+    assert poll["scan"]["known"] is True
+    assert poll["scan"]["team"]["id"] == team_id
 
 
 def test_export_teams_csv_includes_bound_card(client):
@@ -355,6 +406,28 @@ def test_nfc_bridge_process_routes_use_manager(client, monkeypatch):
     )
     stop_resp = client.post("/shotcounter/nfc/bridge/stop").get_json()
     assert stop_resp == {"success": True, "message": "Gestoppt."}
+
+
+def test_ensure_nfc_card_schema_adds_missing_column(client):
+    """Simuliert eine Installation, die nfc_card schon vor der Spalte
+    last_shot_booked_at angelegt hat - db.create_all() ändert bestehende
+    Tabellen nicht, daher braucht es die eigene Selbstheilung per ALTER TABLE."""
+
+    from sqlalchemy import inspect as sqla_inspect, text
+
+    with app.app_context():
+        db.session.execute(text("ALTER TABLE nfc_card DROP COLUMN last_shot_booked_at"))
+        db.session.commit()
+
+        inspector = sqla_inspect(db.engine)
+        columns_before = {col["name"] for col in inspector.get_columns("nfc_card")}
+        assert "last_shot_booked_at" not in columns_before
+
+        app_module.ensure_nfc_card_schema()
+
+        inspector = sqla_inspect(db.engine)
+        columns_after = {col["name"] for col in inspector.get_columns("nfc_card")}
+        assert "last_shot_booked_at" in columns_after
 
 
 def test_health_endpoint(client):

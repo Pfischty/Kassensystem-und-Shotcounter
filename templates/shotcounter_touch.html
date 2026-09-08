@@ -177,6 +177,7 @@
     <form id="shot-form" method="post" action="{{ url_for('add_shots') }}">
       <input type="hidden" name="team_id" id="team-id-input">
       <input type="hidden" name="amount" id="amount-input">
+      <input type="hidden" name="nfc_uid" id="nfc-uid-input">
       <input type="hidden" name="next" value="{{ url_for('shotcounter_touch') }}">
     </form>
   </div>
@@ -238,6 +239,7 @@
   const teamSelect = document.getElementById("team-select");
   const amountInput = document.getElementById("amount-input");
   const teamIdInput = document.getElementById("team-id-input");
+  const nfcUidInput = document.getElementById("nfc-uid-input");
   const form = document.getElementById("shot-form");
   let buffer = "";
 
@@ -282,6 +284,7 @@
     }
     teamIdInput.value = teamId;
     amountInput.value = amount;
+    nfcUidInput.value = "";
     form.submit();
   });
 
@@ -314,8 +317,9 @@
     nfcDisplayEl.textContent = nfcBuffer || "0";
   };
 
-  function openNfcModalKnown(team) {
+  function openNfcModalKnown(team, uid) {
     nfcCurrentTeam = team;
+    if (uid) nfcCurrentUid = uid;
     nfcBuffer = "";
     updateNfcDisplay();
     nfcTeamNameEl.textContent = `${team.name} (${team.shots} Shots)`;
@@ -362,6 +366,7 @@
     }
     teamIdInput.value = nfcCurrentTeam.id;
     amountInput.value = amount;
+    nfcUidInput.value = nfcCurrentUid || "";
     form.submit();
   });
   document.getElementById("nfc-create-team-btn").addEventListener("click", async () => {
@@ -398,7 +403,7 @@
       const data = await res.json();
       if (!data.success || !data.scan) return;
       if (data.scan.known) {
-        openNfcModalKnown(data.scan.team);
+        openNfcModalKnown(data.scan.team, data.scan.uid);
       } else {
         openNfcModalUnknown(data.scan.uid);
       }
