@@ -106,6 +106,26 @@ Es wird nur die UID der Karte gespeichert (kein Beschreiben des Kartenspeichers)
 das funktioniert mit praktisch jedem NFC-Wristband/jeder Karte und kommt ohne
 Mifare-Schlüsselverwaltung aus.
 
+### Update auf eine Version mit NFC-Support
+Ein reines `git pull`/Code-kopieren allein reicht für dieses Feature **nicht
+ganz**, weil ein neuer systemd-Dienst nicht von selbst entsteht:
+- **App-Code selbst** (neue Seiten, DB-Tabellen, Team-Import/Export) läuft
+  sofort nach einem normalen `update`/Neustart — die Tabellen werden beim
+  Start automatisch angelegt, kein manueller Migrationsschritt nötig.
+- **`pyscard`-Abhängigkeit**: wird von `sudo ./scripts/pi_manage.sh update`
+  automatisch mitinstalliert (ruft intern `install-deps` auf).
+- **Der NFC-Bridge-Dienst selbst muss einmalig eingerichtet werden**, wenn
+  er auf diesem Gerät noch nie lief:
+  ```bash
+  sudo ./scripts/pi_manage.sh write-nfc
+  sudo ./scripts/pi_manage.sh enable-nfc
+  ```
+  `update` erkennt das und gibt genau diesen Hinweis aus, falls nötig.
+- **War der Dienst schon einmal eingerichtet**, hält jedes weitere
+  `sudo ./scripts/pi_manage.sh update` ihn automatisch mit aktuell: Kernel-
+  Treiber-Fix wird erneut angewendet (idempotent) und der Dienst neu
+  gestartet — ab dann reicht tatsächlich "pullen und läuft".
+
 ### Geräteerkennung auf mehreren Instanzen
 Der Leser wird nicht über einen festen USB-Pfad angesprochen, sondern über
 PC/SC autoerkannt (`smartcard.System.readers()` fragt bei jedem Zyklus den
@@ -121,6 +141,45 @@ laufenden `pcscd`/PC/SC-Dienst ab). Das bedeutet:
   transparent statt "zufällig" zu wirken.
 - Der gewählte Lesername wird beim Start bzw. bei einem Wechsel einmalig
   geloggt (`instance/logs/nfc_bridge.log`, Zeile "Verwende Leser: ...").
+
+### Bekanntes Problem: ACR122U wird unter Linux vom Kernel blockiert
+Das mit Abstand häufigste Problem mit dem ACR122U auf Linux/Raspberry Pi:
+Der Leser basiert intern auf dem **PN532-Chipsatz**. Der Linux-Kernel bringt
+dafür ein eigenes NFC-Subsystem mit (Treiber `pn533_usb`), das dieselbe
+USB-ID kennt und die Schnittstelle **automatisch beansprucht, bevor `pcscd`
+per libusb zugreifen kann**. Symptom: `lsusb` zeigt den Leser an, aber
+`pcsc_scan` bzw. `nfc_bridge.py` finden ihn nie oder er flackert.
+
+**Fix (einmalig, wird von `write-nfc` automatisch mitgemacht):**
+```bash
+sudo ./scripts/pi_manage.sh nfc-fix-kernel-driver
+```
+Das schreibt eine Modprobe-Blacklist für `pn533_usb`, `pn533` und `nfc` und
+entlädt die Module, falls sie gerade aktiv sind. Falls das Entladen wegen
+"Modul in Benutzung" fehlschlägt, hilft ein einmaliger Neustart (`sudo reboot`)
+— danach lädt der Kernel die Module wegen der Blacklist gar nicht erst.
+
+**Verifizieren:**
+```bash
+lsusb -t                 # Zeile mit dem ACR122U sollte KEINEN Treiber mehr zeigen
+pcsc_scan                # sollte den Leser jetzt anzeigen und Kartenwechsel erkennen
+```
+
+Die Bridge (`nfc_bridge.py`) erkennt dieses Problem außerdem selbst zur
+Laufzeit: Findet sie keinen Leser und sind `pn533`/`pn533_usb`/`nfc` noch
+geladen, wird das explizit geloggt und als Fehlermeldung im Heartbeat an die
+App gemeldet (sichtbar auf `/shotcounter/nfc` statt eines nichtssagenden
+"kein Leser gefunden").
+
+**Falls das Problem danach weiter besteht** (selten, aber vorsichtshalber):
+- Kein `libnfc`/`libnfc-bin` zusätzlich installieren — das konkurriert mit
+  `pcscd` um dasselbe Gerät.
+- Der ACR122U ist bei der Stromversorgung etwas empfindlich; bei
+  sporadischen Aussetzern (v. a. wenn am Pi gleichzeitig Touchscreen/andere
+  USB-Geräte hängen) einen aktiven/powered USB-Hub zwischenschalten.
+- Als Alternative zu `libccid` bietet ACS einen eigenen Treiber `acsccid`
+  an, falls `libccid` bei bestimmten Debian/Raspberry-Pi-OS-Versionen
+  Probleme mit dem ACR122U macht.
 
 ### Fehlerbehandlung der Bridge
 - **Kein Leser gefunden**: Warnung im Log, Heartbeat meldet den Fehlerstatus

@@ -58,8 +58,11 @@ Commands:
   enable-kiosk                Enable and start the kiosk service
   disable-kiosk               Disable the kiosk service
   write-nfc                   Write systemd service for the ACR122U NFC bridge
+                               (also applies the kernel-driver fix below)
   enable-nfc                  Enable and start the NFC bridge service
   disable-nfc                 Disable the NFC bridge service
+  nfc-fix-kernel-driver        Blacklist the kernel's pn533/nfc drivers so
+                               pcscd can access the ACR122U (Linux only)
   wifi-add SSID PASS          Append Wi‑Fi network to wpa_supplicant and reconfigure
   wifi-up                     Bring wlan0 up and reconfigure
   wifi-down                   Bring wlan0 down
@@ -242,6 +245,29 @@ update_app() {
   require_root
   systemctl restart "${SERVICE_NAME}.service"
   systemctl status --no-pager "${SERVICE_NAME}.service"
+
+  # NFC-Kartenscanning: Ein reines "git pull" reicht dafür nicht ganz aus,
+  # weil ein neuer systemd-Dienst nicht von selbst entsteht. Ist der Dienst
+  # aber schon einmal eingerichtet worden, hält 'update' ihn ab jetzt
+  # automatisch aktuell (inkl. erneutem Anwenden des Kernel-Treiber-Fixes,
+  # das ist idempotent und schadet nicht, falls schon erledigt).
+  if [[ -f "${APP_ROOT}/nfc_bridge.py" ]]; then
+    if [[ -f "/etc/systemd/system/${NFC_SERVICE_NAME}.service" ]]; then
+      echo "Aktualisiere NFC-Bridge-Dienst (${NFC_SERVICE_NAME}) ..."
+      nfc_fix_kernel_driver
+      systemctl restart "${NFC_SERVICE_NAME}.service" || true
+      systemctl status --no-pager "${NFC_SERVICE_NAME}.service" || true
+    else
+      cat <<EOF
+
+Hinweis: Dieses Update enthält NFC-Kartenscanning für den Shotcounter,
+das auf diesem Gerät noch nicht eingerichtet ist. Einmalig aktivieren mit:
+  sudo ./scripts/pi_manage.sh write-nfc
+  sudo ./scripts/pi_manage.sh enable-nfc
+Danach hält jedes weitere 'update' den Dienst automatisch mit aktuell.
+EOF
+    fi
+  fi
 }
 
 write_backup() {
@@ -323,10 +349,51 @@ disable_kiosk() {
   systemctl disable --now "${KIOSK_SERVICE_NAME}.service"
 }
 
+nfc_fix_kernel_driver() {
+  require_root
+  # Bekanntes Linux/Raspberry-Pi-Problem: Der ACR122U basiert auf dem
+  # PN532-Chipsatz. Der Kernel bringt dafür ein eigenes NFC-Subsystem mit
+  # (Treiber pn533_usb), das dieselbe USB-ID kennt und die Schnittstelle
+  # automatisch beansprucht, bevor pcscd per libusb zugreifen kann. Ergebnis:
+  # 'lsusb' zeigt den Leser, aber 'pcsc_scan'/pyscard finden ihn nie oder er
+  # flackert. Fix: Kernel per Blacklist das Binden verbieten, damit pcscd die
+  # exklusive Kontrolle bekommt. Siehe docs/pi_deployment.md.
+  local blacklist_file="/etc/modprobe.d/blacklist-pn533-nfc.conf"
+  cat > "${blacklist_file}" <<'EOF'
+# Verhindert, dass der Linux-Kernel den ACR122U (PN532-Chipsatz) über sein
+# eigenes NFC-Subsystem beansprucht, damit pcscd (PC/SC) ihn per libusb
+# ansprechen kann. Ohne das findet pyscard/pcsc_scan den Leser nie oder er
+# flackert, obwohl 'lsusb' ihn zeigt. Siehe docs/pi_deployment.md.
+blacklist pn533_usb
+blacklist pn533
+blacklist nfc
+EOF
+  echo "Blacklist-Datei geschrieben: ${blacklist_file}"
+
+  local module_was_loaded=0
+  for module in pn533_usb pn533 nfc; do
+    if lsmod 2>/dev/null | grep -q "^${module} "; then
+      module_was_loaded=1
+      if rmmod "${module}" 2>/dev/null; then
+        echo "Modul '${module}' entladen."
+      else
+        echo "Warnung: Modul '${module}' konnte nicht entladen werden (evtl. in Benutzung)." >&2
+      fi
+    fi
+  done
+
+  if [[ $module_was_loaded -eq 1 ]]; then
+    echo "Falls der Leser in 'pcsc_scan' danach immer noch nicht auftaucht: einmal neu starten (sudo reboot)."
+  else
+    echo "Kein betroffenes Kernelmodul aktuell geladen. Blacklist verhindert das Laden ab dem nächsten Boot."
+  fi
+}
+
 write_nfc() {
   require_root
   ensure_service_user
   write_env_file
+  nfc_fix_kernel_driver
   cat > "/etc/systemd/system/${NFC_SERVICE_NAME}.service" <<EOF
 [Unit]
 Description=Kassensystem NFC-Bridge (ACR122U)
@@ -423,6 +490,7 @@ case "${cmd}" in
   write-nfc) shift; write_nfc "$@" ;;
   enable-nfc) shift; enable_nfc "$@" ;;
   disable-nfc) shift; disable_nfc "$@" ;;
+  nfc-fix-kernel-driver) shift; nfc_fix_kernel_driver "$@" ;;
     wifi-add) shift; wifi_add "${1:-}" "${2:-}" ;;
     wifi-up) shift; wifi_up ;;
     wifi-down) shift; wifi_down ;;

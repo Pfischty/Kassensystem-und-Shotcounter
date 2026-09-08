@@ -160,6 +160,42 @@ def select_reader(available: list) -> tuple[object, str | None]:
     return fallback, warning
 
 
+CONFLICTING_KERNEL_MODULES = {"pn533_usb", "pn533", "nfc"}
+
+
+def detect_kernel_driver_conflict() -> str | None:
+    """Erkennt den häufigsten Linux/Raspberry-Pi-Stolperstein mit dem ACR122U.
+
+    Der ACR122U basiert auf dem PN532-Chipsatz. Der Linux-Kernel bringt dafür
+    ein eigenes NFC-Subsystem mit (Treiber `pn533_usb`), das dieselbe USB-ID
+    kennt und die Schnittstelle automatisch beansprucht — bevor `pcscd` per
+    libusb zugreifen kann. Ergebnis: `lsusb` zeigt den Leser an, aber
+    `pcsc_scan`/pyscard finden ihn nie oder er flackert. Der zuverlässige Fix
+    ist, dem Kernel das Binden per Modul-Blacklist zu verbieten (siehe
+    `scripts/pi_manage.sh nfc-fix-kernel-driver` und docs/pi_deployment.md).
+
+    Rein informativ auf Nicht-Linux-Systemen (kein /proc/modules) -> None.
+    """
+
+    proc_modules = Path("/proc/modules")
+    if not proc_modules.exists():
+        return None
+    try:
+        content = proc_modules.read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        return None
+
+    loaded = {line.split()[0] for line in content.splitlines() if line.strip()}
+    conflicting = sorted(loaded & CONFLICTING_KERNEL_MODULES)
+    if not conflicting:
+        return None
+    return (
+        f"Kernel-NFC-Treiber geladen ({', '.join(conflicting)}) - blockiert vermutlich den ACR122U. "
+        "Fix: sudo ./scripts/pi_manage.sh nfc-fix-kernel-driver (danach ggf. neu starten). "
+        "Details: docs/pi_deployment.md, Abschnitt 'NFC-Kartenleser'"
+    )
+
+
 def main() -> None:
     logger.info("NFC-Bridge gestartet. Ziel-App: %s", BASE_URL)
 
@@ -204,13 +240,18 @@ def main() -> None:
                 continue
 
             if not available:
+                kernel_conflict = detect_kernel_driver_conflict()
+                no_reader_message = kernel_conflict or "Kein Leser gefunden"
                 if not last_warned_no_reader:
-                    logger.warning("Kein PC/SC-Leser gefunden. Ist der ACR122U angeschlossen?")
+                    if kernel_conflict:
+                        logger.error("Kein PC/SC-Leser gefunden. %s", kernel_conflict)
+                    else:
+                        logger.warning("Kein PC/SC-Leser gefunden. Ist der ACR122U angeschlossen?")
                     last_warned_no_reader = True
                 last_uid = None
                 last_selected_reader = None
                 if time.time() - last_heartbeat_at > HEARTBEAT_INTERVAL:
-                    send_heartbeat(token, None, "Kein Leser gefunden")
+                    send_heartbeat(token, None, no_reader_message)
                     last_heartbeat_at = time.time()
                 time.sleep(2)
                 continue
