@@ -1,0 +1,258 @@
+{% extends "base.html" %}
+{% block title %}NFC-Karten{% endblock %}
+{% block content %}
+<style>
+  .nfc-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    flex-wrap: wrap;
+    margin-bottom: 1rem;
+  }
+  .nfc-status {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.9rem;
+  }
+  .dot {
+    width: 0.7rem;
+    height: 0.7rem;
+    border-radius: 50%;
+    display: inline-block;
+    background: var(--danger);
+  }
+  .dot.online { background: var(--success); }
+  .program-form {
+    display: flex;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+    align-items: center;
+  }
+  .program-form select, .program-form input[type="text"] {
+    min-width: 220px;
+  }
+  .waiting-box {
+    display: none;
+    align-items: center;
+    gap: 1rem;
+    margin-top: 1rem;
+    padding: 1rem;
+    border-radius: 10px;
+    background: rgba(56, 189, 248, 0.08);
+    border: 1px solid rgba(56, 189, 248, 0.35);
+  }
+  .waiting-box.open { display: flex; }
+  .waiting-spinner {
+    width: 1.4rem;
+    height: 1.4rem;
+    border-radius: 50%;
+    border: 3px solid rgba(255,255,255,0.2);
+    border-top-color: var(--accent);
+    animation: spin 0.8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .result-box {
+    display: none;
+    margin-top: 1rem;
+  }
+  .result-box.open { display: block; }
+  table.cards td, table.cards th { vertical-align: middle; }
+  .uid-code {
+    font-family: "SF Mono", Menlo, monospace;
+    letter-spacing: 0.05em;
+  }
+</style>
+
+<div class="nfc-header">
+  <h1>NFC-Karten – {{ event.name }}</h1>
+  <div class="nfc-status">
+    <span class="dot" id="bridge-dot"></span>
+    <span id="bridge-text">Lese Status…</span>
+  </div>
+</div>
+
+<div class="card">
+  <h2>Neue Karte anlernen</h2>
+  <p>
+    Team wählen (oder einen neuen Namen eingeben), dann Karte auf den ACR122U-Leser legen,
+    sobald "Warte auf Karte…" erscheint.
+  </p>
+  <form id="program-form" class="program-form">
+    <select id="team-select" name="team_id">
+      <option value="">– bestehendes Team wählen –</option>
+      {% for team in teams %}
+        <option value="{{ team.id }}">{{ team.name }} ({{ team.shots }} Shots)</option>
+      {% endfor %}
+    </select>
+    <span>oder</span>
+    <input type="text" id="new-team-name" name="new_team_name" placeholder="Neuer Teamname">
+    <button type="submit" id="start-program-btn">Karte anlernen</button>
+  </form>
+
+  <div class="waiting-box" id="waiting-box">
+    <div class="waiting-spinner"></div>
+    <div>
+      <strong>Warte auf Karte…</strong>
+      <div id="waiting-countdown">Bitte Karte auf den Leser legen (<span id="countdown-seconds">{{ program_timeout }}</span>s).</div>
+    </div>
+    <button type="button" id="cancel-program-btn" class="secondary" style="margin-left: auto;">Abbrechen</button>
+  </div>
+
+  <div class="result-box" id="result-box"></div>
+</div>
+
+<div class="card">
+  <h2>Verknüpfte Karten</h2>
+  {% if cards %}
+    <table class="cards">
+      <thead>
+        <tr>
+          <th>UID</th>
+          <th>Team</th>
+          <th>Zuletzt gescannt</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for card in cards %}
+          <tr>
+            <td class="uid-code">{{ card.uid }}</td>
+            <td>{{ card.team.name if card.team else "–" }}</td>
+            <td>{{ card.last_scanned_at.strftime("%d.%m.%Y %H:%M") if card.last_scanned_at else "noch nie" }}</td>
+            <td>
+              <form method="post" action="{{ url_for('nfc_card_delete', card_id=card.id) }}" class="inline"
+                    onsubmit="return confirm('Verknüpfung dieser Karte wirklich entfernen?');">
+                <button type="submit" class="danger">Entfernen</button>
+              </form>
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% else %}
+    <p>Noch keine Karten verknüpft.</p>
+  {% endif %}
+</div>
+
+<script>
+  const teamSelect = document.getElementById("team-select");
+  const newTeamInput = document.getElementById("new-team-name");
+  const programForm = document.getElementById("program-form");
+  const startBtn = document.getElementById("start-program-btn");
+  const waitingBox = document.getElementById("waiting-box");
+  const countdownEl = document.getElementById("countdown-seconds");
+  const cancelBtn = document.getElementById("cancel-program-btn");
+  const resultBox = document.getElementById("result-box");
+
+  let pollTimer = null;
+  let countdownTimer = null;
+  let currentRequestId = {{ pending_request.id if pending_request and pending_request.status == "pending" else "null" }};
+
+  function showResult(message, isError) {
+    resultBox.textContent = message;
+    resultBox.className = "result-box open flash " + (isError ? "error" : "success");
+  }
+
+  function stopWaiting() {
+    waitingBox.classList.remove("open");
+    startBtn.disabled = false;
+    if (pollTimer) clearInterval(pollTimer);
+    if (countdownTimer) clearInterval(countdownTimer);
+    pollTimer = null;
+    countdownTimer = null;
+  }
+
+  function startWaiting(requestId, secondsLeft) {
+    currentRequestId = requestId;
+    resultBox.classList.remove("open");
+    waitingBox.classList.add("open");
+    startBtn.disabled = true;
+    countdownEl.textContent = secondsLeft;
+
+    countdownTimer = setInterval(() => {
+      secondsLeft -= 1;
+      countdownEl.textContent = Math.max(secondsLeft, 0);
+      if (secondsLeft <= 0) clearInterval(countdownTimer);
+    }, 1000);
+
+    pollTimer = setInterval(async () => {
+      try {
+        const res = await fetch(`/shotcounter/nfc/program/${requestId}/status`);
+        const data = await res.json();
+        if (!data.success) return;
+        if (data.status === "fulfilled") {
+          stopWaiting();
+          showResult(`Karte erfolgreich mit Team "${data.team_name}" verknüpft.`, false);
+          setTimeout(() => window.location.reload(), 1200);
+        } else if (data.status === "program_failed" || data.error) {
+          stopWaiting();
+          showResult(data.error || "Anlernen fehlgeschlagen.", true);
+        } else if (data.status === "expired") {
+          stopWaiting();
+          showResult("Zeit abgelaufen, keine Karte erkannt. Bitte erneut versuchen.", true);
+        } else if (data.status === "cancelled") {
+          stopWaiting();
+        }
+      } catch (err) {
+        // Netzwerkfehler ignorieren, weiter pollen
+      }
+    }, 1000);
+  }
+
+  programForm.addEventListener("submit", async (evt) => {
+    evt.preventDefault();
+    const teamId = teamSelect.value;
+    const newTeamName = newTeamInput.value.trim();
+    if (!teamId && !newTeamName) {
+      alert("Bitte ein Team wählen oder einen neuen Teamnamen angeben.");
+      return;
+    }
+    const body = new URLSearchParams();
+    if (teamId) body.set("team_id", teamId);
+    if (newTeamName) body.set("new_team_name", newTeamName);
+
+    const res = await fetch("{{ url_for('nfc_program_start') }}", { method: "POST", body });
+    const data = await res.json();
+    if (data.success) {
+      startWaiting(data.request_id, data.expires_in);
+    } else {
+      alert(data.error || "Anlernen konnte nicht gestartet werden.");
+    }
+  });
+
+  cancelBtn.addEventListener("click", async () => {
+    if (!currentRequestId) return;
+    await fetch(`/shotcounter/nfc/program/${currentRequestId}/cancel`, { method: "POST" });
+    stopWaiting();
+  });
+
+  if (currentRequestId) {
+    startWaiting(currentRequestId, {{ program_timeout }});
+  }
+
+  // Bridge-Status Anzeige
+  const bridgeDot = document.getElementById("bridge-dot");
+  const bridgeText = document.getElementById("bridge-text");
+  const bridgeLastSeenIso = {{ (bridge_status.last_seen_at.isoformat() ~ "Z") | tojson if bridge_status and bridge_status.last_seen_at else "null" }};
+  const bridgeReaderName = {{ bridge_status.reader_name | tojson if bridge_status and bridge_status.reader_name else "null" }};
+
+  function renderBridgeStatus() {
+    if (!bridgeLastSeenIso) {
+      bridgeDot.classList.remove("online");
+      bridgeText.textContent = "NFC-Leser-Dienst nicht erreichbar (nie gesehen).";
+      return;
+    }
+    const ageSeconds = (Date.now() - new Date(bridgeLastSeenIso).getTime()) / 1000;
+    if (ageSeconds < 15) {
+      bridgeDot.classList.add("online");
+      bridgeText.textContent = "NFC-Leser-Dienst aktiv" + (bridgeReaderName ? ` (${bridgeReaderName})` : "");
+    } else {
+      bridgeDot.classList.remove("online");
+      bridgeText.textContent = `NFC-Leser-Dienst zuletzt aktiv vor ${Math.round(ageSeconds)}s.`;
+    }
+  }
+  renderBridgeStatus();
+</script>
+{% endblock %}

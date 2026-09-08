@@ -117,6 +117,30 @@
   @media (max-width: 600px) {
     .keypad { grid-template-columns: repeat(3, minmax(70px, 1fr)); }
   }
+  .nfc-modal-content {
+    width: min(480px, 92vw);
+  }
+  .nfc-team-name {
+    font-size: 1.6rem;
+    font-weight: 800;
+    margin: 0 0 0.75rem;
+    color: var(--success, #34d399);
+  }
+  .nfc-display {
+    font-size: 2.4rem;
+    font-weight: 800;
+    text-align: center;
+    background: #111827;
+    border: 1px solid #1f2a44;
+    border-radius: 10px;
+    padding: 0.5rem;
+    margin-bottom: 0.75rem;
+  }
+  .nfc-unknown-box input[type="text"] {
+    width: 100%;
+    box-sizing: border-box;
+    margin-bottom: 0.75rem;
+  }
 </style>
 
 <div class="touch-wrapper">
@@ -155,6 +179,35 @@
       <input type="hidden" name="amount" id="amount-input">
       <input type="hidden" name="next" value="{{ url_for('shotcounter_touch') }}">
     </form>
+  </div>
+</div>
+
+<div class="modal" id="nfc-modal">
+  <div class="modal-content nfc-modal-content">
+    <div id="nfc-known-view">
+      <h3>Karte erkannt</h3>
+      <p class="nfc-team-name" id="nfc-team-name"></p>
+      <div class="nfc-display" id="nfc-display">0</div>
+      <div class="keypad">
+        {% for digit in [1,2,3,4,5,6,7,8,9] %}
+          <button type="button" data-nfc-digit="{{ digit }}">{{ digit }}</button>
+        {% endfor %}
+        <button type="button" class="action" id="nfc-clear-btn">C</button>
+        <button type="button" data-nfc-digit="0">0</button>
+        <button type="button" class="action" id="nfc-back-btn">←</button>
+        <button type="button" class="action" id="nfc-submit-btn" style="grid-column: span 3;">Shots buchen</button>
+      </div>
+    </div>
+    <div id="nfc-unknown-view" class="nfc-unknown-box" style="display: none;">
+      <h3>Unbekannte Karte</h3>
+      <p>Diese Karte ist noch keinem Team zugeordnet.</p>
+      <input type="text" id="nfc-new-team-name" placeholder="Neuer Teamname"
+             pattern="[A-Za-z0-9ÄÖÜäöüß .,'&()/\-]+">
+      <button type="button" id="nfc-create-team-btn" style="width: 100%;">Team erstellen &amp; Karte verknüpfen</button>
+    </div>
+    <div class="modal-actions">
+      <button type="button" id="nfc-cancel-btn">Schließen</button>
+    </div>
   </div>
 </div>
 
@@ -245,5 +298,114 @@
       modal.classList.remove("open");
     }
   });
+
+  // --- NFC-Karten-Popup (Festbetrieb: Karte auflegen -> Shots buchen) ---
+  const nfcModal = document.getElementById("nfc-modal");
+  const nfcKnownView = document.getElementById("nfc-known-view");
+  const nfcUnknownView = document.getElementById("nfc-unknown-view");
+  const nfcTeamNameEl = document.getElementById("nfc-team-name");
+  const nfcDisplayEl = document.getElementById("nfc-display");
+  const nfcNewTeamInput = document.getElementById("nfc-new-team-name");
+  let nfcBuffer = "";
+  let nfcCurrentUid = null;
+  let nfcCurrentTeam = null;
+
+  const updateNfcDisplay = () => {
+    nfcDisplayEl.textContent = nfcBuffer || "0";
+  };
+
+  function openNfcModalKnown(team) {
+    nfcCurrentTeam = team;
+    nfcBuffer = "";
+    updateNfcDisplay();
+    nfcTeamNameEl.textContent = `${team.name} (${team.shots} Shots)`;
+    nfcKnownView.style.display = "";
+    nfcUnknownView.style.display = "none";
+    nfcModal.classList.add("open");
+  }
+
+  function openNfcModalUnknown(uid) {
+    nfcCurrentUid = uid;
+    nfcNewTeamInput.value = "";
+    nfcKnownView.style.display = "none";
+    nfcUnknownView.style.display = "";
+    nfcModal.classList.add("open");
+  }
+
+  function closeNfcModal() {
+    nfcModal.classList.remove("open");
+    nfcCurrentUid = null;
+    nfcCurrentTeam = null;
+  }
+
+  document.querySelectorAll("[data-nfc-digit]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const digit = btn.dataset.nfcDigit;
+      if (nfcBuffer.length >= 6) return;
+      nfcBuffer = nfcBuffer === "0" ? digit : nfcBuffer + digit;
+      updateNfcDisplay();
+    });
+  });
+  document.getElementById("nfc-clear-btn").addEventListener("click", () => {
+    nfcBuffer = "";
+    updateNfcDisplay();
+  });
+  document.getElementById("nfc-back-btn").addEventListener("click", () => {
+    nfcBuffer = nfcBuffer.slice(0, -1);
+    updateNfcDisplay();
+  });
+  document.getElementById("nfc-submit-btn").addEventListener("click", () => {
+    const amount = parseInt(nfcBuffer, 10);
+    if (!nfcCurrentTeam || !amount || amount <= 0) {
+      alert("Bitte eine gültige Shot-Anzahl eingeben.");
+      return;
+    }
+    teamIdInput.value = nfcCurrentTeam.id;
+    amountInput.value = amount;
+    form.submit();
+  });
+  document.getElementById("nfc-create-team-btn").addEventListener("click", async () => {
+    const newTeamName = nfcNewTeamInput.value.trim();
+    if (!newTeamName) {
+      alert("Bitte einen Teamnamen eingeben.");
+      return;
+    }
+    try {
+      const res = await fetch("{{ url_for('nfc_card_quick_bind') }}", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ uid: nfcCurrentUid, new_team_name: newTeamName }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        openNfcModalKnown(data.team);
+      } else {
+        alert(data.error || "Team konnte nicht angelegt werden.");
+      }
+    } catch (err) {
+      alert("Netzwerkfehler beim Anlegen des Teams.");
+    }
+  });
+  document.getElementById("nfc-cancel-btn").addEventListener("click", closeNfcModal);
+  nfcModal.addEventListener("click", (evt) => {
+    if (evt.target === nfcModal) closeNfcModal();
+  });
+
+  async function pollNfcScans() {
+    if (nfcModal.classList.contains("open")) return; // aktuellen Vorgang nicht unterbrechen
+    try {
+      const res = await fetch("{{ url_for('nfc_poll') }}", { cache: "no-store" });
+      const data = await res.json();
+      if (!data.success || !data.scan) return;
+      if (data.scan.known) {
+        openNfcModalKnown(data.scan.team);
+      } else {
+        openNfcModalUnknown(data.scan.uid);
+      }
+    } catch (err) {
+      // Netzwerkfehler ignorieren, beim nächsten Intervall erneut versuchen
+    }
+  }
+  setInterval(pollNfcScans, 1000);
 </script>
 {% endblock %}

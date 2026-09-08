@@ -1,12 +1,15 @@
 import json
 import app as app_module
 from datetime import timedelta
+from io import BytesIO
 
 import pytest
 from sqlalchemy.exc import IntegrityError
 
 from app import (
     Event,
+    NFC_BRIDGE_TOKEN,
+    NfcCard,
     Order,
     PaymentLog,
     Team,
@@ -97,6 +100,158 @@ def test_shotcounter_tracks_shots(client):
     with app.app_context():
         team = db.session.get(Team, team_id)
         assert team.shots == 3
+
+
+def _nfc_scan(client, uid, token=NFC_BRIDGE_TOKEN):
+    return client.post(
+        "/internal/nfc/scan",
+        data=json.dumps({"uid": uid}),
+        content_type="application/json",
+        headers={"X-Nfc-Token": token},
+    )
+
+
+def test_internal_nfc_scan_rejects_wrong_token(client):
+    _create_and_activate_event(client)
+    resp = _nfc_scan(client, "04AABBCCDD", token="wrong-token")
+    assert resp.status_code == 403
+
+
+def test_internal_nfc_scan_unknown_card_creates_poll_event(client):
+    _create_and_activate_event(client)
+    resp = _nfc_scan(client, "04:AA:BB:CC:DD")
+    assert resp.status_code == 200
+    assert resp.get_json()["known"] is False
+
+    poll = client.get("/shotcounter/nfc/poll").get_json()
+    assert poll["scan"]["uid"] == "04AABBCCDD"
+    assert poll["scan"]["known"] is False
+
+    # Der Scan wurde konsumiert, ein erneutes Poll liefert nichts mehr.
+    poll_again = client.get("/shotcounter/nfc/poll").get_json()
+    assert poll_again["scan"] is None
+
+
+def test_nfc_program_flow_binds_card_to_new_team(client):
+    event = _create_and_activate_event(client)
+
+    start_resp = client.post("/shotcounter/nfc/program/start", data={"new_team_name": "NFC-Team"})
+    request_id = start_resp.get_json()["request_id"]
+
+    scan_resp = _nfc_scan(client, "04112233")
+    assert scan_resp.get_json()["handled"] == "program"
+
+    status = client.get(f"/shotcounter/nfc/program/{request_id}/status").get_json()
+    assert status["status"] == "fulfilled"
+    assert status["team_name"] == "NFC-Team"
+
+    with app.app_context():
+        team = Team.query.filter_by(event_id=event.id, name="NFC-Team").first()
+        assert team is not None
+        card = NfcCard.query.filter_by(uid="04112233").first()
+        assert card is not None
+        assert card.team_id == team.id
+
+    # Ein weiterer Scan derselben Karte ist jetzt ein bekannter Live-Scan, kein Anlernen mehr.
+    second_scan = _nfc_scan(client, "04112233")
+    assert second_scan.get_json()["handled"] == "scan"
+    assert second_scan.get_json()["known"] is True
+
+    poll = client.get("/shotcounter/nfc/poll").get_json()
+    assert poll["scan"]["known"] is True
+    assert poll["scan"]["team"]["name"] == "NFC-Team"
+
+
+def test_nfc_quick_bind_creates_team_and_card(client):
+    event = _create_and_activate_event(client)
+    resp = client.post(
+        "/shotcounter/nfc/cards",
+        data=json.dumps({"uid": "04AA00", "new_team_name": "Schnellteam"}),
+        content_type="application/json",
+    )
+    data = resp.get_json()
+    assert data["success"] is True
+    assert data["team"]["name"] == "Schnellteam"
+
+    with app.app_context():
+        assert NfcCard.query.filter_by(uid="04AA00", event_id=event.id).count() == 1
+
+
+def test_export_teams_csv_includes_bound_card(client):
+    event = _create_and_activate_event(client)
+    client.post("/shotcounter/teams", data={"team_name": "CSV-Team"})
+    with app.app_context():
+        team = Team.query.filter_by(event_id=event.id, name="CSV-Team").first()
+        team.shots = 5
+        db.session.add(NfcCard(uid="04FF00AA", event_id=event.id, team_id=team.id))
+        db.session.commit()
+
+    resp = client.get("/shotcounter/teams/export.csv")
+    assert resp.status_code == 200
+    body = resp.get_data(as_text=True)
+    assert "Team,Shots,NFC-UID" in body
+    assert "CSV-Team,5,04FF00AA" in body
+
+
+def test_import_teams_csv_creates_and_updates(client):
+    event = _create_and_activate_event(client)
+    client.post("/shotcounter/teams", data={"team_name": "Bestehendes Team"})
+
+    csv_content = (
+        "Team,Shots,NFC-UID\n"
+        "Bestehendes Team,9,\n"
+        "Frisches Team,2,04BEEF01\n"
+    ).encode("utf-8")
+
+    resp = client.post(
+        "/shotcounter/teams/import",
+        data={"teams_file": (BytesIO(csv_content), "teams.csv")},
+        content_type="multipart/form-data",
+    )
+    assert resp.status_code == 302
+
+    with app.app_context():
+        existing = Team.query.filter_by(event_id=event.id, name="Bestehendes Team").first()
+        assert existing.shots == 9
+        fresh = Team.query.filter_by(event_id=event.id, name="Frisches Team").first()
+        assert fresh is not None
+        assert fresh.shots == 2
+        card = NfcCard.query.filter_by(uid="04BEEF01").first()
+        assert card is not None
+        assert card.team_id == fresh.id
+
+
+def test_import_teams_csv_skips_invalid_rows_without_failing_import(client):
+    _create_and_activate_event(client)
+    csv_content = (
+        "Team,Shots,NFC-UID\n"
+        "Gutes Team,3,\n"
+        ",5,\n"  # kein Teamname -> übersprungen
+        "Ungueltig;Name,1,\n"  # Semikolon nicht erlaubt -> übersprungen
+    ).encode("utf-8")
+
+    resp = client.post(
+        "/shotcounter/teams/import",
+        data={"teams_file": (BytesIO(csv_content), "teams.csv")},
+        content_type="multipart/form-data",
+    )
+    assert resp.status_code == 302
+
+    with app.app_context():
+        assert Team.query.count() == 1
+        assert Team.query.first().name == "Gutes Team"
+
+
+def test_import_teams_csv_rejects_non_csv_file(client):
+    _create_and_activate_event(client)
+    resp = client.post(
+        "/shotcounter/teams/import",
+        data={"teams_file": (BytesIO(b"not a csv"), "teams.txt")},
+        content_type="multipart/form-data",
+    )
+    assert resp.status_code == 302
+    with app.app_context():
+        assert Team.query.count() == 0
 
 
 def test_health_endpoint(client):

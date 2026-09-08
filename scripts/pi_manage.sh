@@ -34,6 +34,7 @@ APP_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SERVICE_NAME="kassensystem-shotcounter"
 BACKUP_SERVICE_NAME="kassensystem-backup"
 KIOSK_SERVICE_NAME="kassensystem-kiosk"
+NFC_SERVICE_NAME="kassensystem-nfc"
 ENV_FILE="/etc/kassensystem.env"
 WHEEL_DIR="${APP_ROOT}/wheels"
 DEFAULT_PORT="${PORT:-8000}"
@@ -56,6 +57,9 @@ Commands:
   write-kiosk                 Write systemd service for Chromium kiosk
   enable-kiosk                Enable and start the kiosk service
   disable-kiosk               Disable the kiosk service
+  write-nfc                   Write systemd service for the ACR122U NFC bridge
+  enable-nfc                  Enable and start the NFC bridge service
+  disable-nfc                 Disable the NFC bridge service
   wifi-add SSID PASS          Append Wi‑Fi network to wpa_supplicant and reconfigure
   wifi-up                     Bring wlan0 up and reconfigure
   wifi-down                   Bring wlan0 down
@@ -319,6 +323,46 @@ disable_kiosk() {
   systemctl disable --now "${KIOSK_SERVICE_NAME}.service"
 }
 
+write_nfc() {
+  require_root
+  ensure_service_user
+  write_env_file
+  cat > "/etc/systemd/system/${NFC_SERVICE_NAME}.service" <<EOF
+[Unit]
+Description=Kassensystem NFC-Bridge (ACR122U)
+After=pcscd.service network.target
+Wants=pcscd.service
+
+[Service]
+Type=simple
+EnvironmentFile=${ENV_FILE}
+WorkingDirectory=${APP_ROOT}
+User=${SERVICE_USER}
+Group=${SERVICE_USER}
+ExecStart=${APP_ROOT}/.venv/bin/python3 ${APP_ROOT}/nfc_bridge.py
+Restart=always
+RestartSec=5
+ReadWritePaths=${APP_ROOT}/instance
+
+[Install]
+WantedBy=multi-user.target
+EOF
+  echo "NFC-Bridge-Unit /etc/systemd/system/${NFC_SERVICE_NAME}.service geschrieben."
+  echo "Hinweis: Benötigt 'pcscd' und 'libpcsclite' (siehe docs/pi_deployment.md)."
+}
+
+enable_nfc() {
+  require_root
+  systemctl daemon-reload
+  systemctl enable --now "${NFC_SERVICE_NAME}.service"
+  systemctl status --no-pager "${NFC_SERVICE_NAME}.service"
+}
+
+disable_nfc() {
+  require_root
+  systemctl disable --now "${NFC_SERVICE_NAME}.service"
+}
+
 wifi_add() {
   require_root
   local ssid="$1"
@@ -376,6 +420,9 @@ case "${cmd}" in
   write-kiosk) shift; write_kiosk "$@" ;;
   enable-kiosk) shift; enable_kiosk "$@" ;;
   disable-kiosk) shift; disable_kiosk "$@" ;;
+  write-nfc) shift; write_nfc "$@" ;;
+  enable-nfc) shift; enable_nfc "$@" ;;
+  disable-nfc) shift; disable_nfc "$@" ;;
     wifi-add) shift; wifi_add "${1:-}" "${2:-}" ;;
     wifi-up) shift; wifi_up ;;
     wifi-down) shift; wifi_down ;;

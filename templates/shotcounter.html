@@ -26,6 +26,23 @@
 </div>
 
 <div class="card">
+  <h2>Teams importieren / exportieren</h2>
+  <p>
+    CSV-Format wie beim Export: Spalten <code>Team</code>, <code>Shots</code>, <code>NFC-UID</code>
+    (Shots und NFC-UID sind optional; mehrere UIDs pro Team mit <code>;</code> trennen).
+    Bestehende Teams (gleicher Name) werden aktualisiert, neue angelegt.
+  </p>
+  <div style="display:flex; gap:0.75rem; flex-wrap:wrap; align-items:center;">
+    <a class="button secondary" href="{{ url_for('export_teams_csv') }}">Teams exportieren (CSV)</a>
+    <form method="post" action="{{ url_for('import_teams_csv') }}" enctype="multipart/form-data" style="display:flex; gap:0.5rem; align-items:center;">
+      <input type="file" name="teams_file" accept=".csv,text/csv" required>
+      <input type="hidden" name="next" value="{{ url_for('shotcounter') }}">
+      <button type="submit">Importieren</button>
+    </form>
+  </div>
+</div>
+
+<div class="card">
   <h2>Shots verbuchen</h2>
   {% if not teams %}
     <p>Noch keine Teams vorhanden.</p>

@@ -34,6 +34,7 @@ Für den echten Einsatz vor Ort ist das neue DAU-Handbuch der primäre Einstieg:
 - `/shotcounter` Shotcounter
 - `/shotcounter/touch` Touch-Eingabe
 - `/shotcounter/leaderboard` Vollbild-Leaderboard
+- `/shotcounter/nfc` NFC-Karten anlernen (ACR122U, siehe `docs/pi_deployment.md`)
 - `/preisliste` Preisliste
 
 ## Hinweise

@@ -20,7 +20,7 @@ import subprocess
 from collections import Counter
 from dataclasses import dataclass
 from decimal import Decimal, ROUND_HALF_UP
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from io import StringIO
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
@@ -104,6 +104,34 @@ UPLOAD_FOLDER.mkdir(parents=True, exist_ok=True)
 app.config["UPLOAD_FOLDER"] = str(UPLOAD_FOLDER)
 app.config["MAX_CONTENT_LENGTH"] = 5 * 1024 * 1024  # 5MB max file size
 ALLOWED_EXTENSIONS = {"png", "jpg", "jpeg", "gif", "webp"}
+
+# Shared Secret zwischen dieser App und dem lokalen NFC-Bridge-Prozess
+# (scripts/nfc_bridge.py). Wird beim ersten Start automatisch erzeugt, damit
+# der Endpunkt /internal/nfc/scan nicht ohne Token angesprochen werden kann.
+nfc_secret_file_env = os.environ.get("NFC_SECRET_FILE")
+NFC_SECRET_FILE = Path(nfc_secret_file_env) if nfc_secret_file_env else Path(app.instance_path) / "nfc_secret.txt"
+
+
+def _load_or_create_nfc_secret() -> str:
+    try:
+        if NFC_SECRET_FILE.exists():
+            token = NFC_SECRET_FILE.read_text(encoding="utf-8").strip()
+            if token:
+                return token
+        token = secrets.token_hex(32)
+        NFC_SECRET_FILE.parent.mkdir(parents=True, exist_ok=True)
+        NFC_SECRET_FILE.write_text(token, encoding="utf-8")
+        try:
+            os.chmod(NFC_SECRET_FILE, 0o600)
+        except (OSError, AttributeError):
+            pass
+        return token
+    except OSError:
+        # Kein Dateizugriff (z. B. Tests mit read-only FS) -> Prozessweiter Fallback.
+        return secrets.token_hex(32)
+
+
+NFC_BRIDGE_TOKEN = _load_or_create_nfc_secret()
 
 db = SQLAlchemy(app)
 Session(app)
@@ -229,6 +257,64 @@ class ShotLog(db.Model):
 
     event = db.relationship("Event", backref=db.backref("shot_logs", cascade="all, delete-orphan"))
     team = db.relationship("Team")
+
+
+class NfcCard(db.Model):
+    """Bindet die UID einer physischen NFC/RFID-Karte an ein Shotcounter-Team."""
+
+    __table_args__ = (db.UniqueConstraint("uid", name="uq_nfc_card_uid"),)
+
+    id = db.Column(db.Integer, primary_key=True)
+    uid = db.Column(db.String(64), nullable=False, index=True)
+    event_id = db.Column(db.Integer, db.ForeignKey("event.id", ondelete="CASCADE"), nullable=False)
+    team_id = db.Column(db.Integer, db.ForeignKey("team.id", ondelete="CASCADE"), nullable=False)
+    label = db.Column(db.String(150))
+    created_at = db.Column(db.DateTime, default=utcnow)
+    last_scanned_at = db.Column(db.DateTime)
+
+    event = db.relationship("Event", backref=db.backref("nfc_cards", cascade="all, delete-orphan"))
+    team = db.relationship("Team", backref=db.backref("nfc_cards", cascade="all, delete-orphan"))
+
+
+class NfcProgramRequest(db.Model):
+    """Kurzlebige Anfrage: 'warte auf die nächste Karte und verknüpfe sie mit diesem Team'."""
+
+    id = db.Column(db.Integer, primary_key=True)
+    event_id = db.Column(db.Integer, db.ForeignKey("event.id", ondelete="CASCADE"), nullable=False)
+    team_id = db.Column(db.Integer, db.ForeignKey("team.id", ondelete="CASCADE"), nullable=True)
+    new_team_name = db.Column(db.String(150))
+    status = db.Column(db.String(20), default="pending", nullable=False)  # pending|fulfilled|expired|cancelled
+    uid = db.Column(db.String(64))
+    result_team_name = db.Column(db.String(150))
+    error = db.Column(db.String(200))
+    created_at = db.Column(db.DateTime, default=utcnow)
+    expires_at = db.Column(db.DateTime, nullable=False)
+
+    event = db.relationship("Event")
+    team = db.relationship("Team")
+
+
+class NfcScanEvent(db.Model):
+    """Eine einzelne Kartenerkennung während des Festbetriebs (für das Live-Popup)."""
+
+    id = db.Column(db.Integer, primary_key=True)
+    event_id = db.Column(db.Integer, db.ForeignKey("event.id", ondelete="CASCADE"), nullable=False)
+    uid = db.Column(db.String(64), nullable=False)
+    card_id = db.Column(db.Integer, db.ForeignKey("nfc_card.id", ondelete="SET NULL"), nullable=True)
+    consumed = db.Column(db.Boolean, default=False, nullable=False)
+    created_at = db.Column(db.DateTime, default=utcnow)
+
+    event = db.relationship("Event")
+    card = db.relationship("NfcCard")
+
+
+class NfcBridgeStatus(db.Model):
+    """Einzige Statuszeile des NFC-Bridge-Prozesses (Heartbeat des ACR122U-Dienstes)."""
+
+    id = db.Column(db.Integer, primary_key=True)
+    reader_name = db.Column(db.String(200))
+    last_seen_at = db.Column(db.DateTime)
+    last_error = db.Column(db.String(300))
 
 
 # ---------------------------------------------------------------------------
@@ -3674,6 +3760,479 @@ def delete_team(team_id: int):
     db.session.delete(team)
     db.session.commit()
     flash("Team gelöscht.", "success")
+    return redirect(_redirect_target())
+
+
+# ---------------------------------------------------------------------------
+# NFC / RFID (ACR122U) — Karten anlernen und Shots per Kartenscan buchen
+# ---------------------------------------------------------------------------
+NFC_PROGRAM_TIMEOUT_SECONDS = 60
+NFC_SCAN_DEBOUNCE_SECONDS = 4
+NFC_UID_PATTERN = re.compile(r"^[0-9A-F]{6,40}$")
+
+
+def _normalize_uid(raw: str | None) -> str | None:
+    if not raw:
+        return None
+    uid = re.sub(r"[^0-9A-Fa-f]", "", raw).upper()
+    if not NFC_UID_PATTERN.match(uid):
+        return None
+    return uid
+
+
+def _nfc_bridge_authorized() -> bool:
+    """Nur der lokale NFC-Bridge-Prozess darf Scans/Heartbeats einliefern."""
+
+    token = request.headers.get("X-Nfc-Token", "")
+    if not secrets.compare_digest(token, NFC_BRIDGE_TOKEN):
+        return False
+    remote_addr = request.remote_addr or ""
+    return remote_addr in {"127.0.0.1", "::1", "localhost"}
+
+
+def _expire_stale_program_requests(event_id: int) -> None:
+    now = utcnow()
+    stale = NfcProgramRequest.query.filter(
+        NfcProgramRequest.event_id == event_id,
+        NfcProgramRequest.status == "pending",
+        NfcProgramRequest.expires_at < now,
+    ).all()
+    for req in stale:
+        req.status = "expired"
+    if stale:
+        db.session.commit()
+
+
+def _prune_old_nfc_scan_events(event_id: int) -> None:
+    cutoff = utcnow() - timedelta(hours=6)
+    NfcScanEvent.query.filter(NfcScanEvent.event_id == event_id, NfcScanEvent.created_at < cutoff).delete()
+    db.session.commit()
+
+
+def _get_or_create_team(event: Event, *, team_id: int | None, new_team_name: str | None) -> tuple[Team | None, str | None]:
+    """Löst ein Team für die Kartenverknüpfung auf; legt es bei Bedarf an."""
+
+    if team_id:
+        team = Team.query.filter_by(id=team_id, event_id=event.id).first()
+        if not team:
+            return None, "Team nicht gefunden."
+        return team, None
+
+    name = (new_team_name or "").strip()
+    if not name:
+        return None, "Bitte ein Team wählen oder einen neuen Teamnamen angeben."
+
+    is_valid, error = _validate_team_name(name)
+    if not is_valid:
+        return None, error
+
+    team = Team.query.filter_by(event_id=event.id, name=name).first()
+    if not team:
+        team = Team(event_id=event.id, name=name, shots=0)
+        db.session.add(team)
+        db.session.flush()
+    return team, None
+
+
+@app.route("/internal/nfc/scan", methods=["POST"])
+def internal_nfc_scan():
+    """Wird ausschließlich vom lokalen NFC-Bridge-Prozess (scripts/nfc_bridge.py) aufgerufen."""
+
+    if not _nfc_bridge_authorized():
+        abort(403)
+
+    payload = request.get_json(silent=True) or {}
+    uid = _normalize_uid(payload.get("uid"))
+    if not uid:
+        return jsonify({"success": False, "error": "Ungültige UID."}), 400
+
+    event = get_active_event()
+    if not event or not event.shotcounter_enabled:
+        return jsonify({"success": True, "handled": "ignored", "reason": "kein aktives Event"})
+
+    _expire_stale_program_requests(event.id)
+
+    program_request = (
+        NfcProgramRequest.query.filter_by(event_id=event.id, status="pending")
+        .order_by(NfcProgramRequest.created_at.desc())
+        .first()
+    )
+    if program_request:
+        team, error = _get_or_create_team(
+            event, team_id=program_request.team_id, new_team_name=program_request.new_team_name
+        )
+        if error:
+            program_request.status = "expired"
+            program_request.error = error
+            db.session.commit()
+            return jsonify({"success": True, "handled": "program_failed", "error": error})
+
+        existing = NfcCard.query.filter_by(uid=uid).first()
+        now = utcnow()
+        if existing:
+            existing.event_id = event.id
+            existing.team_id = team.id
+            existing.last_scanned_at = now
+        else:
+            db.session.add(NfcCard(uid=uid, event_id=event.id, team_id=team.id, last_scanned_at=now))
+        program_request.status = "fulfilled"
+        program_request.uid = uid
+        program_request.result_team_name = team.name
+        db.session.commit()
+        app.logger.info("NFC-Karte %s mit Team '%s' verknüpft (Event %s)", uid, team.name, event.name)
+        return jsonify({"success": True, "handled": "program", "team": team.name})
+
+    card = NfcCard.query.filter_by(uid=uid, event_id=event.id).first()
+    if card:
+        card.last_scanned_at = utcnow()
+    db.session.add(NfcScanEvent(event_id=event.id, uid=uid, card_id=card.id if card else None))
+    db.session.commit()
+    _prune_old_nfc_scan_events(event.id)
+    return jsonify({"success": True, "handled": "scan", "known": bool(card)})
+
+
+@app.route("/internal/nfc/heartbeat", methods=["POST"])
+def internal_nfc_heartbeat():
+    if not _nfc_bridge_authorized():
+        abort(403)
+
+    payload = request.get_json(silent=True) or {}
+    status = db.session.get(NfcBridgeStatus, 1)
+    if not status:
+        status = NfcBridgeStatus(id=1)
+        db.session.add(status)
+    status.reader_name = (payload.get("reader_name") or "").strip()[:200] or None
+    status.last_error = (payload.get("error") or "").strip()[:300] or None
+    status.last_seen_at = utcnow()
+    db.session.commit()
+    return jsonify({"success": True})
+
+
+@app.route("/shotcounter/nfc")
+def nfc_cards():
+    event = require_active_event(shotcounter=True)
+    _expire_stale_program_requests(event.id)
+    cards = (
+        NfcCard.query.filter_by(event_id=event.id)
+        .join(Team)
+        .order_by(Team.name.asc())
+        .all()
+    )
+    teams = Team.query.filter_by(event_id=event.id).order_by(Team.name.asc()).all()
+    pending_request = (
+        NfcProgramRequest.query.filter_by(event_id=event.id, status="pending")
+        .order_by(NfcProgramRequest.created_at.desc())
+        .first()
+    )
+    bridge_status = db.session.get(NfcBridgeStatus, 1)
+    return render_template(
+        "nfc_cards.html",
+        event=event,
+        cards=cards,
+        teams=teams,
+        pending_request=pending_request,
+        bridge_status=bridge_status,
+        program_timeout=NFC_PROGRAM_TIMEOUT_SECONDS,
+    )
+
+
+@app.route("/shotcounter/nfc/program/start", methods=["POST"])
+def nfc_program_start():
+    event = require_active_event(shotcounter=True)
+    team_id = request.form.get("team_id", type=int)
+    new_team_name = (request.form.get("new_team_name") or "").strip() or None
+
+    if not team_id and not new_team_name:
+        flash("Bitte ein Team wählen oder einen neuen Teamnamen angeben.", "error")
+        return redirect(url_for("nfc_cards"))
+
+    if new_team_name:
+        is_valid, error = _validate_team_name(new_team_name)
+        if not is_valid:
+            flash(error, "error")
+            return redirect(url_for("nfc_cards"))
+
+    # Nur eine aktive Anlern-Anfrage gleichzeitig.
+    NfcProgramRequest.query.filter_by(event_id=event.id, status="pending").update({"status": "cancelled"})
+
+    program_request = NfcProgramRequest(
+        event_id=event.id,
+        team_id=team_id,
+        new_team_name=new_team_name,
+        status="pending",
+        expires_at=utcnow() + timedelta(seconds=NFC_PROGRAM_TIMEOUT_SECONDS),
+    )
+    db.session.add(program_request)
+    db.session.commit()
+    return jsonify({"success": True, "request_id": program_request.id, "expires_in": NFC_PROGRAM_TIMEOUT_SECONDS})
+
+
+@app.route("/shotcounter/nfc/program/<int:request_id>/status")
+def nfc_program_status(request_id: int):
+    event = require_active_event(shotcounter=True)
+    program_request = NfcProgramRequest.query.filter_by(id=request_id, event_id=event.id).first()
+    if not program_request:
+        return jsonify({"success": False, "error": "Anfrage nicht gefunden."}), 404
+
+    if program_request.status == "pending" and program_request.expires_at < utcnow():
+        program_request.status = "expired"
+        db.session.commit()
+
+    return jsonify(
+        {
+            "success": True,
+            "status": program_request.status,
+            "uid": program_request.uid,
+            "team_name": program_request.result_team_name,
+            "error": program_request.error,
+        }
+    )
+
+
+@app.route("/shotcounter/nfc/program/<int:request_id>/cancel", methods=["POST"])
+def nfc_program_cancel(request_id: int):
+    event = require_active_event(shotcounter=True)
+    program_request = NfcProgramRequest.query.filter_by(id=request_id, event_id=event.id).first()
+    if program_request and program_request.status == "pending":
+        program_request.status = "cancelled"
+        db.session.commit()
+    return jsonify({"success": True})
+
+
+@app.route("/shotcounter/nfc/cards/<int:card_id>/delete", methods=["POST"])
+def nfc_card_delete(card_id: int):
+    event = require_active_event(shotcounter=True)
+    card = NfcCard.query.filter_by(id=card_id, event_id=event.id).first()
+    if not card:
+        flash("Karte nicht gefunden.", "error")
+        return redirect(url_for("nfc_cards"))
+    db.session.delete(card)
+    db.session.commit()
+    flash("Karten-Verknüpfung entfernt.", "success")
+    return redirect(url_for("nfc_cards"))
+
+
+@app.route("/shotcounter/nfc/cards", methods=["POST"])
+def nfc_card_quick_bind():
+    """Verknüpft eine soeben (unbekannt) gescannte Karte direkt mit einem Team.
+
+    Wird vom Live-Popup im Festbetrieb genutzt, wenn eine noch nicht
+    zugeordnete Karte aufgelegt wird ("Team erstellen & Karte verknüpfen").
+    """
+
+    event = require_active_event(shotcounter=True)
+    payload = request.get_json(silent=True) or {}
+    uid = _normalize_uid(payload.get("uid"))
+    if not uid:
+        return jsonify({"success": False, "error": "Ungültige UID."}), 400
+
+    team, error = _get_or_create_team(
+        event, team_id=payload.get("team_id"), new_team_name=payload.get("new_team_name")
+    )
+    if error:
+        return jsonify({"success": False, "error": error}), 400
+
+    existing = NfcCard.query.filter_by(uid=uid).first()
+    now = utcnow()
+    if existing:
+        existing.event_id = event.id
+        existing.team_id = team.id
+        existing.last_scanned_at = now
+    else:
+        db.session.add(NfcCard(uid=uid, event_id=event.id, team_id=team.id, last_scanned_at=now))
+    db.session.commit()
+    app.logger.info("NFC-Karte %s per Schnellverknüpfung mit Team '%s' verbunden (Event %s)", uid, team.name, event.name)
+    return jsonify({"success": True, "team": {"id": team.id, "name": team.name, "shots": team.shots}})
+
+
+@app.route("/shotcounter/nfc/poll")
+def nfc_poll():
+    """Wird von der Touch-Ansicht gepollt, um neu erkannte Karten als Popup anzuzeigen."""
+
+    event = require_active_event(shotcounter=True)
+    pending = (
+        NfcScanEvent.query.filter_by(event_id=event.id, consumed=False)
+        .order_by(NfcScanEvent.id.asc())
+        .all()
+    )
+    if not pending:
+        return jsonify({"success": True, "scan": None})
+
+    # Nur die neueste Erkennung ausliefern; ältere, liegengebliebene Scans
+    # (z. B. weil die Touch-Ansicht kurz nicht gepollt hat) werden verworfen,
+    # statt als veraltetes Popup nachgereicht zu werden.
+    for scan in pending:
+        scan.consumed = True
+    latest = pending[-1]
+
+    # Kartenstatus frisch nachschlagen statt der Momentaufnahme beim Scan zu
+    # vertrauen: Zwischen Erkennung und Abholung kann die Karte inzwischen
+    # (z. B. per Anlernen) einem Team zugeordnet worden sein.
+    card = NfcCard.query.filter_by(uid=latest.uid, event_id=event.id).first()
+    team_payload = None
+    if card:
+        team_payload = {"id": card.team.id, "name": card.team.name, "shots": card.team.shots}
+    db.session.commit()
+    return jsonify(
+        {"success": True, "scan": {"uid": latest.uid, "known": team_payload is not None, "team": team_payload}}
+    )
+
+
+# ---------------------------------------------------------------------------
+# Team-Import/-Export (CSV)
+# ---------------------------------------------------------------------------
+TEAM_EXPORT_HEADERS = ["Team", "Shots", "NFC-UID"]
+TEAM_IMPORT_MAX_ROWS = 2000
+
+
+def _decode_upload_text(file_storage: FileStorage) -> str:
+    """Dekodiert eine hochgeladene CSV robust, auch bei Excel-typischen Encodings."""
+
+    raw = file_storage.read()
+    for encoding in ("utf-8-sig", "utf-8", "cp1252", "latin-1"):
+        try:
+            return raw.decode(encoding)
+        except UnicodeDecodeError:
+            continue
+    raise ValueError("Datei-Kodierung konnte nicht erkannt werden. Bitte als UTF-8 CSV speichern.")
+
+
+def _normalize_csv_header(name: str) -> str:
+    return re.sub(r"[^a-z]", "", (name or "").strip().lower())
+
+
+@app.route("/shotcounter/teams/export.csv")
+def export_teams_csv():
+    event = require_active_event(shotcounter=True)
+    teams = Team.query.filter_by(event_id=event.id).order_by(Team.name.asc()).all()
+
+    cards_by_team: Dict[int, List[str]] = {}
+    for card in NfcCard.query.filter_by(event_id=event.id).all():
+        cards_by_team.setdefault(card.team_id, []).append(card.uid)
+
+    rows = [[team.name, team.shots, ";".join(cards_by_team.get(team.id, []))] for team in teams]
+    filename = f"event-{event.id}-teams.csv"
+    return csv_response(filename, TEAM_EXPORT_HEADERS, rows)
+
+
+@app.route("/shotcounter/teams/import", methods=["POST"])
+def import_teams_csv():
+    """Legt Teams aus einer CSV an/aktualisiert sie (Spalten wie beim Export: Team, Shots, NFC-UID).
+
+    Fehlerhafte Zeilen werden übersprungen und gesammelt gemeldet, statt den
+    gesamten Import abzubrechen – bei Events mit vielen Teams soll ein Tippfehler
+    in einer Zeile nicht den kompletten Upload zunichtemachen.
+    """
+
+    event = require_active_event(shotcounter=True)
+
+    file = request.files.get("teams_file")
+    if not file or file.filename == "":
+        flash("Bitte eine CSV-Datei auswählen.", "error")
+        return redirect(_redirect_target())
+
+    if not file.filename.lower().endswith(".csv"):
+        flash("Bitte eine .csv-Datei hochladen.", "error")
+        return redirect(_redirect_target())
+
+    try:
+        text_content = _decode_upload_text(file)
+    except ValueError as exc:
+        flash(str(exc), "error")
+        return redirect(_redirect_target())
+
+    try:
+        reader = csv.DictReader(StringIO(text_content))
+        rows = list(reader)
+    except csv.Error as exc:
+        flash(f"CSV konnte nicht gelesen werden: {exc}", "error")
+        return redirect(_redirect_target())
+
+    if not reader.fieldnames:
+        flash("CSV-Datei ist leer oder hat keine Kopfzeile.", "error")
+        return redirect(_redirect_target())
+
+    header_map = {_normalize_csv_header(h): h for h in reader.fieldnames if h}
+    name_key = header_map.get("team") or header_map.get("name") or header_map.get("teamname")
+    if not name_key:
+        flash(
+            "Spalte 'Team' (oder 'Name') nicht gefunden. Erwartete Spalten (wie beim Export): "
+            "Team, Shots, NFC-UID.",
+            "error",
+        )
+        return redirect(_redirect_target())
+    shots_key = header_map.get("shots")
+    uid_key = header_map.get("nfcuid") or header_map.get("uid")
+
+    if len(rows) > TEAM_IMPORT_MAX_ROWS:
+        flash(f"Zu viele Zeilen ({len(rows)}). Maximal {TEAM_IMPORT_MAX_ROWS} pro Import.", "error")
+        return redirect(_redirect_target())
+
+    created = 0
+    updated = 0
+    problems: List[str] = []
+
+    for line_no, row in enumerate(rows, start=2):  # Zeile 1 = Kopfzeile
+        raw_name = (row.get(name_key) or "").strip()[:150]
+        if not raw_name:
+            problems.append(f"Zeile {line_no}: Teamname fehlt, übersprungen.")
+            continue
+
+        is_valid, name_error = _validate_team_name(raw_name)
+        if not is_valid:
+            problems.append(f"Zeile {line_no}: {name_error}")
+            continue
+
+        existing = Team.query.filter_by(event_id=event.id, name=raw_name).first()
+        team, team_error = _get_or_create_team(event, team_id=None, new_team_name=raw_name)
+        if team_error or not team:
+            problems.append(f"Zeile {line_no}: {team_error or 'Team konnte nicht angelegt werden.'}")
+            continue
+        if existing is None:
+            created += 1
+        else:
+            updated += 1
+
+        if shots_key:
+            raw_shots = (row.get(shots_key) or "").strip()
+            if raw_shots:
+                try:
+                    shots_value = int(raw_shots)
+                    if shots_value < 0:
+                        raise ValueError
+                    team.shots = shots_value
+                except ValueError:
+                    problems.append(f"Zeile {line_no}: Ungültiger Shots-Wert '{raw_shots}', ignoriert.")
+
+        if uid_key:
+            raw_uid_field = (row.get(uid_key) or "").strip()
+            for single_uid in raw_uid_field.split(";"):
+                single_uid = single_uid.strip()
+                if not single_uid:
+                    continue
+                uid = _normalize_uid(single_uid)
+                if not uid:
+                    problems.append(f"Zeile {line_no}: Ungültige NFC-UID '{single_uid}', ignoriert.")
+                    continue
+                existing_card = NfcCard.query.filter_by(uid=uid).first()
+                if existing_card:
+                    existing_card.event_id = event.id
+                    existing_card.team_id = team.id
+                else:
+                    db.session.add(NfcCard(uid=uid, event_id=event.id, team_id=team.id))
+
+    db.session.commit()
+
+    flash(f"{created} Team(s) angelegt, {updated} aktualisiert.", "success")
+    if problems:
+        shown = problems[:8]
+        extra = len(problems) - len(shown)
+        message = " | ".join(shown)
+        if extra > 0:
+            message += f" | (+{extra} weitere Hinweise, siehe Server-Logs)"
+        flash(message, "error")
+        app.logger.warning("Team-Import Hinweise (Event %s): %s", event.name, "; ".join(problems))
+
     return redirect(_redirect_target())
 
 

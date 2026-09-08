@@ -66,6 +66,79 @@ Die Backups landen in `BACKUP_DIR` (Standard `instance/backups` im Repo), die Au
    ```
 Voraussetzung: `chromium` oder `chromium-browser` ist installiert.
 
+## NFC-Kartenleser (ACR122U) für den Shotcounter
+Der Shotcounter kann Shot-Teams über NFC/RFID-Karten (getestet mit dem ACS ACR122U)
+erkennen: Karten werden im Adminbereich `/shotcounter/nfc` einem Team zugeordnet
+("anlernen") und lösen im Festbetrieb auf `/shotcounter/touch` automatisch ein
+Popup zum Buchen der Shot-Anzahl aus.
+
+Der Kartenleser wird von einem eigenständigen Hintergrundprozess (`nfc_bridge.py`)
+angesprochen, nicht von der Web-App selbst — so funktioniert das Auslesen
+unabhängig davon, mit wie vielen Gunicorn-Workern die App läuft, und ein
+Reader-Hänger reißt nicht die ganze Kasse mit.
+
+1. PC/SC-Unterstützung installieren (einmalig, benötigt Internet):
+   ```bash
+   sudo apt install pcscd libpcsclite1 libpcsclite-dev swig
+   sudo systemctl enable --now pcscd
+   ```
+   (`swig` und die `libpcsclite`-Header werden gebraucht, weil `pyscard` auf dem Pi
+   aus dem Quellcode gebaut wird — dafür gibt es i. d. R. kein fertiges ARM-Wheel.)
+2. ACR122U per USB anschließen und testen (`lsusb` sollte `072f:2200 Advanced Card Systems, Ltd ACR122U` zeigen).
+3. `pyscard` ist Teil von `requirements.txt` und wird durch `install-deps` mitinstalliert.
+4. Bridge-Dienst schreiben und aktivieren:
+   ```bash
+   sudo ./scripts/pi_manage.sh write-nfc
+   sudo ./scripts/pi_manage.sh enable-nfc
+   ```
+5. Status/Logs prüfen:
+   ```bash
+   sudo systemctl status kassensystem-nfc
+   tail -f instance/logs/nfc_bridge.log
+   ```
+
+Auf der Seite `/shotcounter/nfc` zeigt ein grüner Punkt, ob die Bridge aktuell
+mit der App kommuniziert (Heartbeat). Die Kommunikation zwischen Bridge und
+App läuft ausschließlich über `localhost` und ist über ein beim ersten Start
+automatisch erzeugtes Secret (`instance/nfc_secret.txt`) abgesichert.
+
+Es wird nur die UID der Karte gespeichert (kein Beschreiben des Kartenspeichers) —
+das funktioniert mit praktisch jedem NFC-Wristband/jeder Karte und kommt ohne
+Mifare-Schlüsselverwaltung aus.
+
+### Geräteerkennung auf mehreren Instanzen
+Der Leser wird nicht über einen festen USB-Pfad angesprochen, sondern über
+PC/SC autoerkannt (`smartcard.System.readers()` fragt bei jedem Zyklus den
+laufenden `pcscd`/PC/SC-Dienst ab). Das bedeutet:
+- Auf jedem Pi (und auch lokal auf einem Dev-Rechner) wird der ACR122U ohne
+  Konfiguration gefunden, unabhängig davon, an welchem USB-Port er hängt.
+- Wird er während des Betriebs abgezogen/wieder angesteckt, erkennt die
+  Bridge das automatisch beim nächsten Zyklus (kein Neustart nötig).
+- Sind mehrere PC/SC-Leser an derselben Instanz angeschlossen, wählt die
+  Bridge den, dessen Name zu `NFC_READER_NAME_FILTER` passt (Standard:
+  `ACR122`, Groß-/Kleinschreibung egal). Passt keiner, wird der erste
+  gefundene Leser genutzt und eine Warnung geloggt — so bleibt die Auswahl
+  transparent statt "zufällig" zu wirken.
+- Der gewählte Lesername wird beim Start bzw. bei einem Wechsel einmalig
+  geloggt (`instance/logs/nfc_bridge.log`, Zeile "Verwende Leser: ...").
+
+### Fehlerbehandlung der Bridge
+- **Kein Leser gefunden**: Warnung im Log, Heartbeat meldet den Fehlerstatus
+  an die App (sichtbar als roter Punkt auf `/shotcounter/nfc`), die Bridge
+  läuft weiter und prüft alle 2s erneut.
+- **PC/SC-Dienst nicht erreichbar** (`pcscd` läuft nicht): eigene, klare
+  Fehlermeldung im Log statt eines rohen Tracebacks; Bridge bleibt am Leben
+  und versucht es weiter.
+- **Karte während des Lesens entfernt / Leser exklusiv belegt**: wird
+  abgefangen, führt nur zu einer Debounce-Zurücksetzung, nicht zum Absturz.
+- **Web-App gerade nicht erreichbar** (Neustart, Deploy): Scan-/Heartbeat-
+  Meldungen schlagen fehl, werden geloggt und beim nächsten Zyklus erneut
+  versucht; keine Warteschlange, kein Datenverlust bei kurzen Ausfällen (der
+  nächste Kartenscan wird ganz normal wieder gemeldet).
+- Jeder unerwartete Fehler in der Leseschleife wird abgefangen, geloggt und
+  als Heartbeat-Fehlermeldung an die App weitergereicht, statt den ganzen
+  Prozess (und damit den Festbetrieb) zu beenden.
+
 ## Updates einspielen
 - Online (z. B. temporär über WLAN mit Internetzugang):
   ```bash
