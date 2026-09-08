@@ -307,6 +307,29 @@ def test_import_teams_csv_detects_semicolon_delimiter(client):
         assert team.shots == 4
 
 
+def test_import_teams_csv_decodes_mac_os_roman_umlauts_correctly(client):
+    """Reproduziert einen echten Bug: eine mit 'mac_roman' statt UTF-8
+    gespeicherte CSV (z. B. aus einem älteren Mac-Editor/Numbers-Export)
+    wurde vorher als cp1252 gelesen und hat 'ä' in 'Š' verwandelt, weil
+    Ein-Byte-Kodierungen nie einen Decode-Fehler werfen und die feste
+    Rangfolge daher blind die falsche 'gewonnen' hat."""
+
+    _create_and_activate_event(client)
+    csv_content = "Team,Shots,NFC-UID\nBänkli-Clique,7,\n".encode("mac_roman")
+
+    resp = client.post(
+        "/shotcounter/teams/import",
+        data={"teams_file": (BytesIO(csv_content), "teams.csv")},
+        content_type="multipart/form-data",
+    )
+    assert resp.status_code == 302
+
+    with app.app_context():
+        team = Team.query.filter_by(name="Bänkli-Clique").first()
+        assert team is not None, "Team wurde nicht mit korrektem Umlaut importiert"
+        assert team.shots == 7
+
+
 def test_nfc_bridge_process_routes_use_manager(client, monkeypatch):
     import app as app_module
 

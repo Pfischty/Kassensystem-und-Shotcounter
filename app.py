@@ -4124,16 +4124,58 @@ TEAM_EXPORT_HEADERS = ["Team", "Shots", "NFC-UID"]
 TEAM_IMPORT_MAX_ROWS = 2000
 
 
+_PLAUSIBLE_TEXT_CHARS = set(
+    "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+    "äöüÄÖÜß .,;:_-+&()/'\"\n\r\t"
+)
+
+
+def _implausible_char_count(text: str) -> int:
+    """Zählt Zeichen, die für einen Teamnamen/eine CSV unüblich sind.
+
+    Dient als Entscheidungshilfe zwischen mehreren Ein-Byte-Kodierungen
+    (siehe _decode_upload_text): je mehr "exotische" Zeichen eine
+    Dekodierung erzeugt, desto unplausibler ist sie.
+    """
+
+    return sum(1 for ch in text if ch not in _PLAUSIBLE_TEXT_CHARS and ord(ch) > 127)
+
+
 def _decode_upload_text(file_storage: FileStorage) -> str:
-    """Dekodiert eine hochgeladene CSV robust, auch bei Excel-typischen Encodings."""
+    """Dekodiert eine hochgeladene CSV robust, auch bei plattformtypischen Encodings.
+
+    UTF-8 wird zuerst versucht und bei Erfolg direkt übernommen (Multi-Byte-
+    Sequenzen sind strukturell streng genug, dass ein Treffer praktisch
+    immer korrekt ist). Schlägt das fehl, kommen mehrere verbreitete
+    Ein-Byte-Kodierungen infrage (Windows/Excel: cp1252, macOS-Altlasten
+    z. B. aus älteren Numbers/TextEdit-Exporten: mac_roman, sonst
+    latin-1) - diese "gelingen" aber technisch so gut wie immer, auch mit
+    der FALSCHEN Kodierung, weil jedes Byte irgendeinem Zeichen zugeordnet
+    ist. Eine feste Rangfolge würde für die Hälfte der Nutzer regelmäßig
+    falsch raten (genau das ist zuvor passiert: eine mac_roman-Datei wurde
+    als cp1252 gelesen, "ä" wurde so zu "Š"). Stattdessen werden alle
+    Kandidaten dekodiert und die mit den wenigsten unplausiblen Zeichen
+    gewinnt.
+    """
 
     raw = file_storage.read()
-    for encoding in ("utf-8-sig", "utf-8", "cp1252", "latin-1"):
+    for encoding in ("utf-8-sig", "utf-8"):
         try:
             return raw.decode(encoding)
         except UnicodeDecodeError:
             continue
-    raise ValueError("Datei-Kodierung konnte nicht erkannt werden. Bitte als UTF-8 CSV speichern.")
+
+    candidates: list[tuple[str, str]] = []
+    for encoding in ("mac_roman", "cp1252", "latin-1"):
+        try:
+            candidates.append((encoding, raw.decode(encoding)))
+        except UnicodeDecodeError:
+            continue
+    if not candidates:
+        raise ValueError("Datei-Kodierung konnte nicht erkannt werden. Bitte als UTF-8 CSV speichern.")
+
+    _best_encoding, best_text = min(candidates, key=lambda item: _implausible_char_count(item[1]))
+    return best_text
 
 
 def _normalize_csv_header(name: str) -> str:
