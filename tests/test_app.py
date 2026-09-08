@@ -254,6 +254,86 @@ def test_import_teams_csv_rejects_non_csv_file(client):
         assert Team.query.count() == 0
 
 
+def test_team_name_accepts_unicode_letters_and_numbers(client):
+    event = _create_and_activate_event(client)
+    resp = client.post("/shotcounter/teams", data={"team_name": "Équipe Ñandú 42"})
+    assert resp.status_code == 302
+    with app.app_context():
+        assert Team.query.filter_by(event_id=event.id, name="Équipe Ñandú 42").count() == 1
+
+
+def test_team_name_numeric_only_is_valid(client):
+    event = _create_and_activate_event(client)
+    client.post("/shotcounter/teams", data={"team_name": "42"})
+    with app.app_context():
+        assert Team.query.filter_by(event_id=event.id, name="42").count() == 1
+
+
+def test_team_name_normalizes_nbsp_and_still_rejects_bad_characters(client):
+    event = _create_and_activate_event(client)
+    # \xa0 = geschütztes Leerzeichen, wie es Excel/Word gerne einfügt
+    client.post("/shotcounter/teams", data={"team_name": "Team\xa0Nord"})
+    with app.app_context():
+        assert Team.query.filter_by(event_id=event.id, name="Team Nord").count() == 1
+
+    resp = client.post("/shotcounter/teams", data={"team_name": "Bad<Name>"})
+    assert resp.status_code == 302
+    with app.app_context():
+        assert Team.query.filter_by(event_id=event.id, name="Bad<Name>").count() == 0
+
+
+def test_import_teams_csv_detects_semicolon_delimiter(client):
+    """Excel mit deutscher Ländereinstellung exportiert CSVs oft mit Semikolon
+    statt Komma -- ohne Erkennung würde jede Zeile in eine Spalte rutschen."""
+
+    _create_and_activate_event(client)
+    csv_content = (
+        "Team;Shots;NFC-UID\n"
+        "Ünïcode Team;4;\n"
+        "Zweites Team;1;\n"
+    ).encode("utf-8")
+
+    resp = client.post(
+        "/shotcounter/teams/import",
+        data={"teams_file": (BytesIO(csv_content), "teams.csv")},
+        content_type="multipart/form-data",
+    )
+    assert resp.status_code == 302
+
+    with app.app_context():
+        assert Team.query.count() == 2
+        team = Team.query.filter_by(name="Ünïcode Team").first()
+        assert team is not None
+        assert team.shots == 4
+
+
+def test_nfc_bridge_process_routes_use_manager(client, monkeypatch):
+    import app as app_module
+
+    monkeypatch.setattr(
+        app_module.nfc_bridge_manager, "bridge_status", lambda instance_path: (True, 4242)
+    )
+    monkeypatch.setattr(app_module.nfc_bridge_manager, "PSUTIL_AVAILABLE", True)
+    status_resp = client.get("/shotcounter/nfc/bridge/status").get_json()
+    assert status_resp == {"success": True, "running": True, "pid": 4242, "psutil_available": True}
+
+    monkeypatch.setattr(
+        app_module.nfc_bridge_manager,
+        "start_bridge",
+        lambda instance_path, base_url: (True, f"Gestartet für {base_url}", 999),
+    )
+    start_resp = client.post("/shotcounter/nfc/bridge/start").get_json()
+    assert start_resp["success"] is True
+    assert start_resp["pid"] == 999
+    assert "http://" in start_resp["message"]
+
+    monkeypatch.setattr(
+        app_module.nfc_bridge_manager, "stop_bridge", lambda instance_path: (True, "Gestoppt.")
+    )
+    stop_resp = client.post("/shotcounter/nfc/bridge/stop").get_json()
+    assert stop_resp == {"success": True, "message": "Gestoppt."}
+
+
 def test_health_endpoint(client):
     response = client.get("/health")
     assert response.status_code == 200

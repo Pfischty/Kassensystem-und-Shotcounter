@@ -34,6 +34,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import signal
 import sys
 import time
 from logging.handlers import RotatingFileHandler
@@ -53,12 +54,20 @@ except ImportError:  # pragma: no cover - klare Fehlermeldung statt Traceback
     )
     raise SystemExit(1)
 
+try:
+    import psutil
+
+    PSUTIL_AVAILABLE = True
+except ImportError:  # pragma: no cover - Sperre wird dann einfach übersprungen
+    PSUTIL_AVAILABLE = False
+
 
 REPO_ROOT = Path(__file__).resolve().parent
 GET_UID_APDU = [0xFF, 0xCA, 0x00, 0x00, 0x00]
 
 BASE_URL = os.environ.get("NFC_BASE_URL", "http://127.0.0.1:8000").rstrip("/")
 SECRET_FILE = Path(os.environ.get("NFC_SECRET_FILE", REPO_ROOT / "instance" / "nfc_secret.txt"))
+PID_FILE = Path(os.environ.get("NFC_PID_FILE", REPO_ROOT / "instance" / "nfc_bridge.pid"))
 POLL_INTERVAL = float(os.environ.get("NFC_POLL_INTERVAL", "0.5"))
 HEARTBEAT_INTERVAL = float(os.environ.get("NFC_HEARTBEAT_INTERVAL", "5"))
 SCAN_DEBOUNCE = float(os.environ.get("NFC_SCAN_DEBOUNCE", "3"))
@@ -91,6 +100,55 @@ def _load_token() -> str | None:
         return token or None
     except OSError:
         return None
+
+
+def acquire_single_instance_lock() -> None:
+    """Verhindert zwei gleichzeitig laufende Bridge-Prozesse.
+
+    Egal ob per systemd-Dienst, per Web-GUI-Button (nfc_bridge_manager.py)
+    oder manuell im Terminal gestartet — alle Wege benutzen dieselbe
+    PID-Datei. Läuft bereits eine gültige Instanz, beendet sich dieser
+    Prozess sofort, statt sich mit der anderen um den Leser zu streiten.
+    Ohne 'psutil' wird die Prüfung übersprungen (keine harte Abhängigkeit
+    für die Kernfunktion).
+    """
+
+    if not PSUTIL_AVAILABLE:
+        PID_FILE.parent.mkdir(parents=True, exist_ok=True)
+        PID_FILE.write_text(str(os.getpid()), encoding="utf-8")
+        return
+
+    PID_FILE.parent.mkdir(parents=True, exist_ok=True)
+    if PID_FILE.exists():
+        try:
+            existing_pid = int(PID_FILE.read_text(encoding="utf-8").strip())
+        except (OSError, ValueError):
+            existing_pid = None
+        if existing_pid and psutil.pid_exists(existing_pid):
+            try:
+                cmdline = " ".join(psutil.Process(existing_pid).cmdline())
+            except psutil.Error:
+                cmdline = ""
+            if "nfc_bridge.py" in cmdline:
+                logger.error(
+                    "Es läuft bereits eine NFC-Bridge (PID %s). Beende diesen Prozess, "
+                    "um doppelte Kartenleser-Zugriffe zu vermeiden.",
+                    existing_pid,
+                )
+                raise SystemExit(1)
+    PID_FILE.write_text(str(os.getpid()), encoding="utf-8")
+
+
+def release_single_instance_lock() -> None:
+    try:
+        if PID_FILE.exists() and PID_FILE.read_text(encoding="utf-8").strip() == str(os.getpid()):
+            PID_FILE.unlink()
+    except OSError:
+        pass
+
+
+def _handle_sigterm(signum, frame) -> None:  # noqa: ARG001 - Signatur von signal.signal vorgegeben
+    raise SystemExit(0)
 
 
 def _post_json(path: str, payload: dict, token: str) -> None:
@@ -311,7 +369,13 @@ def main() -> None:
 
 
 if __name__ == "__main__":
+    signal.signal(signal.SIGTERM, _handle_sigterm)
+    acquire_single_instance_lock()
     try:
         main()
     except KeyboardInterrupt:
         logger.info("NFC-Bridge beendet (KeyboardInterrupt).")
+    except SystemExit:
+        logger.info("NFC-Bridge beendet (SIGTERM/SystemExit).")
+    finally:
+        release_single_instance_lock()

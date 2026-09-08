@@ -16,8 +16,8 @@
       name="team_name"
       placeholder="Teamname"
       required
-      pattern="[A-Za-z0-9ÄÖÜäöüß .,'&()/\\-]+"
-      title="Erlaubt sind Buchstaben, Zahlen, Leerzeichen sowie . , - _ & / ( ) '"
+      pattern="[\p{L}\p{N}_ .,'&()/-]+"
+      title="Erlaubt sind Buchstaben (auch Umlaute/Akzente etc.), Zahlen, Leerzeichen sowie . , - _ & / ( ) '"
       autocomplete="off"
     >
     <input type="hidden" name="next" value="{{ url_for('shotcounter') }}">
@@ -58,8 +58,8 @@
                 name="team_name"
                 value="{{ team.name }}"
                 required
-                pattern="[A-Za-z0-9ÄÖÜäöüß .,'&()/\\-]+"
-                title="Erlaubt sind Buchstaben, Zahlen, Leerzeichen sowie . , - _ & / ( ) '"
+                pattern="[\p{L}\p{N}_ .,'&()/-]+"
+                title="Erlaubt sind Buchstaben (auch Umlaute/Akzente etc.), Zahlen, Leerzeichen sowie . , - _ & / ( ) '"
                 style="min-width: 200px;"
               >
               <input type="hidden" name="next" value="{{ url_for('shotcounter') }}">

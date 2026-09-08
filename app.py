@@ -49,6 +49,7 @@ from sqlalchemy.orm import attributes
 from werkzeug.datastructures import FileStorage
 from werkzeug.utils import secure_filename
 
+import nfc_bridge_manager
 from credentials_manager import credentials_manager
 from sumup_client import SumUpClient, SumUpClientError
 
@@ -3553,14 +3554,30 @@ def _leaderboard_limit(default: int) -> int:
     return _sanitize_leaderboard_limit(raw, default)
 
 
-TEAM_NAME_PATTERN = re.compile(r"^[A-Za-z0-9ÄÖÜäöüß .,'&()/\\-]+$")
+# \w ist in Python-3-str-Mustern standardmäßig Unicode-aware, erlaubt also
+# Buchstaben aus jeder Sprache (Umlaute, Akzente, Kyrillisch, ...) plus
+# Ziffern und Unterstrich - nicht nur den vorher hart codierten
+# ASCII+Umlaut-Satz. Steuerzeichen/Zeilenumbrüche bleiben verboten, damit
+# Namen nicht mehrzeilig in Tabellen/CSV-Exports rutschen.
+TEAM_NAME_PATTERN = re.compile(r"^[\w .,'&()/-]+$", re.UNICODE)
+
+
+def _clean_team_name(raw: str) -> str:
+    """Normalisiert häufige Copy/Paste- und Excel-Stolpersteine in Teamnamen.
+
+    Insbesondere geschütztes Leerzeichen (U+00A0), das Excel/Word beim
+    Einfügen gerne einstreut und das mit bloßem Auge nicht von einem
+    normalen Leerzeichen zu unterscheiden ist.
+    """
+
+    return raw.replace("\xa0", " ").strip()
 
 
 def _validate_team_name(name: str) -> tuple[bool, str | None]:
     """Validates the team name to avoid characters that fail to render."""
 
     if not TEAM_NAME_PATTERN.match(name):
-        allowed = "Buchstaben, Zahlen, Leerzeichen sowie . , - _ & / ( ) '"
+        allowed = "Buchstaben (auch Umlaute/Akzente etc.), Zahlen, Leerzeichen sowie . , - _ & / ( ) '"
         return False, f"Ungültige Zeichen im Teamnamen. Erlaubt sind: {allowed}."
     return True, None
 
@@ -3658,7 +3675,7 @@ def shotcounter_leaderboard_data():
 @app.route("/shotcounter/teams", methods=["POST"])
 def add_team():
     event = require_active_event(shotcounter=True)
-    name = (request.form.get("team_name") or "").strip()
+    name = _clean_team_name(request.form.get("team_name") or "")
     if not name:
         flash("Bitte einen Teamnamen angeben.", "error")
         return redirect(_redirect_target())
@@ -3725,7 +3742,7 @@ def update_team(team_id: int):
         flash("Team nicht gefunden.", "error")
         return redirect(_redirect_target())
 
-    new_name = (request.form.get("team_name") or "").strip()
+    new_name = _clean_team_name(request.form.get("team_name") or "")
     new_shots = request.form.get("shots", type=int)
 
     if new_name:
@@ -3818,7 +3835,7 @@ def _get_or_create_team(event: Event, *, team_id: int | None, new_team_name: str
             return None, "Team nicht gefunden."
         return team, None
 
-    name = (new_team_name or "").strip()
+    name = _clean_team_name(new_team_name or "")
     if not name:
         return None, "Bitte ein Team wählen oder einen neuen Teamnamen angeben."
 
@@ -3925,6 +3942,7 @@ def nfc_cards():
         .first()
     )
     bridge_status = db.session.get(NfcBridgeStatus, 1)
+    process_running, process_pid = nfc_bridge_manager.bridge_status(app.instance_path)
     return render_template(
         "nfc_cards.html",
         event=event,
@@ -3933,14 +3951,35 @@ def nfc_cards():
         pending_request=pending_request,
         bridge_status=bridge_status,
         program_timeout=NFC_PROGRAM_TIMEOUT_SECONDS,
+        process_running=process_running,
+        process_pid=process_pid,
+        psutil_available=nfc_bridge_manager.PSUTIL_AVAILABLE,
     )
+
+
+@app.route("/shotcounter/nfc/bridge/status")
+def nfc_bridge_process_status():
+    running, pid = nfc_bridge_manager.bridge_status(app.instance_path)
+    return jsonify({"success": True, "running": running, "pid": pid, "psutil_available": nfc_bridge_manager.PSUTIL_AVAILABLE})
+
+
+@app.route("/shotcounter/nfc/bridge/start", methods=["POST"])
+def nfc_bridge_process_start():
+    ok, message, pid = nfc_bridge_manager.start_bridge(app.instance_path, request.host_url)
+    return jsonify({"success": ok, "message": message, "pid": pid})
+
+
+@app.route("/shotcounter/nfc/bridge/stop", methods=["POST"])
+def nfc_bridge_process_stop():
+    ok, message = nfc_bridge_manager.stop_bridge(app.instance_path)
+    return jsonify({"success": ok, "message": message})
 
 
 @app.route("/shotcounter/nfc/program/start", methods=["POST"])
 def nfc_program_start():
     event = require_active_event(shotcounter=True)
     team_id = request.form.get("team_id", type=int)
-    new_team_name = (request.form.get("new_team_name") or "").strip() or None
+    new_team_name = _clean_team_name(request.form.get("new_team_name") or "") or None
 
     if not team_id and not new_team_name:
         flash("Bitte ein Team wählen oder einen neuen Teamnamen angeben.", "error")
@@ -4101,6 +4140,24 @@ def _normalize_csv_header(name: str) -> str:
     return re.sub(r"[^a-z]", "", (name or "").strip().lower())
 
 
+def _sniff_csv_dialect(text: str) -> type[csv.Dialect]:
+    """Erkennt das Trennzeichen der hochgeladenen CSV.
+
+    Unser eigener Export nutzt Komma, aber wer die Datei in Excel mit
+    deutscher/europäischer Ländereinstellung öffnet und wieder speichert,
+    bekommt oft ungefragt ein Semikolon als Trenner (Excel nutzt dort das
+    Komma als Dezimaltrennzeichen). Ohne Erkennung landet dann jede Zeile
+    komplett in einer einzigen Spalte, was wie lauter "ungültige Zeichen"
+    aussieht, obwohl der Teamname an sich in Ordnung wäre.
+    """
+
+    sample = text[:4096]
+    try:
+        return csv.Sniffer().sniff(sample, delimiters=",;\t")
+    except csv.Error:
+        return csv.excel  # Fallback: Standard-Komma-Dialekt
+
+
 @app.route("/shotcounter/teams/export.csv")
 def export_teams_csv():
     event = require_active_event(shotcounter=True)
@@ -4142,7 +4199,8 @@ def import_teams_csv():
         return redirect(_redirect_target())
 
     try:
-        reader = csv.DictReader(StringIO(text_content))
+        dialect = _sniff_csv_dialect(text_content)
+        reader = csv.DictReader(StringIO(text_content), dialect=dialect)
         rows = list(reader)
     except csv.Error as exc:
         flash(f"CSV konnte nicht gelesen werden: {exc}", "error")
@@ -4173,7 +4231,7 @@ def import_teams_csv():
     problems: List[str] = []
 
     for line_no, row in enumerate(rows, start=2):  # Zeile 1 = Kopfzeile
-        raw_name = (row.get(name_key) or "").strip()[:150]
+        raw_name = _clean_team_name(row.get(name_key) or "")[:150]
         if not raw_name:
             problems.append(f"Zeile {line_no}: Teamname fehlt, übersprungen.")
             continue

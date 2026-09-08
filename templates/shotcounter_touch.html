@@ -202,7 +202,7 @@
       <h3>Unbekannte Karte</h3>
       <p>Diese Karte ist noch keinem Team zugeordnet.</p>
       <input type="text" id="nfc-new-team-name" placeholder="Neuer Teamname"
-             pattern="[A-Za-z0-9ÄÖÜäöüß .,'&()/\-]+">
+             pattern="[\p{L}\p{N}_ .,'&()/-]+">
       <button type="button" id="nfc-create-team-btn" style="width: 100%;">Team erstellen &amp; Karte verknüpfen</button>
     </div>
     <div class="modal-actions">
@@ -220,8 +220,8 @@
         name="team_name"
         placeholder="Teamname"
         required
-        pattern="[A-Za-z0-9ÄÖÜäöüß .,'&()/\\-]+"
-        title="Erlaubt sind Buchstaben, Zahlen, Leerzeichen sowie . , - _ & / ( ) '"
+        pattern="[\p{L}\p{N}_ .,'&()/-]+"
+        title="Erlaubt sind Buchstaben (auch Umlaute/Akzente etc.), Zahlen, Leerzeichen sowie . , - _ & / ( ) '"
         style="width: 100%;"
       >
       <input type="hidden" name="next" value="{{ url_for('shotcounter_touch') }}">

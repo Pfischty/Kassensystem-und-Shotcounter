@@ -63,29 +63,35 @@ ein per USB angeschlossener ACR122U. Unter macOS ist PC/SC bereits im System
 eingebaut (kein `pcscd` nötig); unter Linux siehe
 [pi_deployment.md](pi_deployment.md#nfc-kartenleser-acr122u-für-den-shotcounter).
 
-1. App wie oben starten (Terminal 1), z. B. mit `flask --app app run --debug`
+1. App starten, z. B. mit `flask --app app run --debug`
    — läuft dann auf `http://127.0.0.1:5000`.
-2. In einem zweiten Terminal die NFC-Bridge starten und auf denselben Port
-   zeigen lassen (Standard der Bridge ist Port 8000, wie im Pi-Betrieb):
-   ```bash
-   source .venv/bin/activate
-   export NFC_BASE_URL=http://127.0.0.1:5000
-   python3 nfc_bridge.py
-   ```
-   Im Terminal sollte u. a. `Verwende Leser: ACS ACR122U PICC Interface`
-   erscheinen, und beim Auflegen einer Karte `Scan gemeldet: UID=...`.
-3. Event anlegen und aktivieren: `/admin` → Event erstellen (Shotcounter
+2. Event anlegen und aktivieren: `/admin` → Event erstellen (Shotcounter
    aktiviert lassen) → aktivieren.
-4. Karte programmieren: `/shotcounter/nfc` öffnen, Team wählen oder neuen
-   Namen eingeben, auf "Karte anlernen" klicken, Karte auf den Leser legen.
-   Die Bindung erscheint danach in der Liste.
+3. NFC-Bridge starten — **kein zweites Terminal nötig**: `/shotcounter/nfc`
+   öffnen und im Kasten "NFC-Bridge-Prozess" auf "Bridge starten" klicken.
+   Das startet `nfc_bridge.py` im Hintergrund und zeigt ihm automatisch den
+   richtigen Host/Port (den der Browser gerade benutzt) — ganz ohne
+   `NFC_BASE_URL` von Hand zu setzen. Funktioniert plattformunabhängig
+   (macOS/Linux/Windows), da die Prozesssteuerung über `psutil` läuft statt
+   über systemd. Der Punkt daneben wird grün, sobald die Bridge läuft;
+   Logs landen wie im Pi-Betrieb unter `instance/logs/nfc_bridge.log`.
+   *(Alternativ weiterhin manuell möglich: `export NFC_BASE_URL=http://127.0.0.1:5000`
+   und `python3 nfc_bridge.py` in einem zweiten Terminal — z. B. für
+   automatisierte Tests ohne Browser.)*
+4. Karte programmieren: im selben `/shotcounter/nfc`, Team wählen oder
+   neuen Namen eingeben, auf "Karte anlernen" klicken, Karte auf den Leser
+   legen. Die Bindung erscheint danach in der Liste.
 5. Live-Popup testen: `/shotcounter/touch` öffnen, dieselbe Karte erneut
    auflegen (kurz abheben und neu auflegen, falls sie schon länger als ein
    paar Sekunden auf dem Leser lag) — das Popup mit Teamname erscheint,
    Shot-Anzahl eingeben, "Shots buchen" bestätigen.
 
 Damit lässt sich der komplette Ablauf (Anlernen → Live-Scan → Shots buchen)
-ohne Pi und ohne systemd-Dienst durchspielen.
+ohne Pi und ohne systemd-Dienst durchspielen — der "Bridge starten"-Button
+ist ausdrücklich für genau diesen lokalen Testfall gedacht; im Dauerbetrieb
+auf dem Pi bleibt der systemd-Dienst (`pi_manage.sh write-nfc`) die
+empfohlene Lösung, da er unabhängig vom Browser läuft und bei einem Absturz
+automatisch neu startet.
 
 ## Raspberry-Pi-Grundsetup
 

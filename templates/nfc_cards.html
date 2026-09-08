@@ -63,6 +63,17 @@
     font-family: "SF Mono", Menlo, monospace;
     letter-spacing: 0.05em;
   }
+  .process-row {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    flex-wrap: wrap;
+  }
+  .process-actions {
+    display: flex;
+    gap: 0.5rem;
+    margin-left: auto;
+  }
 </style>
 
 <div class="nfc-header">
@@ -71,6 +82,35 @@
     <span class="dot" id="bridge-dot"></span>
     <span id="bridge-text">Lese Status…</span>
   </div>
+</div>
+
+<div class="card">
+  <h2>NFC-Bridge-Prozess</h2>
+  {% if not psutil_available %}
+    <p class="flash error">
+      Paket 'psutil' ist nicht installiert — Start/Stopp per Klick ist deaktiviert.
+      Bitte im venv ausführen: <code>pip install -r requirements.txt</code>.
+      Die Bridge lässt sich weiterhin manuell starten: <code>python3 nfc_bridge.py</code>
+      oder als systemd-Dienst (siehe docs/pi_deployment.md).
+    </p>
+  {% else %}
+    <p>
+      Für den Dauerbetrieb auf dem Pi wird der systemd-Dienst empfohlen
+      (<code>sudo ./scripts/pi_manage.sh write-nfc</code>, siehe docs/pi_deployment.md) —
+      der läuft unabhängig vom Browser und startet bei einem Absturz automatisch neu.
+      Dieser Schalter ist vor allem zum lokalen Testen ohne systemd gedacht
+      (macOS, Windows, ...), damit kein zweites Terminal nötig ist.
+    </p>
+    <div class="process-row">
+      <span class="dot" id="process-dot"></span>
+      <span id="process-text">Prüfe Status…</span>
+      <div class="process-actions">
+        <button type="button" id="process-start-btn">Bridge starten</button>
+        <button type="button" id="process-stop-btn" class="secondary">Bridge stoppen</button>
+      </div>
+    </div>
+    <div class="result-box" id="process-result-box"></div>
+  {% endif %}
 </div>
 
 <div class="card">
@@ -254,5 +294,65 @@
     }
   }
   renderBridgeStatus();
+
+  // NFC-Bridge-Prozess starten/stoppen (nur wenn psutil verfügbar ist)
+  const psutilAvailable = {{ psutil_available | tojson }};
+  if (psutilAvailable) {
+    const processDot = document.getElementById("process-dot");
+    const processText = document.getElementById("process-text");
+    const processStartBtn = document.getElementById("process-start-btn");
+    const processStopBtn = document.getElementById("process-stop-btn");
+    const processResultBox = document.getElementById("process-result-box");
+
+    function renderProcessStatus(running, pid) {
+      processDot.classList.toggle("online", running);
+      processText.textContent = running ? `Läuft (PID ${pid})` : "Gestoppt";
+      processStartBtn.disabled = running;
+      processStopBtn.disabled = !running;
+    }
+    renderProcessStatus({{ process_running | tojson }}, {{ process_pid | tojson }});
+
+    function showProcessResult(message, isError) {
+      processResultBox.textContent = message;
+      processResultBox.className = "result-box open flash " + (isError ? "error" : "success");
+      setTimeout(() => processResultBox.classList.remove("open"), 6000);
+    }
+
+    async function refreshProcessStatus() {
+      try {
+        const res = await fetch("{{ url_for('nfc_bridge_process_status') }}", { cache: "no-store" });
+        const data = await res.json();
+        if (data.success) renderProcessStatus(data.running, data.pid);
+      } catch (err) {
+        // Netzwerkfehler ignorieren, nächster Poll versucht es erneut
+      }
+    }
+
+    processStartBtn.addEventListener("click", async () => {
+      processStartBtn.disabled = true;
+      try {
+        const res = await fetch("{{ url_for('nfc_bridge_process_start') }}", { method: "POST" });
+        const data = await res.json();
+        showProcessResult(data.message, !data.success);
+      } catch (err) {
+        showProcessResult("Netzwerkfehler beim Starten.", true);
+      }
+      refreshProcessStatus();
+    });
+
+    processStopBtn.addEventListener("click", async () => {
+      processStopBtn.disabled = true;
+      try {
+        const res = await fetch("{{ url_for('nfc_bridge_process_stop') }}", { method: "POST" });
+        const data = await res.json();
+        showProcessResult(data.message, !data.success);
+      } catch (err) {
+        showProcessResult("Netzwerkfehler beim Stoppen.", true);
+      }
+      refreshProcessStatus();
+    });
+
+    setInterval(refreshProcessStatus, 3000);
+  }
 </script>
 {% endblock %}
