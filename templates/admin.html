@@ -416,6 +416,13 @@
               <option value="inline">Teamname – Shots (1 Zeile)</option>
             </select>
           </label>
+          <label class="stack" style="justify-content: flex-end;">
+            <span>&nbsp;</span>
+            <span style="display:flex; align-items:center; gap:0.5rem;">
+              <input type="checkbox" data-shot-field="hide_zero_shot_teams" style="width:auto;">
+              Teams mit 0 Shots im Leaderboard ausblenden
+            </span>
+          </label>
         </div>
         <input type="hidden" name="shotcounter_settings" value='{{ shotcounter_defaults | tojson }}'>
       </div>

@@ -538,6 +538,8 @@ document.addEventListener('click', (e) => {
             if (!key) return;
             if (input.type === "color") {
               input.value = sanitizeColor(settings[key] || defaults[key] || fallbackColor);
+            } else if (input.type === "checkbox") {
+              input.checked = Boolean(settings[key] ?? defaults[key]);
             } else if (input.type === "number") {
               input.value = settings[key] ?? defaults[key] ?? "";
             } else if (input.tagName === "SELECT") {
@@ -566,6 +568,8 @@ document.addEventListener('click', (e) => {
           input.addEventListener("input", () => {
             if (input.type === "color") {
               settings[key] = sanitizeColor(input.value || defaults[key] || fallbackColor);
+            } else if (input.type === "checkbox") {
+              settings[key] = input.checked;
             } else if (input.type === "number") {
               const min = key === "leaderboard_limit" ? 1 : 0.5;
               const max = key === "leaderboard_limit" ? 50 : 10;

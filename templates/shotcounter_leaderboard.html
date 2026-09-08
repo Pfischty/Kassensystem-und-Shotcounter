@@ -150,14 +150,80 @@
     .leaderboard-head { flex-direction: column; }
     .leaderboard-grid { grid-template-columns: 1fr; }
   }
+
+  /* Willkommens- und Buchungs-Animation */
+  .lb-celebration {
+    position: fixed;
+    inset: 0;
+    z-index: 100;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    background: rgba(5, 8, 16, 0.72);
+    backdrop-filter: blur(3px);
+  }
+  .lb-celebration.show {
+    display: flex;
+    animation: lb-fade-in 0.25s ease-out;
+  }
+  .lb-celebration.hide {
+    animation: lb-fade-out 0.4s ease-in forwards;
+  }
+  .lb-celebration-card {
+    text-align: center;
+    padding: 2.5rem 4rem;
+    border-radius: 24px;
+    background: linear-gradient(160deg, var(--lb-card, #1e293b), #0b1222);
+    border: 2px solid color-mix(in srgb, var(--lb-secondary, #38bdf8) 60%, white 10%);
+    box-shadow: 0 25px 80px rgba(0,0,0,0.55);
+    animation: lb-pop-in 0.5s cubic-bezier(0.34, 1.56, 0.64, 1);
+  }
+  .lb-celebration-kicker {
+    font-size: 1.4rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--lb-secondary, #38bdf8);
+    margin: 0 0 0.5rem;
+  }
+  .lb-celebration.is-booking .lb-celebration-kicker {
+    color: var(--lb-tertiary, #34d399);
+  }
+  .lb-celebration-name {
+    font-size: clamp(2.5rem, 7vw, 5rem);
+    font-weight: 900;
+    margin: 0;
+    color: #f8fafc;
+    text-shadow: 0 4px 20px rgba(0,0,0,0.4);
+  }
+  .lb-celebration-sub {
+    margin: 0.75rem 0 0;
+    font-size: 1.6rem;
+    font-weight: 700;
+    color: rgba(226,232,240,0.85);
+  }
+  @keyframes lb-fade-in { from { opacity: 0; } to { opacity: 1; } }
+  @keyframes lb-fade-out { from { opacity: 1; } to { opacity: 0; } }
+  @keyframes lb-pop-in {
+    0% { transform: scale(0.6); opacity: 0; }
+    100% { transform: scale(1); opacity: 1; }
+  }
 </style>
 
-<div class="leaderboard-hero layout-{{ shot_settings.leaderboard_layout }} {% if shot_settings.background_image %}has-bg{% endif %}" data-refresh-url="{{ url_for('shotcounter_leaderboard_data', limit=limit) }}">
+<div class="leaderboard-hero layout-{{ shot_settings.leaderboard_layout }} {% if shot_settings.background_image %}has-bg{% endif %}" data-refresh-url="{{ url_for('shotcounter_leaderboard_data', limit=limit) }}" data-events-url="{{ url_for('shotcounter_leaderboard_events') }}" data-last-event-id="{{ last_event_id }}">
   <div class="leaderboard-head">
     <div class="leaderboard-event">Shotcounter - {{ event.name }}</div>
   </div>
 
   <div id="leaderboard-grid" class="leaderboard-grid"></div>
+</div>
+
+<div class="lb-celebration" id="lb-celebration">
+  <div class="lb-celebration-card">
+    <p class="lb-celebration-kicker" id="lb-celebration-kicker"></p>
+    <p class="lb-celebration-name" id="lb-celebration-name"></p>
+    <p class="lb-celebration-sub" id="lb-celebration-sub"></p>
+  </div>
 </div>
 
 <script>
@@ -199,5 +265,66 @@
   renderTeams(fallbackTeams);
   fetchAndRender();
   setInterval(fetchAndRender, 5000);
+
+  // --- Willkommens-/Buchungs-Animation ---
+  const heroEl = document.querySelector(".leaderboard-hero");
+  const eventsUrl = heroEl.dataset.eventsUrl;
+  let lastEventId = parseInt(heroEl.dataset.lastEventId, 10) || 0;
+
+  const celebrationEl = document.getElementById("lb-celebration");
+  const celebrationKicker = document.getElementById("lb-celebration-kicker");
+  const celebrationName = document.getElementById("lb-celebration-name");
+  const celebrationSub = document.getElementById("lb-celebration-sub");
+  let celebrationQueue = [];
+  let celebrationBusy = false;
+
+  function showNextCelebration() {
+    if (celebrationBusy || celebrationQueue.length === 0) return;
+    celebrationBusy = true;
+    const evt = celebrationQueue.shift();
+
+    celebrationEl.classList.remove("is-booking");
+    if (evt.first_booking) {
+      celebrationKicker.textContent = "Willkommen";
+      celebrationSub.textContent = "Auf die ersten Shots!";
+    } else {
+      celebrationEl.classList.add("is-booking");
+      celebrationKicker.textContent = "Shots gebucht";
+      celebrationSub.textContent = `+${evt.amount} Shot${evt.amount === 1 ? "" : "s"}!`;
+    }
+    celebrationName.textContent = evt.team_name || "";
+
+    celebrationEl.classList.remove("hide");
+    celebrationEl.classList.add("show");
+
+    const visibleDuration = evt.first_booking ? 4500 : 3200;
+    setTimeout(() => {
+      celebrationEl.classList.add("hide");
+      setTimeout(() => {
+        celebrationEl.classList.remove("show", "hide");
+        celebrationBusy = false;
+        showNextCelebration();
+      }, 400);
+    }, visibleDuration);
+  }
+
+  const fetchNewEvents = async () => {
+    try {
+      const res = await fetch(`${eventsUrl}?after_id=${lastEventId}`, { cache: "no-store" });
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      const data = await res.json();
+      const newEvents = data.events || [];
+      newEvents.forEach((evt) => {
+        lastEventId = Math.max(lastEventId, evt.id);
+        celebrationQueue.push(evt);
+      });
+      if (newEvents.length) showNextCelebration();
+    } catch (err) {
+      console.error("Leaderboard-Events Refresh fehlgeschlagen", err);
+    }
+  };
+
+  fetchNewEvents();
+  setInterval(fetchNewEvents, 1500);
 </script>
 {% endblock %}

@@ -254,6 +254,7 @@ class ShotLog(db.Model):
     amount = db.Column(db.Integer, nullable=False)
     actor = db.Column(db.String(200))
     user_agent = db.Column(db.String(300))
+    first_booking = db.Column(db.Boolean, default=False, nullable=False)
     created_at = db.Column(db.DateTime, default=utcnow)
 
     event = db.relationship("Event", backref=db.backref("shot_logs", cascade="all, delete-orphan"))
@@ -431,26 +432,38 @@ def ensure_runtime_indexes() -> None:
         raise
 
 
-def ensure_nfc_card_schema() -> None:
-    """Fügt nachträglich neue NfcCard-Spalten hinzu (Self-Healing wie
-    ensure_runtime_schema, aber per ALTER TABLE statt CREATE TABLE - denn
-    db.create_all() legt nur fehlende TABELLEN an, ändert aber keine
-    bereits existierenden). Nötig, weil Installationen, die das NFC-Feature
-    schon vor dieser Spalte genutzt haben, sonst mit 'no such column'
-    abstürzen würden."""
+def _ensure_column(table: str, column: str, ddl_type: str, default_sql: str | None = None) -> None:
+    """Fügt eine fehlende Spalte per ALTER TABLE hinzu.
+
+    Self-Healing analog zu ensure_runtime_schema(), aber für Spalten statt
+    Tabellen: db.create_all() legt nur fehlende TABELLEN neu an, ändert aber
+    nie eine bereits existierende Tabelle. Ohne das würden Installationen,
+    die ein Feature schon vor einer neuen Spalte genutzt haben, mit
+    'no such column' abstürzen.
+    """
+
+    inspector = sqla_inspect(db.engine)
+    if not inspector.has_table(table):
+        return  # wird von ensure_runtime_schema() frisch mit allen Spalten angelegt
+    existing_columns = {col["name"] for col in inspector.get_columns(table)}
+    if column in existing_columns:
+        return
+    default_clause = f" DEFAULT {default_sql}" if default_sql else ""
+    db.session.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {ddl_type}{default_clause}"))
+    db.session.commit()
+    app.logger.info("Spalte '%s' zu '%s' hinzugefügt (Schema-Selbstheilung).", column, table)
+
+
+def ensure_runtime_column_schema() -> None:
+    """Sammelstelle für nachträglich hinzugekommene Spalten auf bereits
+    bestehenden Tabellen (siehe _ensure_column)."""
 
     try:
-        inspector = sqla_inspect(db.engine)
-        if not inspector.has_table("nfc_card"):
-            return  # wird von ensure_runtime_schema() frisch mit allen Spalten angelegt
-        existing_columns = {col["name"] for col in inspector.get_columns("nfc_card")}
-        if "last_shot_booked_at" not in existing_columns:
-            db.session.execute(text("ALTER TABLE nfc_card ADD COLUMN last_shot_booked_at DATETIME"))
-            db.session.commit()
-            app.logger.info("Spalte 'last_shot_booked_at' zu nfc_card hinzugefügt (Schema-Selbstheilung).")
+        _ensure_column("nfc_card", "last_shot_booked_at", "DATETIME")
+        _ensure_column("shot_log", "first_booking", "BOOLEAN", default_sql="0")
     except Exception as exc:
         db.session.rollback()
-        app.logger.error("NfcCard-Schema-Selbstheilung fehlgeschlagen: %s", exc)
+        app.logger.error("Schema-Spalten-Selbstheilung fehlgeschlagen: %s", exc)
         raise
 
 
@@ -458,7 +471,7 @@ if not app.config.get("TESTING"):
     with app.app_context():
         ensure_runtime_schema()
         ensure_runtime_indexes()
-        ensure_nfc_card_schema()
+        ensure_runtime_column_schema()
 
 
 _schema_checked = False
@@ -919,7 +932,7 @@ DEFAULT_BUTTONS: List[ButtonConfig] = [
     ButtonConfig(name="Shot", label="Shot", price=5, css_class="shot", color="#7a1f2a", category="Alkohol"),
 ]
 
-DEFAULT_SHOTCOUNTER_SETTINGS: Dict[str, int | float | str] = {
+DEFAULT_SHOTCOUNTER_SETTINGS: Dict[str, int | float | str | bool] = {
     "background_color": "#0b1222",
     "primary_color": "#1e293b",
     "secondary_color": "#38bdf8",
@@ -928,6 +941,7 @@ DEFAULT_SHOTCOUNTER_SETTINGS: Dict[str, int | float | str] = {
     "team_size": 1.6,  # rem
     "leaderboard_limit": 10,
     "leaderboard_layout": "stacked",
+    "hide_zero_shot_teams": True,
 }
 
 DEFAULT_PRICE_LIST_SETTINGS: Dict[str, int | float | str | list] = {
@@ -1197,6 +1211,9 @@ def validate_shotcounter_settings(raw: dict | None) -> Dict[str, int | float | s
     )
     settings["leaderboard_layout"] = _sanitize_leaderboard_layout(
         incoming.get("leaderboard_layout"), str(DEFAULT_SHOTCOUNTER_SETTINGS["leaderboard_layout"])
+    )
+    settings["hide_zero_shot_teams"] = bool(
+        incoming.get("hide_zero_shot_teams", DEFAULT_SHOTCOUNTER_SETTINGS["hide_zero_shot_teams"])
     )
     # Preserve background_image only if it's a valid string and file exists
     if incoming.get("background_image"):
@@ -3607,13 +3624,11 @@ def _validate_team_name(name: str) -> tuple[bool, str | None]:
     return True, None
 
 
-def _top_teams(event: Event, limit: int) -> List[Team]:
-    return (
-        Team.query.filter_by(event_id=event.id)
-        .order_by(Team.shots.desc(), Team.name.asc())
-        .limit(limit)
-        .all()
-    )
+def _top_teams(event: Event, limit: int, *, hide_zero: bool = False) -> List[Team]:
+    query = Team.query.filter_by(event_id=event.id)
+    if hide_zero:
+        query = query.filter(Team.shots > 0)
+    return query.order_by(Team.shots.desc(), Team.name.asc()).limit(limit).all()
 
 
 def _serialize_teams(teams: Iterable[Team]) -> List[Dict[str, int | str]]:
@@ -3673,13 +3688,17 @@ def shotcounter_leaderboard():
     event = require_active_event(shotcounter=True)
     shot_settings = resolve_shotcounter_settings(event)
     limit = _leaderboard_limit(int(shot_settings["leaderboard_limit"]))
-    teams = _top_teams(event, limit)
+    teams = _top_teams(event, limit, hide_zero=bool(shot_settings["hide_zero_shot_teams"]))
+    last_event_id = (
+        db.session.query(func.max(ShotLog.id)).filter(ShotLog.event_id == event.id).scalar() or 0
+    )
     return render_template(
         "shotcounter_leaderboard.html",
         teams=_serialize_teams(teams),
         event=event,
         limit=limit,
         shot_settings=shot_settings,
+        last_event_id=last_event_id,
     )
 
 
@@ -3688,13 +3707,43 @@ def shotcounter_leaderboard_data():
     event = require_active_event(shotcounter=True)
     shot_settings = resolve_shotcounter_settings(event)
     limit = _leaderboard_limit(int(shot_settings["leaderboard_limit"]))
-    teams = _top_teams(event, limit)
+    teams = _top_teams(event, limit, hide_zero=bool(shot_settings["hide_zero_shot_teams"]))
     payload = {
         "event": {"id": event.id, "name": event.name},
         "limit": limit,
         "teams": _serialize_teams(teams),
     }
     return payload
+
+
+@app.route("/shotcounter/leaderboard/events")
+def shotcounter_leaderboard_events():
+    """Liefert neu gebuchte Shots seit `after_id` für Popup-Animationen auf
+    dem Vollbild-Leaderboard (Willkommen bei der ersten Buchung, sonst eine
+    kurze "+N Shots"-Animation)."""
+
+    event = require_active_event(shotcounter=True)
+    after_id = request.args.get("after_id", type=int, default=0)
+    logs = (
+        ShotLog.query.filter(ShotLog.event_id == event.id, ShotLog.id > after_id)
+        .order_by(ShotLog.id.asc())
+        .limit(20)
+        .all()
+    )
+    return jsonify(
+        {
+            "success": True,
+            "events": [
+                {
+                    "id": log.id,
+                    "team_name": log.team_name,
+                    "amount": log.amount,
+                    "first_booking": bool(log.first_booking),
+                }
+                for log in logs
+            ],
+        }
+    )
 
 
 @app.route("/shotcounter/teams", methods=["POST"])
@@ -3740,6 +3789,7 @@ def add_shots():
         flash("Bitte eine gültige Anzahl Shots angeben.", "error")
         return redirect(_redirect_target())
 
+    first_booking = team.shots == 0
     team.shots += amount
     db.session.commit()
     actor, user_agent = resolve_actor()
@@ -3751,6 +3801,7 @@ def add_shots():
             amount=amount,
             actor=actor,
             user_agent=user_agent,
+            first_booking=first_booking,
         )
     )
     db.session.commit()

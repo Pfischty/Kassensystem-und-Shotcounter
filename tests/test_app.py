@@ -408,26 +408,84 @@ def test_nfc_bridge_process_routes_use_manager(client, monkeypatch):
     assert stop_resp == {"success": True, "message": "Gestoppt."}
 
 
-def test_ensure_nfc_card_schema_adds_missing_column(client):
-    """Simuliert eine Installation, die nfc_card schon vor der Spalte
-    last_shot_booked_at angelegt hat - db.create_all() ändert bestehende
-    Tabellen nicht, daher braucht es die eigene Selbstheilung per ALTER TABLE."""
+def test_ensure_runtime_column_schema_adds_missing_columns(client):
+    """Simuliert eine Installation, die nfc_card/shot_log schon vor neueren
+    Spalten angelegt hat - db.create_all() ändert bestehende Tabellen nicht,
+    daher braucht es die eigene Selbstheilung per ALTER TABLE."""
 
     from sqlalchemy import inspect as sqla_inspect, text
 
     with app.app_context():
         db.session.execute(text("ALTER TABLE nfc_card DROP COLUMN last_shot_booked_at"))
+        db.session.execute(text("ALTER TABLE shot_log DROP COLUMN first_booking"))
         db.session.commit()
 
         inspector = sqla_inspect(db.engine)
-        columns_before = {col["name"] for col in inspector.get_columns("nfc_card")}
-        assert "last_shot_booked_at" not in columns_before
+        assert "last_shot_booked_at" not in {col["name"] for col in inspector.get_columns("nfc_card")}
+        assert "first_booking" not in {col["name"] for col in inspector.get_columns("shot_log")}
 
-        app_module.ensure_nfc_card_schema()
+        app_module.ensure_runtime_column_schema()
 
         inspector = sqla_inspect(db.engine)
-        columns_after = {col["name"] for col in inspector.get_columns("nfc_card")}
-        assert "last_shot_booked_at" in columns_after
+        assert "last_shot_booked_at" in {col["name"] for col in inspector.get_columns("nfc_card")}
+        assert "first_booking" in {col["name"] for col in inspector.get_columns("shot_log")}
+
+
+def test_leaderboard_hides_zero_shot_teams_by_default(client):
+    _create_and_activate_event(client)
+    client.post("/shotcounter/teams", data={"team_name": "Hat Shots"})
+    client.post("/shotcounter/teams", data={"team_name": "Noch Keine Shots"})
+
+    with app.app_context():
+        team = Team.query.filter_by(name="Hat Shots").first()
+        team_id = team.id
+    client.post("/shotcounter/shots", data={"team_id": team_id, "amount": 5})
+
+    data = client.get("/shotcounter/leaderboard/data").get_json()
+    names = [t["name"] for t in data["teams"]]
+    assert "Hat Shots" in names
+    assert "Noch Keine Shots" not in names
+
+
+def test_leaderboard_shows_zero_shot_teams_when_toggle_disabled(client):
+    event = _create_and_activate_event(client)
+    client.post("/shotcounter/teams", data={"team_name": "Noch Keine Shots"})
+
+    with app.app_context():
+        evt = db.session.get(Event, event.id)
+        settings = dict(evt.shotcounter_settings or {})
+        settings["hide_zero_shot_teams"] = False
+        evt.shotcounter_settings = settings
+        from sqlalchemy.orm import attributes as sqla_attributes
+
+        sqla_attributes.flag_modified(evt, "shotcounter_settings")
+        db.session.commit()
+
+    data = client.get("/shotcounter/leaderboard/data").get_json()
+    names = [t["name"] for t in data["teams"]]
+    assert "Noch Keine Shots" in names
+
+
+def test_leaderboard_events_reports_first_booking_then_regular_booking(client):
+    _create_and_activate_event(client)
+    client.post("/shotcounter/teams", data={"team_name": "Events Team"})
+    with app.app_context():
+        team_id = Team.query.filter_by(name="Events Team").first().id
+
+    client.post("/shotcounter/shots", data={"team_id": team_id, "amount": 3})
+    client.post("/shotcounter/shots", data={"team_id": team_id, "amount": 2})
+
+    events = client.get("/shotcounter/leaderboard/events?after_id=0").get_json()["events"]
+    assert len(events) == 2
+    assert events[0]["first_booking"] is True
+    assert events[0]["amount"] == 3
+    assert events[1]["first_booking"] is False
+    assert events[1]["amount"] == 2
+
+    # after_id filtert korrekt weitere, bereits gesehene Events raus.
+    later = client.get(f"/shotcounter/leaderboard/events?after_id={events[0]['id']}").get_json()["events"]
+    assert len(later) == 1
+    assert later[0]["id"] == events[1]["id"]
 
 
 def test_health_endpoint(client):

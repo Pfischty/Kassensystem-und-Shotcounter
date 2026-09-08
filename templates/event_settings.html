@@ -286,6 +286,18 @@
               <option value="inline" {% if current_shot.get('leaderboard_layout', shotcounter_defaults.get('leaderboard_layout')) == 'inline' %}selected{% endif %}>Teamname – Shots (1 Zeile)</option>
             </select>
           </label>
+          <label class="stack" style="justify-content: flex-end;">
+            <span>&nbsp;</span>
+            <span style="display:flex; align-items:center; gap:0.5rem;">
+              <input
+                type="checkbox"
+                data-shot-field="hide_zero_shot_teams"
+                style="width:auto;"
+                {% if current_shot.get('hide_zero_shot_teams', shotcounter_defaults.get('hide_zero_shot_teams')) %}checked{% endif %}
+              >
+              Teams mit 0 Shots im Leaderboard ausblenden
+            </span>
+          </label>
         </div>
 
         <div style="margin-top: 1rem; padding-top: 1rem; border-top: 1px solid var(--border);">
