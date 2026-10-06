@@ -4169,9 +4169,24 @@ def nfc_bridge_process_status():
     return jsonify({"success": True, "running": running, "pid": pid, "psutil_available": nfc_bridge_manager.PSUTIL_AVAILABLE})
 
 
+def _nfc_bridge_loopback_url() -> str:
+    """Adresse, über die die Bridge diese App erreicht: immer 127.0.0.1.
+
+    Nicht request.host_url verwenden: Klickt jemand "Bridge starten" z. B. auf
+    dem iPad, wäre das die Netzwerk-IP dieses Rechners. Die Bridge käme dann
+    nicht von Loopback, und _nfc_bridge_authorized() lehnt jeden Scan mit 403 ab.
+    SERVER_PORT ist bei Werkzeug und Gunicorn der Port, auf dem der Server lauscht.
+    """
+
+    port = str(request.environ.get("SERVER_PORT") or "")
+    if not port.isdigit():
+        port = str(request.host.rpartition(":")[2]) if ":" in request.host else "80"
+    return f"http://127.0.0.1:{port}"
+
+
 @app.route("/shotcounter/nfc/bridge/start", methods=["POST"])
 def nfc_bridge_process_start():
-    ok, message, pid = nfc_bridge_manager.start_bridge(app.instance_path, request.host_url)
+    ok, message, pid = nfc_bridge_manager.start_bridge(app.instance_path, _nfc_bridge_loopback_url())
     return jsonify({"success": ok, "message": message, "pid": pid})
 
 
