@@ -82,10 +82,12 @@ eingebaut (kein `pcscd` nötig); unter Linux siehe
 4. Karte programmieren: im selben `/shotcounter/nfc`, Team wählen oder
    neuen Namen eingeben, auf "Karte anlernen" klicken, Karte auf den Leser
    legen. Die Bindung erscheint danach in der Liste.
-5. Live-Popup testen: `/shotcounter/touch` öffnen, dieselbe Karte erneut
-   auflegen (kurz abheben und neu auflegen, falls sie schon länger als ein
-   paar Sekunden auf dem Leser lag) — das Popup mit Teamname erscheint,
-   Shot-Anzahl eingeben, "Shots buchen" bestätigen.
+5. Live-Scan testen: `/shotcounter/touch` öffnen, dieselbe Karte erneut
+   auflegen (kurz abheben und neu auflegen, falls sie schon auf dem Leser
+   lag) — das Team wird rechts automatisch ausgewählt, Shot-Anzahl eingeben,
+   "Shots buchen" bestätigen. Eine unbekannte Karte zeigt links ein Banner
+   zum Zuweisen oder Neu-Anlegen. Die Statusanzeige oben rechts zeigt, ob
+   Bridge und Leser bereit sind.
 
 Damit lässt sich der komplette Ablauf (Anlernen → Live-Scan → Shots buchen)
 ohne Pi und ohne systemd-Dienst durchspielen — der "Bridge starten"-Button

@@ -3,632 +3,1280 @@
 {% block header %}{% endblock %}
 {% block content %}
 <style>
-  .touch-wrapper {
-    max-width: 960px;
-    margin: 0 auto;
+  /* Touch-Ansicht für das iPad im Querformat: links Teamsuche, rechts Buchung. */
+  .container { padding: 0; }
+  html, body { height: 100%; overflow: hidden; }
+  .tc-app {
+    --tc-bg: #0b1222;
+    --tc-panel: #0f172a;
+    --tc-raised: #1b243b;
+    --tc-line: #273555;
+    --tc-muted: rgba(226, 232, 240, 0.62);
+    --tc-green: #34d399;
+    --tc-amber: #fbbf24;
+    --tc-red: #f87171;
+    height: 100vh;
+    height: 100dvh;
+    display: flex;
+    flex-direction: column;
+    background: var(--tc-bg);
+    touch-action: manipulation;
+    -webkit-user-select: none;
+    user-select: none;
   }
-  .touch-header {
+  .tc-app input { -webkit-user-select: text; user-select: text; }
+  .tc-app button { touch-action: manipulation; }
+
+  /* Kopfzeile */
+  .tc-bar {
     display: flex;
     align-items: center;
-    justify-content: space-between;
-    gap: 1rem;
-    flex-wrap: wrap;
-    margin-bottom: 1rem;
-  }
-  .touch-title {
-    margin: 0;
-  }
-  .touch-actions {
-    display: flex;
     gap: 0.75rem;
-    flex-wrap: wrap;
+    padding: 0.6rem 1rem;
+    border-bottom: 1px solid var(--tc-line);
+    background: var(--tc-panel);
   }
-  .touch-card {
-    background: #0f172a;
-    border: 1px solid #1f2a44;
-    border-radius: 14px;
-    padding: 1.4rem;
-    box-shadow: 0 10px 30px rgba(0,0,0,0.25);
+  .tc-title { font-size: 1.15rem; font-weight: 800; margin-right: auto; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .tc-title span { color: var(--tc-muted); font-weight: 600; }
+  .tc-bar-link {
+    padding: 0.55rem 0.9rem;
+    border-radius: 10px;
+    background: var(--tc-raised);
+    border: 1px solid var(--tc-line);
+    color: var(--text);
+    font-weight: 700;
   }
-  .form-row {
-    display: flex;
-    gap: 0.75rem;
-    flex-wrap: wrap;
+  .tc-reader {
+    display: inline-flex;
     align-items: center;
-    margin-bottom: 1rem;
+    gap: 0.55rem;
+    padding: 0.55rem 0.95rem;
+    border-radius: 999px;
+    font-weight: 700;
+    background: var(--tc-raised);
+    border: 1px solid var(--tc-line);
+    color: var(--text);
   }
-  .touch-select {
-    min-width: 240px;
-    padding: 0.6rem 0.75rem;
-    font-size: 1.05rem;
+  .tc-dot { width: 12px; height: 12px; border-radius: 50%; background: var(--tc-muted); flex: none; }
+  .tc-reader[data-state="ready"] .tc-dot { background: var(--tc-green); box-shadow: 0 0 10px var(--tc-green); }
+  .tc-reader[data-state="no_reader"] .tc-dot { background: var(--tc-amber); }
+  .tc-reader[data-state="offline"] .tc-dot { background: var(--tc-red); }
+  .tc-reader[data-state="disconnected"] .tc-dot { background: #64748b; }
+  .tc-reader[data-state="no_reader"] { border-color: rgba(251, 191, 36, 0.5); }
+  .tc-reader[data-state="offline"] { border-color: rgba(248, 113, 113, 0.5); }
+  .tc-reader.pulse { animation: tc-pulse 0.9s ease-out; }
+  @keyframes tc-pulse {
+    0% { box-shadow: 0 0 0 0 rgba(52, 211, 153, 0.8); }
+    100% { box-shadow: 0 0 0 18px rgba(52, 211, 153, 0); }
   }
-  .display {
-    font-size: 2.8rem;
-    font-weight: 800;
-    letter-spacing: 1px;
-    padding: 0.75rem 1rem;
-    border-radius: 12px;
-    background: #111827;
-    border: 1px solid #1f2a44;
-    text-align: right;
-    min-width: 140px;
+
+  .tc-banner {
+    padding: 0.7rem 1rem;
+    background: rgba(248, 113, 113, 0.16);
+    border-bottom: 1px solid rgba(248, 113, 113, 0.5);
+    color: #fecaca;
+    font-weight: 700;
+    text-align: center;
+  }
+  .tc-banner[hidden] { display: none; }
+
+  /* Zweiteilung */
+  .tc-main {
     flex: 1;
-  }
-  .keypad {
+    min-height: 0;
     display: grid;
-    grid-template-columns: repeat(3, minmax(140px, 1fr));
+    grid-template-columns: minmax(300px, 38%) 1fr;
+  }
+  .tc-list-pane {
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+    padding: 0.9rem;
+    border-right: 1px solid var(--tc-line);
+    min-height: 0;
+  }
+  .tc-detail-pane {
+    display: flex;
+    flex-direction: column;
+    padding: 0.9rem 1.1rem;
+    min-height: 0;
+  }
+
+  /* Liste */
+  .tc-newcard {
+    display: flex;
+    align-items: center;
     gap: 0.75rem;
-    margin-top: 1.1rem;
+    padding: 0.75rem 0.9rem;
+    border-radius: 12px;
+    background: rgba(251, 191, 36, 0.14);
+    border: 1px solid rgba(251, 191, 36, 0.55);
   }
-  .keypad button {
-    padding: 2.6rem 1.8rem;
-    min-height: 120px;
-    font-size: 2rem;
+  .tc-newcard[hidden] { display: none; }
+  .tc-newcard div { flex: 1; }
+  .tc-newcard strong { display: block; color: var(--tc-amber); font-size: 1.1rem; }
+  .tc-newcard span { color: var(--tc-muted); font-size: 0.95rem; }
+  #team-search {
+    width: 100%;
+    box-sizing: border-box;
+    font-size: 1.25rem;
+    padding: 0.8rem 1rem;
+    border-radius: 12px;
+    background: var(--tc-panel);
+    border: 1px solid var(--tc-line);
+  }
+  .tc-create {
+    width: 100%;
+    padding: 0.9rem;
+    font-size: 1.1rem;
     font-weight: 800;
-    background: #1b243b;
-    color: #e2e8f0;
-    border: 1px solid #273555;
-  }
-  .keypad button.action {
-    background: #22345a;
-  }
-  #submit-btn {
+    border-radius: 12px;
     background: linear-gradient(135deg, #34d399, #22c55e);
     color: #0b1222;
-    border: none;
-    box-shadow: 0 10px 30px rgba(34,197,94,0.25);
   }
-  #clear-btn {
-    background: #b91c1c;
-    border: none;
-    color: #fef2f2;
+  .tc-create[hidden] { display: none; }
+  .tc-sort { display: flex; gap: 0.4rem; }
+  .tc-sort button {
+    flex: 1;
+    padding: 0.55rem;
+    border-radius: 10px;
+    background: var(--tc-raised);
+    border: 1px solid var(--tc-line);
+    color: var(--tc-muted);
   }
-  #back-btn {
-    background: #f59e0b;
-    border: none;
+  .tc-sort button.active { background: #22345a; color: var(--text); border-color: #3b5998; }
+  .tc-team-list {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    display: flex;
+    flex-direction: column;
+    gap: 0.45rem;
+    padding-bottom: 1rem;
+  }
+  .tc-team {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    width: 100%;
+    padding: 0.85rem 1rem;
+    border-radius: 12px;
+    text-align: left;
+    background: var(--tc-raised);
+    border: 1px solid var(--tc-line);
+    color: var(--text);
+    font-weight: 700;
+  }
+  .tc-team.selected { background: #22345a; border-color: #60a5fa; box-shadow: inset 4px 0 0 #60a5fa; }
+  .tc-team-rank {
+    flex: none;
+    width: 2.4rem;
+    text-align: center;
+    font-size: 0.95rem;
+    color: var(--tc-muted);
+  }
+  .tc-team-name { flex: 1; font-size: 1.15rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .tc-team-meta { flex: none; font-size: 0.95rem; color: var(--tc-muted); white-space: nowrap; }
+  .tc-list-empty { padding: 1rem; text-align: center; color: var(--tc-muted); }
+
+  /* Detail */
+  .tc-empty {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 0.6rem;
+    text-align: center;
+    color: var(--tc-muted);
+  }
+  .tc-empty[hidden], .tc-detail[hidden] { display: none; }
+  .tc-empty-icon { font-size: 4rem; opacity: 0.8; }
+  .tc-empty p { margin: 0; font-size: 1.35rem; font-weight: 700; }
+  .tc-empty .tc-hint { font-size: 1.05rem; color: var(--tc-amber); }
+  .tc-detail { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 0.7rem; }
+  .tc-detail-head { display: flex; align-items: flex-start; gap: 1rem; }
+  .tc-detail-head > div:first-child { flex: 1; min-width: 0; }
+  .tc-kicker { margin: 0; font-size: 0.95rem; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; color: var(--tc-green); }
+  .tc-kicker:empty { display: none; }
+  .tc-detail-name {
+    margin: 0.1rem 0 0;
+    font-size: clamp(1.8rem, 3.4vw, 2.6rem);
+    line-height: 1.1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .tc-detail-meta { margin: 0.25rem 0 0; color: var(--tc-muted); font-size: 1.05rem; font-weight: 600; }
+  .tc-rank-chip {
+    flex: none;
+    padding: 0.5rem 0.9rem;
+    border-radius: 12px;
+    background: var(--tc-raised);
+    border: 1px solid var(--tc-line);
+    font-size: 1.15rem;
+    font-weight: 800;
+  }
+  .tc-rank-chip:empty { display: none; }
+  .tc-bind-hint {
+    margin: 0;
+    padding: 0.55rem 0.8rem;
+    border-radius: 10px;
+    background: rgba(251, 191, 36, 0.12);
+    color: var(--tc-amber);
+    font-weight: 700;
+  }
+  .tc-bind-hint[hidden] { display: none; }
+  .tc-switch {
+    padding: 0.6rem 0.9rem;
+    border-radius: 10px;
+    background: rgba(52, 211, 153, 0.14);
+    border: 1px solid rgba(52, 211, 153, 0.55);
+    color: var(--text);
+    font-weight: 700;
+    text-align: left;
+  }
+  .tc-switch[hidden] { display: none; }
+  .tc-entry { display: flex; gap: 0.6rem; }
+  .tc-display {
+    flex: 1;
+    font-size: 2.8rem;
+    font-weight: 800;
+    padding: 0.35rem 1rem;
+    border-radius: 12px;
+    background: var(--tc-panel);
+    border: 1px solid var(--tc-line);
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+  }
+  .tc-quick { display: flex; gap: 0.5rem; }
+  .tc-quick button {
+    min-width: 76px;
+    font-size: 1.4rem;
+    font-weight: 800;
+    border-radius: 12px;
+    background: #22345a;
+    color: var(--text);
+    border: 1px solid #3b5998;
+  }
+  .tc-keypad {
+    flex: 1;
+    min-height: 0;
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    grid-auto-rows: 1fr;
+    gap: 0.55rem;
+  }
+  .tc-keypad button {
+    font-size: 2rem;
+    font-weight: 800;
+    border-radius: 14px;
+    background: var(--tc-raised);
+    border: 1px solid var(--tc-line);
+    color: var(--text);
+    min-height: 56px;
+  }
+  .tc-keypad button:active, .tc-quick button:active { filter: brightness(1.35); }
+  .tc-keypad .tc-clear { background: #7f1d1d; border-color: #b91c1c; }
+  .tc-keypad .tc-back { background: #78350f; border-color: #b45309; }
+  .tc-book {
+    padding: 1.05rem;
+    font-size: 1.5rem;
+    font-weight: 900;
+    border-radius: 14px;
+    background: linear-gradient(135deg, #34d399, #22c55e);
     color: #0b1222;
+    box-shadow: 0 10px 30px rgba(34, 197, 94, 0.25);
   }
-  .modal {
+  .tc-book:disabled { opacity: 0.55; }
+  .tc-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 0.55rem; }
+  .tc-actions[hidden] { display: none; }
+  .tc-actions button {
+    padding: 0.8rem;
+    font-size: 1.05rem;
+    font-weight: 700;
+    border-radius: 12px;
+    background: var(--tc-raised);
+    border: 1px solid var(--tc-line);
+    color: var(--text);
+  }
+
+  /* Bestätigung unten */
+  .tc-toast {
+    position: fixed;
+    left: 50%;
+    bottom: 1.2rem;
+    transform: translateX(-50%);
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    max-width: 92vw;
+    padding: 0.85rem 1rem 0.85rem 1.3rem;
+    border-radius: 14px;
+    background: #052e1c;
+    border: 1px solid var(--tc-green);
+    box-shadow: 0 15px 40px rgba(0, 0, 0, 0.5);
+    font-size: 1.15rem;
+    font-weight: 700;
+    z-index: 60;
+    animation: tc-toast-in 0.25s ease-out;
+  }
+  .tc-toast[hidden] { display: none; }
+  .tc-toast .tc-toast-close {
+    padding: 0.6rem 0.85rem;
+    background: transparent;
+    color: var(--text);
+    border: 1px solid rgba(255, 255, 255, 0.35);
+    font-size: 1.1rem;
+    line-height: 1;
+  }
+  .tc-toast.error { background: #3b0d0d; border-color: var(--tc-red); }
+  .tc-toast button {
+    padding: 0.6rem 1rem;
+    border-radius: 10px;
+    background: #f8fafc;
+    color: #0b1222;
+    font-weight: 800;
+  }
+  .tc-toast button[hidden] { display: none; }
+  @keyframes tc-toast-in { from { opacity: 0; transform: translate(-50%, 20px); } to { opacity: 1; transform: translate(-50%, 0); } }
+
+  /* Fenster (Bearbeiten, Leser, Bestätigen, Karte anlernen) */
+  .tc-sheet {
     position: fixed;
     inset: 0;
-    background: rgba(0,0,0,0.6);
+    z-index: 70;
     display: none;
     align-items: center;
     justify-content: center;
-    z-index: 50;
+    background: rgba(0, 0, 0, 0.6);
   }
-  .modal.open {
-    display: flex;
-  }
-  .modal-content {
-    background: #0f172a;
-    border: 1px solid #1f2a44;
-    border-radius: 12px;
-    padding: 1.2rem;
-    width: min(420px, 90vw);
-  }
-  .modal-content h3 { margin-top: 0; }
-  .modal-actions {
-    display: flex;
-    gap: 0.5rem;
-    justify-content: flex-end;
-    margin-top: 0.75rem;
-  }
-  @media (max-width: 600px) {
-    .keypad { grid-template-columns: repeat(3, minmax(70px, 1fr)); }
-  }
-  .nfc-modal-content {
-    width: min(480px, 92vw);
-  }
-  .nfc-team-name {
-    font-size: 1.6rem;
-    font-weight: 800;
-    margin: 0 0 0.75rem;
-    color: var(--success, #34d399);
-  }
-  .nfc-display {
-    font-size: 2.4rem;
-    font-weight: 800;
-    text-align: center;
-    background: #111827;
-    border: 1px solid #1f2a44;
-    border-radius: 10px;
-    padding: 0.5rem;
-    margin-bottom: 0.75rem;
-  }
-  .nfc-modal-content {
-    max-height: 94vh;
+  .tc-sheet.open { display: flex; }
+  .tc-sheet-card {
+    width: min(520px, 92vw);
+    max-height: 90vh;
     overflow-y: auto;
+    padding: 1.3rem 1.4rem;
+    border-radius: 16px;
+    background: var(--tc-panel);
+    border: 1px solid var(--tc-line);
+    box-shadow: 0 25px 60px rgba(0, 0, 0, 0.55);
   }
-  .nfc-modal-content .keypad button {
-    padding: 1.4rem 1rem;
-    min-height: 84px;
-  }
-  .nfc-bind-hint {
-    margin: -0.4rem 0 0.75rem;
-    color: #fbbf24;
-    font-weight: 600;
-  }
-  .nfc-bind-actions {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 0.75rem;
-    margin-top: 0.75rem;
-  }
-  .nfc-bind-actions[hidden] { display: none; }
-  .nfc-bind-actions button {
-    padding: 1rem;
-    font-size: 1.1rem;
-    font-weight: 700;
-  }
-  #nfc-team-search {
-    width: 100%;
-    box-sizing: border-box;
-    font-size: 1.3rem;
-    padding: 0.8rem 1rem;
-    margin-bottom: 0.75rem;
-  }
-  .nfc-create-btn {
-    width: 100%;
-    padding: 1rem;
-    font-size: 1.15rem;
-    font-weight: 800;
-    margin-bottom: 0.75rem;
-    background: linear-gradient(135deg, #34d399, #22c55e);
-    color: #0b1222;
-    border: none;
-  }
-  .nfc-create-btn[hidden] { display: none; }
-  .nfc-team-list {
+  .tc-sheet-card h3 { margin: 0 0 0.9rem; font-size: 1.4rem; }
+  .tc-field { display: block; margin-bottom: 0.9rem; }
+  .tc-field span { display: block; margin-bottom: 0.3rem; color: var(--tc-muted); font-weight: 700; }
+  .tc-field input { width: 100%; box-sizing: border-box; font-size: 1.2rem; padding: 0.7rem 0.9rem; }
+  .tc-sheet-actions { display: flex; gap: 0.6rem; justify-content: flex-end; margin-top: 1rem; flex-wrap: wrap; }
+  .tc-sheet-actions button { padding: 0.8rem 1.2rem; font-size: 1.05rem; border-radius: 10px; }
+  .tc-sheet-actions .tc-left { margin-right: auto; }
+  .tc-card-row {
     display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-    max-height: 46vh;
-    overflow-y: auto;
-    -webkit-overflow-scrolling: touch;
-  }
-  .nfc-team-item {
-    display: flex;
-    justify-content: space-between;
     align-items: center;
-    gap: 0.75rem;
-    width: 100%;
-    padding: 1rem 1.1rem;
-    font-size: 1.2rem;
-    font-weight: 700;
-    text-align: left;
-    background: #1b243b;
-    border: 1px solid #273555;
-    color: #e2e8f0;
+    gap: 0.6rem;
+    padding: 0.55rem 0.7rem;
+    margin-bottom: 0.4rem;
+    border-radius: 10px;
+    background: var(--tc-raised);
+    font-family: ui-monospace, Menlo, monospace;
   }
-  .nfc-team-meta {
-    font-size: 0.9rem;
-    font-weight: 600;
-    color: rgba(226,232,240,0.65);
-    white-space: nowrap;
-  }
-  .nfc-team-empty {
-    color: rgba(226,232,240,0.65);
-    text-align: center;
-    padding: 0.75rem;
+  .tc-card-row span { flex: 1; }
+  .tc-card-row button { padding: 0.45rem 0.8rem; font-family: inherit; }
+  .tc-muted { color: var(--tc-muted); }
+  .tc-status-line { display: flex; align-items: center; gap: 0.6rem; font-size: 1.15rem; font-weight: 700; margin-bottom: 0.6rem; }
+  .tc-detail-list { margin: 0 0 0.6rem; padding: 0; list-style: none; color: var(--tc-muted); }
+  .tc-detail-list li { padding: 0.2rem 0; }
+  .tc-program-icon { font-size: 4rem; text-align: center; animation: tc-wiggle 1.4s ease-in-out infinite; }
+  @keyframes tc-wiggle { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-8px); } }
+
+  @media (max-width: 820px) {
+    .tc-main { grid-template-columns: 1fr; grid-template-rows: 40% 1fr; }
+    .tc-list-pane { border-right: none; border-bottom: 1px solid var(--tc-line); }
+    .tc-bar-link { display: none; }
   }
 </style>
 
-<div class="touch-wrapper">
-  <div class="touch-header">
-    <h1 class="touch-title">Touch-Eingabe – {{ event.name }}</h1>
-    <div class="touch-actions">
-      <button type="button" id="new-team-btn">Neues Team</button>
-      <a class="button secondary" href="{{ url_for('shotcounter') }}">Zur Hauptansicht</a>
-    </div>
-  </div>
+<div class="tc-app">
+  <header class="tc-bar">
+    <div class="tc-title">Shotcounter <span>– {{ event.name }}</span></div>
+    <button type="button" class="tc-reader" id="reader-pill" data-state="unknown">
+      <span class="tc-dot"></span><span id="reader-label">Leser wird geprüft…</span>
+    </button>
+    <a class="tc-bar-link" href="{{ url_for('shotcounter_leaderboard') }}" target="_blank">Leaderboard</a>
+    <a class="tc-bar-link" href="{{ url_for('shotcounter') }}">Verwaltung</a>
+  </header>
+  <div class="tc-banner" id="conn-banner" hidden>Keine Verbindung zum Server – Buchungen sind gerade nicht möglich.</div>
 
-  <div class="touch-card">
-    <div class="form-row">
-      <label for="team-select"><strong>Team wählen</strong></label>
-      <select id="team-select" class="touch-select">
-        <option value="">Team auswählen…</option>
-        {% for team in teams %}
-          <option value="{{ team.id }}">{{ team.name }} ({{ team.shots }} Shots)</option>
-        {% endfor %}
-      </select>
-      <div id="display" class="display">0</div>
-    </div>
-
-    <div class="keypad">
-      {% for digit in [1,2,3,4,5,6,7,8,9] %}
-        <button type="button" data-digit="{{ digit }}">{{ digit }}</button>
-      {% endfor %}
-      <button type="button" class="action" id="clear-btn">C</button>
-      <button type="button" data-digit="0">0</button>
-      <button type="button" class="action" id="back-btn">←</button>
-      <button type="button" class="action" id="submit-btn" style="grid-column: span 3;">Shots buchen</button>
-    </div>
-
-    <form id="shot-form" method="post" action="{{ url_for('add_shots') }}">
-      <input type="hidden" name="team_id" id="team-id-input">
-      <input type="hidden" name="amount" id="amount-input">
-      <input type="hidden" name="nfc_uid" id="nfc-uid-input">
-      <input type="hidden" name="next" value="{{ url_for('shotcounter_touch') }}">
-    </form>
-  </div>
-</div>
-
-<div class="modal" id="nfc-modal">
-  <div class="modal-content nfc-modal-content">
-    <div id="nfc-known-view">
-      <h3 id="nfc-known-title">Karte erkannt</h3>
-      <p class="nfc-team-name" id="nfc-team-name"></p>
-      <p class="nfc-bind-hint" id="nfc-bind-hint" hidden></p>
-      <div class="nfc-display" id="nfc-display">0</div>
-      <div class="keypad">
-        {% for digit in [1,2,3,4,5,6,7,8,9] %}
-          <button type="button" data-nfc-digit="{{ digit }}">{{ digit }}</button>
-        {% endfor %}
-        <button type="button" class="action" id="nfc-clear-btn">C</button>
-        <button type="button" data-nfc-digit="0">0</button>
-        <button type="button" class="action" id="nfc-back-btn">←</button>
-        <button type="button" class="action" id="nfc-submit-btn" style="grid-column: span 3;">Shots buchen</button>
+  <main class="tc-main">
+    <section class="tc-list-pane">
+      <div class="tc-newcard" id="newcard-banner" hidden>
+        <div>
+          <strong>Neue Karte erkannt</strong>
+          <span>Team wählen oder neu anlegen</span>
+        </div>
+        <button type="button" class="secondary" id="newcard-cancel">Abbrechen</button>
       </div>
-      <div class="nfc-bind-actions" id="nfc-bind-actions" hidden>
-        <button type="button" class="secondary" id="nfc-change-team-btn">← Anderes Team</button>
-        <button type="button" class="secondary" id="nfc-bind-only-btn">Nur verknüpfen</button>
-      </div>
-    </div>
-    <div id="nfc-unknown-view" class="nfc-unknown-box" style="display: none;">
-      <h3>Neue Karte erkannt</h3>
-      <p>Team suchen oder neuen Teamnamen eingeben:</p>
-      <input type="search" id="nfc-team-search" placeholder="Teamname…"
+      <input type="search" id="team-search" placeholder="Team suchen oder neu anlegen…"
              autocomplete="off" autocorrect="off" autocapitalize="words" spellcheck="false" enterkeyhint="go">
-      <button type="button" id="nfc-create-team-btn" class="nfc-create-btn" hidden></button>
-      <div class="nfc-team-list" id="nfc-team-list"></div>
-    </div>
-    <div class="modal-actions">
-      <button type="button" id="nfc-cancel-btn">Schließen</button>
+      <button type="button" class="tc-create" id="create-team-btn" hidden></button>
+      <div class="tc-sort">
+        <button type="button" data-sort="name" class="active">A–Z</button>
+        <button type="button" data-sort="rank">Rangliste</button>
+      </div>
+      <div class="tc-team-list" id="team-list"></div>
+    </section>
+
+    <section class="tc-detail-pane">
+      <div class="tc-empty" id="detail-empty">
+        <div class="tc-empty-icon">🏷️</div>
+        <p id="empty-text">Karte auflegen oder links ein Team wählen</p>
+        <p class="tc-hint" id="manual-hint" hidden>Kartenleser nicht bereit – bitte Team manuell wählen.</p>
+      </div>
+
+      <div class="tc-detail" id="detail" hidden>
+        <div class="tc-detail-head">
+          <div>
+            <p class="tc-kicker" id="detail-kicker"></p>
+            <h2 class="tc-detail-name" id="detail-name"></h2>
+            <p class="tc-detail-meta" id="detail-meta"></p>
+          </div>
+          <div class="tc-rank-chip" id="detail-rank"></div>
+        </div>
+        <p class="tc-bind-hint" id="bind-hint" hidden></p>
+        <button type="button" class="tc-switch" id="queued-scan" hidden></button>
+        <div class="tc-entry">
+          <div class="tc-display" id="display">0</div>
+          <div class="tc-quick">
+            <button type="button" data-quick="1">+1</button>
+            <button type="button" data-quick="2">+2</button>
+            <button type="button" data-quick="5">+5</button>
+          </div>
+        </div>
+        <div class="tc-keypad">
+          {% for digit in [1,2,3,4,5,6,7,8,9] %}
+            <button type="button" data-digit="{{ digit }}">{{ digit }}</button>
+          {% endfor %}
+          <button type="button" class="tc-clear" id="clear-btn">C</button>
+          <button type="button" data-digit="0">0</button>
+          <button type="button" class="tc-back" id="back-btn">←</button>
+        </div>
+        <button type="button" class="tc-book" id="book-btn">Shots buchen</button>
+        <div class="tc-actions" id="team-actions">
+          <button type="button" id="edit-btn">✏️ Bearbeiten</button>
+          <button type="button" id="program-btn">🏷️ Karte verknüpfen</button>
+        </div>
+        <div class="tc-actions" id="bind-actions" hidden>
+          <button type="button" id="change-team-btn">← Anderes Team</button>
+          <button type="button" id="bind-only-btn">Nur verknüpfen</button>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <div class="tc-toast" id="toast" hidden>
+    <span id="toast-text"></span>
+    <button type="button" id="toast-undo" hidden>Rückgängig</button>
+    <button type="button" class="tc-toast-close" id="toast-close" aria-label="Schliessen">✕</button>
+  </div>
+
+  <div class="tc-sheet" id="edit-sheet">
+    <div class="tc-sheet-card">
+      <h3>Team bearbeiten</h3>
+      <label class="tc-field">
+        <span>Teamname</span>
+        <input type="text" id="edit-name" autocomplete="off" autocapitalize="words">
+      </label>
+      <label class="tc-field">
+        <span>Shot-Stand (korrigieren)</span>
+        <input type="number" id="edit-shots" min="0" inputmode="numeric">
+      </label>
+      <div class="tc-field">
+        <span>Verknüpfte Karten</span>
+        <div id="edit-cards"></div>
+      </div>
+      <div class="tc-sheet-actions">
+        <button type="button" class="danger tc-left" id="edit-delete">Team löschen</button>
+        <button type="button" class="secondary" data-close>Abbrechen</button>
+        <button type="button" id="edit-save">Speichern</button>
+      </div>
     </div>
   </div>
-</div>
 
-<div class="modal" id="team-modal">
-  <div class="modal-content">
-    <h3>Neues Team anlegen</h3>
-    <form method="post" action="{{ url_for('add_team') }}">
-      <input
-        type="text"
-        name="team_name"
-        placeholder="Teamname"
-        required
-        pattern="[\p{L}\p{N}_ .,'&()/-]+"
-        title="Erlaubt sind Buchstaben (auch Umlaute/Akzente etc.), Zahlen, Leerzeichen sowie . , - _ & / ( ) '"
-        style="width: 100%;"
-      >
-      <input type="hidden" name="next" value="{{ url_for('shotcounter_touch') }}">
-      <div class="modal-actions">
-        <button type="button" id="cancel-modal">Abbrechen</button>
-        <button type="submit">Speichern</button>
+  <div class="tc-sheet" id="reader-sheet">
+    <div class="tc-sheet-card">
+      <h3>Kartenleser</h3>
+      <div class="tc-status-line"><span class="tc-dot" id="reader-sheet-dot"></span><span id="reader-sheet-state"></span></div>
+      <ul class="tc-detail-list" id="reader-sheet-details"></ul>
+      <p class="tc-muted" id="reader-sheet-help"></p>
+      <div class="tc-sheet-actions">
+        <a class="tc-bar-link tc-left" href="{{ url_for('nfc_cards') }}">NFC-Seite</a>
+        <button type="button" class="secondary" id="bridge-stop" hidden>Bridge stoppen</button>
+        <button type="button" id="bridge-start" hidden>Bridge starten</button>
+        <button type="button" class="secondary" data-close>Schliessen</button>
       </div>
-    </form>
+    </div>
+  </div>
+
+  <div class="tc-sheet" id="confirm-sheet">
+    <div class="tc-sheet-card">
+      <h3 id="confirm-title"></h3>
+      <p id="confirm-text" class="tc-muted"></p>
+      <div class="tc-sheet-actions">
+        <button type="button" class="secondary" data-close>Abbrechen</button>
+        <button type="button" class="danger" id="confirm-ok"></button>
+      </div>
+    </div>
+  </div>
+
+  <div class="tc-sheet" id="program-sheet">
+    <div class="tc-sheet-card" style="text-align: center;">
+      <div class="tc-program-icon">🏷️</div>
+      <h3 id="program-title"></h3>
+      <p class="tc-muted" id="program-text"></p>
+      <div class="tc-sheet-actions" style="justify-content: center;">
+        <button type="button" class="secondary" id="program-cancel">Abbrechen</button>
+      </div>
+    </div>
   </div>
 </div>
 
 <script>
-  const displayEl = document.getElementById("display");
-  const teamSelect = document.getElementById("team-select");
-  const amountInput = document.getElementById("amount-input");
-  const teamIdInput = document.getElementById("team-id-input");
-  const nfcUidInput = document.getElementById("nfc-uid-input");
-  const form = document.getElementById("shot-form");
-  let buffer = "";
-
-  const updateDisplay = () => {
-    displayEl.textContent = buffer || "0";
+  const URLS = {
+    teams: "{{ url_for('shotcounter_teams_json') }}",
+    poll: "{{ url_for('nfc_poll') }}",
+    addTeam: "{{ url_for('add_team') }}",
+    addShots: "{{ url_for('add_shots') }}",
+    quickBind: "{{ url_for('nfc_card_quick_bind') }}",
+    programStart: "{{ url_for('nfc_program_start') }}",
+    bridgeStart: "{{ url_for('nfc_bridge_process_start') }}",
+    bridgeStop: "{{ url_for('nfc_bridge_process_stop') }}",
+    undo: (id) => "{{ url_for('undo_shots', log_id=999999) }}".replace("999999", id),
+    updateTeam: (id) => "{{ url_for('update_team', team_id=999999) }}".replace("999999", id),
+    deleteTeam: (id) => "{{ url_for('delete_team', team_id=999999) }}".replace("999999", id),
+    deleteCard: (id) => "{{ url_for('nfc_card_delete', card_id=999999) }}".replace("999999", id),
+    programStatus: (id) => "{{ url_for('nfc_program_status', request_id=999999) }}".replace("999999", id),
+    programCancel: (id) => "{{ url_for('nfc_program_cancel', request_id=999999) }}".replace("999999", id),
   };
-
-  const appendDigit = (digit) => {
-    if (buffer.length >= 6) return;
-    if (buffer === "0") {
-      buffer = digit;
-    } else {
-      buffer += digit;
-    }
-    updateDisplay();
-  };
-
-  document.querySelectorAll("[data-digit]").forEach((btn) => {
-    btn.addEventListener("click", () => appendDigit(btn.dataset.digit));
-  });
-
-  document.getElementById("clear-btn").addEventListener("click", () => {
-    buffer = "";
-    updateDisplay();
-  });
-
-  document.getElementById("back-btn").addEventListener("click", () => {
-    buffer = buffer.slice(0, -1);
-    updateDisplay();
-  });
-
-  document.getElementById("submit-btn").addEventListener("click", () => {
-    const teamId = teamSelect.value;
-    const amount = parseInt(buffer, 10);
-    if (!teamId) {
-      alert("Bitte ein Team auswählen.");
-      return;
-    }
-    if (!amount || amount <= 0) {
-      alert("Bitte eine gültige Shot-Anzahl wählen.");
-      return;
-    }
-    teamIdInput.value = teamId;
-    amountInput.value = amount;
-    nfcUidInput.value = "";
-    form.submit();
-  });
-
-  // Modal handling
-  const modal = document.getElementById("team-modal");
-  document.getElementById("new-team-btn").addEventListener("click", () => {
-    modal.classList.add("open");
-  });
-  document.getElementById("cancel-modal").addEventListener("click", () => {
-    modal.classList.remove("open");
-  });
-  modal.addEventListener("click", (evt) => {
-    if (evt.target === modal) {
-      modal.classList.remove("open");
-    }
-  });
-
-  // --- NFC-Karten-Popup (Festbetrieb: Karte auflegen -> Shots buchen) ---
-  // Bekannte Karte: Team ist vorausgefüllt, nur noch Shots eintippen.
-  // Unbekannte Karte: 1) Team suchen/neu anlegen, 2) Shots eintippen. Die
-  // Karte wird erst beim Buchen bzw. "Nur verknüpfen" tatsächlich zugeordnet,
-  // damit ein Fehlgriff in der Teamliste folgenlos abgebrochen werden kann.
   const TEAM_NAME_RE = /^[\p{L}\p{N}_ .,'&()\/-]+$/u;
-  const nfcModal = document.getElementById("nfc-modal");
-  const nfcKnownView = document.getElementById("nfc-known-view");
-  const nfcUnknownView = document.getElementById("nfc-unknown-view");
-  const nfcKnownTitle = document.getElementById("nfc-known-title");
-  const nfcTeamNameEl = document.getElementById("nfc-team-name");
-  const nfcBindHint = document.getElementById("nfc-bind-hint");
-  const nfcBindActions = document.getElementById("nfc-bind-actions");
-  const nfcDisplayEl = document.getElementById("nfc-display");
-  const nfcSubmitBtn = document.getElementById("nfc-submit-btn");
-  const nfcBindOnlyBtn = document.getElementById("nfc-bind-only-btn");
-  const nfcSearchInput = document.getElementById("nfc-team-search");
-  const nfcCreateBtn = document.getElementById("nfc-create-team-btn");
-  const nfcTeamList = document.getElementById("nfc-team-list");
-  let nfcBuffer = "";
-  let nfcCurrentUid = null;
-  let nfcCurrentTeam = null;
-  // Gewählte, aber noch nicht gespeicherte Zuordnung: {team_id} oder {new_team_name}
-  let nfcPendingBind = null;
-  let nfcTeams = [];
-  let nfcBusy = false;
+  const MEDALS = { 1: "🥇", 2: "🥈", 3: "🥉" };
+  const $ = (id) => document.getElementById(id);
+
+  // ---------------------------------------------------------------------------
+  // Zustand
+  // ---------------------------------------------------------------------------
+  const state = {
+    teams: [],
+    sort: "name",
+    // Ausgewähltes Team: { team, uid, viaCard } oder null
+    selection: null,
+    // Neue Karte, die noch keinem Team gehört
+    unknownUid: null,
+    // Gewählte, noch nicht gespeicherte Zuordnung der neuen Karte: { team_id } oder { new_team_name }
+    pendingBind: null,
+    // Karte, die erkannt wurde, während gerade eine Eingabe läuft
+    queuedScan: null,
+    buffer: "",
+    busy: false,
+    reader: null,
+    pollFailures: 0,
+  };
+
+  // ---------------------------------------------------------------------------
+  // Hilfsfunktionen
+  // ---------------------------------------------------------------------------
+  async function api(url, { method = "GET", form = null, json = null } = {}) {
+    const opts = { method, headers: { Accept: "application/json" }, cache: "no-store" };
+    if (form) {
+      const body = new FormData();
+      Object.entries(form).forEach(([key, value]) => {
+        if (value !== undefined && value !== null) body.append(key, value);
+      });
+      opts.body = body;
+    }
+    if (json) {
+      opts.headers["Content-Type"] = "application/json";
+      opts.body = JSON.stringify(json);
+    }
+    let res;
+    try {
+      res = await fetch(url, opts);
+    } catch (err) {
+      throw new Error("Keine Verbindung zum Server.");
+    }
+    let data = null;
+    try {
+      data = await res.json();
+    } catch (err) {
+      // keine JSON-Antwort
+    }
+    if (!res.ok || !data || data.success === false) {
+      throw new Error((data && (data.error || data.message)) || `Fehler (HTTP ${res.status}).`);
+    }
+    return data;
+  }
 
   const normalizeName = (value) =>
-    value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLocaleLowerCase("de").trim();
+    value.normalize("NFD").replace(/[̀-ͯ]/g, "").toLocaleLowerCase("de").trim();
 
-  const updateNfcDisplay = () => {
-    nfcDisplayEl.textContent = nfcBuffer || "0";
-  };
+  const shotsLabel = (n) => `${n} Shot${n === 1 ? "" : "s"}`;
+  const findTeam = (id) => state.teams.find((team) => team.id === id) || null;
 
-  function showKnownView(title, teamLabel, hint) {
-    nfcBuffer = "";
-    updateNfcDisplay();
-    nfcKnownTitle.textContent = title;
-    nfcTeamNameEl.textContent = teamLabel;
-    nfcBindHint.textContent = hint || "";
-    nfcBindHint.hidden = !hint;
-    nfcBindActions.hidden = !nfcPendingBind;
-    nfcKnownView.style.display = "";
-    nfcUnknownView.style.display = "none";
-    nfcModal.classList.add("open");
-  }
+  let toastTimer = null;
+  let undoTimer = null;
+  function showToast(text, { error = false, undoBooking = null } = {}) {
+    clearTimeout(toastTimer);
+    clearInterval(undoTimer);
+    const toast = $("toast");
+    const undoBtn = $("toast-undo");
+    toast.classList.toggle("error", error);
+    $("toast-text").textContent = text;
+    toast.hidden = false;
 
-  function openNfcModalKnown(team, uid) {
-    nfcCurrentTeam = team;
-    nfcPendingBind = null;
-    if (uid) nfcCurrentUid = uid;
-    showKnownView("Karte erkannt", `${team.name} (${team.shots} Shots)`);
-  }
-
-  function chooseExistingTeam(team) {
-    nfcCurrentTeam = null;
-    nfcPendingBind = { team_id: team.id };
-    showKnownView("Karte zuweisen", `${team.name} (${team.shots} Shots)`, "Karte wird diesem Team zugewiesen.");
-  }
-
-  function chooseNewTeam(name) {
-    if (!TEAM_NAME_RE.test(name)) {
-      alert("Ungültige Zeichen im Teamnamen. Erlaubt sind Buchstaben, Zahlen, Leerzeichen sowie . , - _ & / ( ) '");
-      return;
+    if (undoBooking) {
+      let remaining = undoBooking.undo_seconds;
+      undoBtn.hidden = false;
+      undoBtn.dataset.logId = undoBooking.id;
+      undoBtn.textContent = `Rückgängig (${remaining})`;
+      undoTimer = setInterval(() => {
+        remaining -= 1;
+        undoBtn.textContent = `Rückgängig (${remaining})`;
+        if (remaining <= 0) {
+          clearInterval(undoTimer);
+          toast.hidden = true;
+        }
+      }, 1000);
+    } else {
+      undoBtn.hidden = true;
+      toastTimer = setTimeout(() => { toast.hidden = true; }, error ? 5000 : 3000);
     }
-    nfcCurrentTeam = null;
-    nfcPendingBind = { new_team_name: name };
-    showKnownView("Neues Team", name, "Team wird neu angelegt und mit der Karte verknüpft.");
+  }
+
+  function hideToast() {
+    clearTimeout(toastTimer);
+    clearInterval(undoTimer);
+    $("toast").hidden = true;
+  }
+
+  $("toast-close").addEventListener("click", hideToast);
+
+  function openSheet(id) { $(id).classList.add("open"); }
+  function closeSheet(id) { $(id).classList.remove("open"); }
+  document.querySelectorAll(".tc-sheet").forEach((sheet) => {
+    sheet.addEventListener("click", (evt) => {
+      if (evt.target === sheet || evt.target.hasAttribute("data-close")) {
+        if (sheet.id === "program-sheet") return; // dort nur über "Abbrechen"
+        sheet.classList.remove("open");
+      }
+    });
+  });
+
+  let confirmAction = null;
+  function confirmDialog(title, text, okLabel, action) {
+    $("confirm-title").textContent = title;
+    $("confirm-text").textContent = text;
+    $("confirm-ok").textContent = okLabel;
+    confirmAction = action;
+    openSheet("confirm-sheet");
+  }
+  $("confirm-ok").addEventListener("click", async () => {
+    closeSheet("confirm-sheet");
+    if (confirmAction) await confirmAction();
+    confirmAction = null;
+  });
+
+  // ---------------------------------------------------------------------------
+  // Teamliste
+  // ---------------------------------------------------------------------------
+  async function loadTeams() {
+    try {
+      const data = await api(URLS.teams);
+      state.teams = data.teams;
+      if (state.selection) {
+        const fresh = findTeam(state.selection.team.id);
+        if (fresh) state.selection.team = fresh;
+        else clearSelection(); // Team wurde gelöscht (z. B. an einem anderen Gerät)
+      }
+    } catch (err) {
+      // Liste bleibt beim letzten Stand
+    }
+    renderTeamList();
+    renderDetail();
   }
 
   function renderTeamList() {
-    const query = normalizeName(nfcSearchInput.value);
-    const rawQuery = nfcSearchInput.value.trim();
-    let matches = nfcTeams;
+    const rawQuery = $("team-search").value.trim();
+    const query = normalizeName(rawQuery);
+    let teams = state.teams.slice();
+    if (query) teams = teams.filter((team) => normalizeName(team.name).includes(query));
+
+    if (state.sort === "rank") {
+      teams.sort((a, b) => a.rank - b.rank);
+    } else {
+      teams.sort((a, b) => a.name.localeCompare(b.name, "de"));
+    }
     if (query) {
-      matches = nfcTeams
-        .filter((team) => normalizeName(team.name).includes(query))
-        .sort((a, b) => {
-          const aStarts = normalizeName(a.name).startsWith(query) ? 0 : 1;
-          const bStarts = normalizeName(b.name).startsWith(query) ? 0 : 1;
-          return aStarts - bStarts || a.name.localeCompare(b.name, "de");
-        });
+      // Treffer am Namensanfang zuerst
+      teams.sort((a, b) =>
+        (normalizeName(a.name).startsWith(query) ? 0 : 1) - (normalizeName(b.name).startsWith(query) ? 0 : 1));
     }
 
-    const exactMatch = query && nfcTeams.some((team) => normalizeName(team.name) === query);
-    nfcCreateBtn.hidden = !rawQuery || exactMatch;
-    nfcCreateBtn.textContent = `＋ Neues Team „${rawQuery}“ erstellen`;
+    const exactMatch = query && state.teams.some((team) => normalizeName(team.name) === query);
+    const createBtn = $("create-team-btn");
+    createBtn.hidden = !rawQuery || exactMatch;
+    createBtn.textContent = `＋ Neues Team „${rawQuery}“`;
 
-    nfcTeamList.replaceChildren();
-    if (!matches.length) {
+    const list = $("team-list");
+    list.replaceChildren();
+    if (!teams.length) {
       const empty = document.createElement("div");
-      empty.className = "nfc-team-empty";
-      empty.textContent = nfcTeams.length ? "Kein passendes Team gefunden." : "Noch keine Teams vorhanden.";
-      nfcTeamList.appendChild(empty);
+      empty.className = "tc-list-empty";
+      empty.textContent = state.teams.length ? "Kein passendes Team." : "Noch keine Teams – oben einen Namen eingeben.";
+      list.appendChild(empty);
       return;
     }
-    matches.slice(0, 60).forEach((team) => {
+    const selectedId = state.selection ? state.selection.team.id : state.pendingBind && state.pendingBind.team_id;
+    teams.forEach((team) => {
       const btn = document.createElement("button");
       btn.type = "button";
-      btn.className = "nfc-team-item";
+      btn.className = "tc-team" + (team.id === selectedId ? " selected" : "");
+      const rank = document.createElement("span");
+      rank.className = "tc-team-rank";
+      rank.textContent = MEDALS[team.rank] || `#${team.rank}`;
       const name = document.createElement("span");
+      name.className = "tc-team-name";
       name.textContent = team.name;
       const meta = document.createElement("span");
-      meta.className = "nfc-team-meta";
-      meta.textContent = `${team.shots} Shots` + (team.card_count ? ` · hat bereits Karte` : "");
-      btn.append(name, meta);
-      btn.addEventListener("click", () => chooseExistingTeam(team));
-      nfcTeamList.appendChild(btn);
+      meta.className = "tc-team-meta";
+      meta.textContent = shotsLabel(team.shots) + (team.card_count ? " · 🏷️" : "");
+      btn.append(rank, name, meta);
+      btn.addEventListener("click", () => onTeamTapped(team));
+      list.appendChild(btn);
     });
   }
 
-  async function loadTeams() {
-    try {
-      const res = await fetch("{{ url_for('shotcounter_teams_json') }}", { cache: "no-store" });
-      const data = await res.json();
-      if (data.success) nfcTeams = data.teams;
-    } catch (err) {
-      // Liste bleibt beim letzten Stand; neues Team anlegen funktioniert trotzdem
+  $("team-search").addEventListener("input", renderTeamList);
+  $("team-search").addEventListener("keydown", (evt) => {
+    if (evt.key !== "Enter") return;
+    evt.preventDefault();
+    const items = $("team-list").querySelectorAll(".tc-team");
+    if (!$("create-team-btn").hidden) $("create-team-btn").click();
+    else if (items.length === 1) items[0].click();
+    $("team-search").blur();
+  });
+  document.querySelectorAll("[data-sort]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      state.sort = btn.dataset.sort;
+      document.querySelectorAll("[data-sort]").forEach((b) => b.classList.toggle("active", b === btn));
+      renderTeamList();
+    });
+  });
+
+  function onTeamTapped(team) {
+    if (state.unknownUid) {
+      // Neue Karte: Team wird erst beim Buchen bzw. "Nur verknüpfen" gespeichert.
+      state.pendingBind = { team_id: team.id };
+      state.selection = { team, uid: state.unknownUid, viaCard: true };
+    } else {
+      selectTeam(team);
+      return;
     }
+    resetEntry();
     renderTeamList();
+    renderDetail();
   }
 
-  function showSearchView() {
-    nfcPendingBind = null;
-    nfcCurrentTeam = null;
-    nfcKnownView.style.display = "none";
-    nfcUnknownView.style.display = "";
-    nfcModal.classList.add("open");
+  $("create-team-btn").addEventListener("click", async () => {
+    const name = $("team-search").value.trim();
+    if (!name) return;
+    if (!TEAM_NAME_RE.test(name)) {
+      showToast("Ungültige Zeichen. Erlaubt: Buchstaben, Zahlen, Leerzeichen und . , - _ & / ( ) '", { error: true });
+      return;
+    }
+    $("team-search").blur();
+    if (state.unknownUid) {
+      state.pendingBind = { new_team_name: name };
+      state.selection = null;
+      resetEntry();
+      renderTeamList();
+      renderDetail();
+      return;
+    }
+    try {
+      const data = await api(URLS.addTeam, { method: "POST", form: { team_name: name } });
+      $("team-search").value = "";
+      await loadTeams();
+      selectTeam(findTeam(data.team.id) || data.team);
+      showToast(`Team „${data.team.name}“ angelegt.`);
+    } catch (err) {
+      showToast(err.message, { error: true });
+    }
+  });
+
+  // ---------------------------------------------------------------------------
+  // Auswahl + Detail
+  // ---------------------------------------------------------------------------
+  function selectTeam(team, { uid = null, viaCard = false } = {}) {
+    state.selection = { team, uid, viaCard };
+    state.pendingBind = null;
+    state.unknownUid = null;
+    state.queuedScan = null;
+    resetEntry();
     renderTeamList();
+    renderDetail();
   }
 
-  function openNfcModalUnknown(uid) {
-    nfcCurrentUid = uid;
-    nfcSearchInput.value = "";
-    showSearchView();
-    loadTeams();
+  function clearSelection() {
+    state.selection = null;
+    state.pendingBind = null;
+    state.unknownUid = null;
+    state.queuedScan = null;
+    resetEntry();
+    renderTeamList();
+    renderDetail();
   }
 
-  function closeNfcModal() {
-    nfcModal.classList.remove("open");
-    nfcSearchInput.blur();
-    nfcCurrentUid = null;
-    nfcCurrentTeam = null;
-    nfcPendingBind = null;
+  function resetEntry() {
+    state.buffer = "";
+    $("display").textContent = "0";
   }
 
-  // Speichert die gewählte Zuordnung und liefert das (ggf. neue) Team zurück.
-  async function bindPendingCard() {
-    const res = await fetch("{{ url_for('nfc_card_quick_bind') }}", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ uid: nfcCurrentUid, ...nfcPendingBind }),
+  function renderDetail() {
+    const hasPendingNew = state.pendingBind && state.pendingBind.new_team_name;
+    const showDetail = Boolean(state.selection || hasPendingNew);
+    $("newcard-banner").hidden = !state.unknownUid;
+    $("detail-empty").hidden = showDetail;
+    $("detail").hidden = !showDetail;
+    $("empty-text").textContent = state.unknownUid
+      ? "Links das Team für die neue Karte wählen"
+      : "Karte auflegen oder links ein Team wählen";
+    renderManualHint();
+    if (!showDetail) return;
+
+    const team = state.selection ? state.selection.team : null;
+    let kicker = "";
+    if (state.pendingBind) kicker = hasPendingNew ? "Neues Team" : "Karte zuweisen";
+    else if (state.selection && state.selection.viaCard) kicker = "Karte erkannt";
+    $("detail-kicker").textContent = kicker;
+    $("detail-name").textContent = team ? team.name : state.pendingBind.new_team_name;
+
+    if (team) {
+      $("detail-meta").textContent =
+        `${shotsLabel(team.shots)} · ${team.card_count ? `${team.card_count} Karte${team.card_count === 1 ? "" : "n"}` : "keine Karte"}`;
+      $("detail-rank").textContent = `${MEDALS[team.rank] || ""} Platz ${team.rank}`.trim();
+    } else {
+      $("detail-meta").textContent = "Wird beim Buchen angelegt";
+      $("detail-rank").textContent = "";
+    }
+
+    $("bind-hint").hidden = !state.pendingBind;
+    $("bind-hint").textContent = hasPendingNew
+      ? "Team wird neu angelegt und mit der Karte verknüpft."
+      : "Die neue Karte wird diesem Team zugewiesen.";
+    $("bind-actions").hidden = !state.pendingBind;
+    $("team-actions").hidden = Boolean(state.pendingBind);
+
+    const queued = $("queued-scan");
+    if (state.queuedScan) {
+      const label = state.queuedScan.known ? state.queuedScan.team.name : "neue Karte";
+      queued.textContent = `🏷️ Karte erkannt: ${label} – antippen zum Wechseln`;
+      queued.hidden = false;
+    } else {
+      queued.hidden = true;
+    }
+  }
+
+  function renderManualHint() {
+    const readerState = state.reader ? state.reader.state : "ready";
+    $("manual-hint").hidden = readerState === "ready" || state.unknownUid;
+  }
+
+  // Ziffernfeld
+  function setBuffer(value) {
+    state.buffer = value.slice(0, 4);
+    $("display").textContent = state.buffer || "0";
+  }
+  document.querySelectorAll("[data-digit]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const next = state.buffer === "0" ? btn.dataset.digit : state.buffer + btn.dataset.digit;
+      setBuffer(next);
     });
-    const data = await res.json();
-    if (!data.success) throw new Error(data.error || "Karte konnte nicht verknüpft werden.");
-    return data.team;
-  }
+  });
+  document.querySelectorAll("[data-quick]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const current = parseInt(state.buffer || "0", 10);
+      setBuffer(String(Math.min(current + parseInt(btn.dataset.quick, 10), 9999)));
+    });
+  });
+  $("clear-btn").addEventListener("click", () => setBuffer(""));
+  $("back-btn").addEventListener("click", () => setBuffer(state.buffer.slice(0, -1)));
 
+  // ---------------------------------------------------------------------------
+  // Buchen, Verknüpfen, Rückgängig
+  // ---------------------------------------------------------------------------
   async function withBusy(fn) {
-    if (nfcBusy) return;
-    nfcBusy = true;
-    nfcSubmitBtn.disabled = true;
-    nfcBindOnlyBtn.disabled = true;
+    if (state.busy) return;
+    state.busy = true;
+    $("book-btn").disabled = true;
+    $("bind-only-btn").disabled = true;
     try {
       await fn();
     } catch (err) {
-      alert(err.message || "Netzwerkfehler.");
+      showToast(err.message, { error: true });
     } finally {
-      nfcBusy = false;
-      nfcSubmitBtn.disabled = false;
-      nfcBindOnlyBtn.disabled = false;
+      state.busy = false;
+      $("book-btn").disabled = false;
+      $("bind-only-btn").disabled = false;
     }
   }
 
-  document.querySelectorAll("[data-nfc-digit]").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      const digit = btn.dataset.nfcDigit;
-      if (nfcBuffer.length >= 6) return;
-      nfcBuffer = nfcBuffer === "0" ? digit : nfcBuffer + digit;
-      updateNfcDisplay();
+  // Speichert die gewählte Zuordnung der neuen Karte; liefert das (ggf. neue) Team.
+  async function bindPendingCard() {
+    const data = await api(URLS.quickBind, {
+      method: "POST",
+      json: { uid: state.unknownUid, ...state.pendingBind },
     });
-  });
-  document.getElementById("nfc-clear-btn").addEventListener("click", () => {
-    nfcBuffer = "";
-    updateNfcDisplay();
-  });
-  document.getElementById("nfc-back-btn").addEventListener("click", () => {
-    nfcBuffer = nfcBuffer.slice(0, -1);
-    updateNfcDisplay();
-  });
-  nfcSubmitBtn.addEventListener("click", () => {
-    const amount = parseInt(nfcBuffer, 10);
+    return data.team;
+  }
+
+  $("book-btn").addEventListener("click", () => {
+    const amount = parseInt(state.buffer, 10);
     if (!amount || amount <= 0) {
-      alert("Bitte eine gültige Shot-Anzahl eingeben.");
+      showToast("Bitte zuerst die Anzahl Shots eingeben.", { error: true });
       return;
     }
     withBusy(async () => {
-      const team = nfcPendingBind ? await bindPendingCard() : nfcCurrentTeam;
-      if (!team) return;
-      teamIdInput.value = team.id;
-      amountInput.value = amount;
-      nfcUidInput.value = nfcCurrentUid || "";
-      form.submit();
+      let team = state.selection ? state.selection.team : null;
+      let uid = state.selection ? state.selection.uid : null;
+      if (state.pendingBind) {
+        uid = state.unknownUid;
+        team = await bindPendingCard();
+      }
+      const data = await api(URLS.addShots, {
+        method: "POST",
+        form: { team_id: team.id, amount, nfc_uid: uid || "" },
+      });
+      showToast(`+${amount} für ${data.team.name} · jetzt ${shotsLabel(data.team.shots)}`, { undoBooking: data.booking });
+      // Während der Eingabe erkannte Karte merken - clearSelection() verwirft sie sonst.
+      const queued = state.queuedScan;
+      $("team-search").value = "";
+      clearSelection();
+      await loadTeams();
+      if (queued) applyScan(queued);
     });
-  });
-  nfcBindOnlyBtn.addEventListener("click", () => {
-    withBusy(async () => {
-      await bindPendingCard();
-      // Neu laden, damit Teamauswahl und Shot-Stände aktuell sind.
-      window.location.reload();
-    });
-  });
-  document.getElementById("nfc-change-team-btn").addEventListener("click", showSearchView);
-  nfcSearchInput.addEventListener("input", renderTeamList);
-  nfcSearchInput.addEventListener("keydown", (evt) => {
-    if (evt.key !== "Enter") return;
-    evt.preventDefault();
-    const first = nfcTeamList.querySelector(".nfc-team-item");
-    const onlyOne = nfcTeamList.querySelectorAll(".nfc-team-item").length === 1;
-    if (!nfcCreateBtn.hidden) {
-      nfcCreateBtn.click();
-    } else if (first && onlyOne) {
-      first.click();
-    }
-    nfcSearchInput.blur();
-  });
-  nfcCreateBtn.addEventListener("click", () => {
-    const name = nfcSearchInput.value.trim();
-    if (name) chooseNewTeam(name);
-  });
-  document.getElementById("nfc-cancel-btn").addEventListener("click", closeNfcModal);
-  nfcModal.addEventListener("click", (evt) => {
-    if (evt.target === nfcModal) closeNfcModal();
   });
 
-  async function pollNfcScans() {
-    if (nfcModal.classList.contains("open")) return; // aktuellen Vorgang nicht unterbrechen
+  $("bind-only-btn").addEventListener("click", () => {
+    withBusy(async () => {
+      const uid = state.unknownUid;
+      const team = await bindPendingCard();
+      showToast(`Karte mit ${team.name} verknüpft.`);
+      $("team-search").value = "";
+      await loadTeams();
+      selectTeam(findTeam(team.id) || team, { uid, viaCard: true });
+    });
+  });
+
+  $("change-team-btn").addEventListener("click", () => {
+    state.pendingBind = null;
+    state.selection = null;
+    resetEntry();
+    renderTeamList();
+    renderDetail();
+  });
+
+  $("newcard-cancel").addEventListener("click", clearSelection);
+
+  $("toast-undo").addEventListener("click", async () => {
+    const logId = $("toast-undo").dataset.logId;
+    clearInterval(undoTimer);
     try {
-      const res = await fetch("{{ url_for('nfc_poll') }}", { cache: "no-store" });
-      const data = await res.json();
-      if (!data.success || !data.scan) return;
-      if (data.scan.known) {
-        openNfcModalKnown(data.scan.team, data.scan.uid);
-      } else {
-        openNfcModalUnknown(data.scan.uid);
-      }
+      const data = await api(URLS.undo(logId), { method: "POST" });
+      showToast(`Rückgängig: ${data.team.name} jetzt ${shotsLabel(data.team.shots)}`);
+      await loadTeams();
     } catch (err) {
-      // Netzwerkfehler ignorieren, beim nächsten Intervall erneut versuchen
+      showToast(err.message, { error: true });
+    }
+  });
+
+  // ---------------------------------------------------------------------------
+  // Bearbeiten
+  // ---------------------------------------------------------------------------
+  function renderEditCards(team) {
+    const wrap = $("edit-cards");
+    wrap.replaceChildren();
+    if (!team.cards || !team.cards.length) {
+      const none = document.createElement("p");
+      none.className = "tc-muted";
+      none.style.margin = "0";
+      none.textContent = "Keine Karte verknüpft.";
+      wrap.appendChild(none);
+      return;
+    }
+    team.cards.forEach((card) => {
+      const row = document.createElement("div");
+      row.className = "tc-card-row";
+      const uid = document.createElement("span");
+      uid.textContent = card.uid;
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.className = "secondary";
+      remove.textContent = "Entfernen";
+      remove.addEventListener("click", () => {
+        confirmDialog("Karte entfernen?", `Karte ${card.uid} wird von ${team.name} gelöst.`, "Entfernen", async () => {
+          try {
+            await api(URLS.deleteCard(card.id), { method: "POST" });
+            await loadTeams();
+            renderEditCards(findTeam(team.id) || team);
+            showToast("Karte entfernt.");
+          } catch (err) {
+            showToast(err.message, { error: true });
+          }
+        });
+      });
+      row.append(uid, remove);
+      wrap.appendChild(row);
+    });
+  }
+
+  $("edit-btn").addEventListener("click", () => {
+    if (!state.selection) return;
+    const team = state.selection.team;
+    $("edit-name").value = team.name;
+    $("edit-shots").value = team.shots;
+    renderEditCards(team);
+    openSheet("edit-sheet");
+  });
+
+  $("edit-save").addEventListener("click", async () => {
+    const team = state.selection && state.selection.team;
+    if (!team) return;
+    const name = $("edit-name").value.trim();
+    const shots = parseInt($("edit-shots").value, 10);
+    if (!name || !TEAM_NAME_RE.test(name)) {
+      showToast("Bitte einen gültigen Teamnamen eingeben.", { error: true });
+      return;
+    }
+    if (Number.isNaN(shots) || shots < 0) {
+      showToast("Shots müssen 0 oder höher sein.", { error: true });
+      return;
+    }
+    try {
+      await api(URLS.updateTeam(team.id), { method: "POST", form: { team_name: name, shots } });
+      closeSheet("edit-sheet");
+      await loadTeams();
+      showToast("Team gespeichert.");
+    } catch (err) {
+      showToast(err.message, { error: true });
+    }
+  });
+
+  $("edit-delete").addEventListener("click", () => {
+    const team = state.selection && state.selection.team;
+    if (!team) return;
+    confirmDialog(
+      `${team.name} löschen?`,
+      `Das Team mit ${shotsLabel(team.shots)} und allen verknüpften Karten wird gelöscht.`,
+      "Team löschen",
+      async () => {
+        try {
+          await api(URLS.deleteTeam(team.id), { method: "POST" });
+          closeSheet("edit-sheet");
+          clearSelection();
+          await loadTeams();
+          showToast(`${team.name} gelöscht.`);
+        } catch (err) {
+          showToast(err.message, { error: true });
+        }
+      }
+    );
+  });
+
+  // ---------------------------------------------------------------------------
+  // Karte für ein Team anlernen (nächste aufgelegte Karte)
+  // ---------------------------------------------------------------------------
+  let programRequestId = null;
+  let programTimer = null;
+
+  async function stopProgram(cancelOnServer) {
+    clearInterval(programTimer);
+    if (cancelOnServer && programRequestId) {
+      try { await api(URLS.programCancel(programRequestId), { method: "POST" }); } catch (err) { /* egal */ }
+    }
+    programRequestId = null;
+    closeSheet("program-sheet");
+  }
+
+  $("program-btn").addEventListener("click", async () => {
+    const team = state.selection && state.selection.team;
+    if (!team) return;
+    try {
+      const data = await api(URLS.programStart, { method: "POST", form: { team_id: team.id } });
+      programRequestId = data.request_id;
+      let remaining = data.expires_in;
+      $("program-title").textContent = `Karte für ${team.name} auflegen`;
+      $("program-text").textContent = `Wartet auf die nächste Karte … (${remaining} s)`;
+      openSheet("program-sheet");
+      programTimer = setInterval(async () => {
+        remaining -= 1;
+        $("program-text").textContent = `Wartet auf die nächste Karte … (${Math.max(remaining, 0)} s)`;
+        try {
+          const status = await api(URLS.programStatus(programRequestId));
+          if (status.status === "fulfilled") {
+            await stopProgram(false);
+            showToast(`Karte mit ${status.team_name} verknüpft.`);
+            await loadTeams();
+          } else if (status.status !== "pending") {
+            await stopProgram(false);
+            showToast(status.error || "Keine Karte erkannt – bitte nochmals versuchen.", { error: true });
+          }
+        } catch (err) {
+          // nächster Versuch in einer Sekunde
+        }
+      }, 1000);
+    } catch (err) {
+      showToast(err.message, { error: true });
+    }
+  });
+  $("program-cancel").addEventListener("click", () => stopProgram(true));
+
+  // ---------------------------------------------------------------------------
+  // Kartenscans + Status des Lesers
+  // ---------------------------------------------------------------------------
+  const READER_LABELS = {
+    ready: "Leser bereit",
+    no_reader: "Kein Leser",
+    offline: "Kartenleser aus",
+    disconnected: "Keine Verbindung",
+  };
+
+  function setReaderState(reader) {
+    state.reader = reader;
+    const pill = $("reader-pill");
+    pill.dataset.state = reader.state;
+    $("reader-label").textContent = READER_LABELS[reader.state] || "Leser";
+    renderManualHint();
+    if ($("reader-sheet").classList.contains("open")) renderReaderSheet();
+  }
+
+  function renderReaderSheet() {
+    const reader = state.reader || { state: "disconnected" };
+    const dot = $("reader-sheet-dot");
+    dot.style.background = getComputedStyle(document.querySelector("#reader-pill .tc-dot")).backgroundColor;
+    $("reader-sheet-state").textContent = READER_LABELS[reader.state] || "Unbekannt";
+
+    const details = [];
+    if (reader.reader_name) details.push(`Leser: ${reader.reader_name}`);
+    if (reader.error) details.push(`Meldung: ${reader.error}`);
+    if (reader.last_seen_seconds != null) details.push(`Letztes Lebenszeichen der Bridge: vor ${reader.last_seen_seconds} s`);
+    if (reader.state !== "disconnected") details.push(`Bridge-Prozess: ${reader.process_running ? "läuft" : "nicht gestartet über die Web-Oberfläche"}`);
+    const list = $("reader-sheet-details");
+    list.replaceChildren(...details.map((text) => {
+      const li = document.createElement("li");
+      li.textContent = text;
+      return li;
+    }));
+
+    const help = {
+      ready: "Karten auflegen – das Team wird automatisch ausgewählt.",
+      no_reader: "Die Bridge läuft, findet aber keinen Leser. USB-Kabel bzw. Hub prüfen.",
+      offline: "Die Bridge meldet sich nicht. Starten oder Dienst prüfen – bis dahin Teams manuell wählen.",
+      disconnected: "Das iPad erreicht den Server nicht. WLAN prüfen.",
+    };
+    $("reader-sheet-help").textContent = help[reader.state] || "";
+    const canControl = Boolean(reader.can_control) && reader.state !== "disconnected";
+    $("bridge-start").hidden = !canControl || reader.process_running;
+    $("bridge-stop").hidden = !canControl || !reader.process_running;
+  }
+
+  $("reader-pill").addEventListener("click", () => {
+    renderReaderSheet();
+    openSheet("reader-sheet");
+  });
+  $("bridge-start").addEventListener("click", async () => {
+    try {
+      const data = await api(URLS.bridgeStart, { method: "POST" });
+      showToast(data.message || "Bridge gestartet.");
+    } catch (err) {
+      showToast(err.message, { error: true });
+    }
+  });
+  $("bridge-stop").addEventListener("click", async () => {
+    try {
+      const data = await api(URLS.bridgeStop, { method: "POST" });
+      showToast(data.message || "Bridge gestoppt.");
+    } catch (err) {
+      showToast(err.message, { error: true });
+    }
+  });
+
+  function pulseReader() {
+    const pill = $("reader-pill");
+    pill.classList.remove("pulse");
+    void pill.offsetWidth;
+    pill.classList.add("pulse");
+  }
+
+  function entryInProgress() {
+    return state.busy || state.buffer !== "" || Boolean(state.pendingBind) ||
+      $("edit-sheet").classList.contains("open") || $("program-sheet").classList.contains("open");
+  }
+
+  function applyScan(scan) {
+    state.queuedScan = null;
+    if (scan.known) {
+      const team = findTeam(scan.team.id) || { ...scan.team, rank: "?", card_count: 1, cards: [] };
+      selectTeam(team, { uid: scan.uid, viaCard: true });
+      loadTeams(); // Platz/Karten frisch holen
+    } else {
+      state.selection = null;
+      state.pendingBind = null;
+      state.unknownUid = scan.uid;
+      $("team-search").value = "";
+      resetEntry();
+      renderTeamList();
+      renderDetail();
     }
   }
-  setInterval(pollNfcScans, 1000);
+
+  $("queued-scan").addEventListener("click", () => {
+    if (state.queuedScan && !state.busy) applyScan(state.queuedScan);
+  });
+
+  async function poll() {
+    let data;
+    try {
+      const res = await fetch(URLS.poll, { cache: "no-store" });
+      data = await res.json();
+      if (!data.success) throw new Error();
+    } catch (err) {
+      state.pollFailures += 1;
+      if (state.pollFailures >= 3) {
+        $("conn-banner").hidden = false;
+        setReaderState({ state: "disconnected" });
+      }
+      return;
+    }
+    state.pollFailures = 0;
+    $("conn-banner").hidden = true;
+    if (data.reader) setReaderState(data.reader);
+    if (!data.scan) return;
+
+    pulseReader();
+    if (entryInProgress()) {
+      // Laufende Eingabe nicht überschreiben - Karte als Hinweis anbieten.
+      state.queuedScan = data.scan;
+      renderDetail();
+    } else {
+      applyScan(data.scan);
+    }
+  }
+
+  loadTeams();
+  poll();
+  setInterval(poll, 1000);
+  // Andere Geräte buchen auch - Liste regelmässig auffrischen.
+  setInterval(() => {
+    if (!state.busy && !$("edit-sheet").classList.contains("open")) loadTeams();
+  }, 10000);
 </script>
 {% endblock %}

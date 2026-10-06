@@ -1948,3 +1948,148 @@ def test_create_terminal_payment_maps_integrity_error_to_conflict(client, monkey
     assert data["success"] is False
     assert "aktive Zahlung" in data["error"]
 
+
+
+JSON_HEADERS = {"Accept": "application/json"}
+
+
+def _team_id(name):
+    with app.app_context():
+        return Team.query.filter_by(name=name).first().id
+
+
+def test_team_routes_answer_with_json_for_touch_view(client):
+    _create_and_activate_event(client)
+    resp = client.post("/shotcounter/teams", data={"team_name": "Json Team"}, headers=JSON_HEADERS)
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data["success"] is True
+    assert data["team"]["name"] == "Json Team"
+    team_id = data["team"]["id"]
+
+    dup = client.post("/shotcounter/teams", data={"team_name": "Json Team"}, headers=JSON_HEADERS)
+    assert dup.status_code == 409
+    assert dup.get_json()["success"] is False
+
+    booked = client.post("/shotcounter/shots", data={"team_id": team_id, "amount": 4}, headers=JSON_HEADERS).get_json()
+    assert booked["team"]["shots"] == 4
+    assert booked["team"]["rank"] == 1
+    assert booked["booking"]["amount"] == 4
+    assert booked["booking"]["undo_seconds"] > 0
+
+    updated = client.post(
+        f"/shotcounter/teams/{team_id}/update", data={"team_name": "Json Neu", "shots": 9}, headers=JSON_HEADERS
+    ).get_json()
+    assert updated["team"] == {"id": team_id, "name": "Json Neu", "shots": 9, "rank": 1}
+
+    deleted = client.post(f"/shotcounter/teams/{team_id}/delete", headers=JSON_HEADERS).get_json()
+    assert deleted["success"] is True
+
+    # Ohne JSON-Accept bleibt es beim bisherigen Redirect (Hauptansicht).
+    assert client.post("/shotcounter/teams", data={"team_name": "Html Team"}).status_code == 302
+
+
+def test_undo_last_booking_writes_counter_booking_once(client):
+    _create_and_activate_event(client)
+    client.post("/shotcounter/teams", data={"team_name": "Undo Team"})
+    team_id = _team_id("Undo Team")
+    client.post("/shotcounter/shots", data={"team_id": team_id, "amount": 2}, headers=JSON_HEADERS)
+    booking = client.post(
+        "/shotcounter/shots", data={"team_id": team_id, "amount": 5}, headers=JSON_HEADERS
+    ).get_json()["booking"]
+
+    undone = client.post(f"/shotcounter/shots/{booking['id']}/undo", headers=JSON_HEADERS)
+    assert undone.status_code == 200
+    assert undone.get_json()["team"]["shots"] == 2
+
+    again = client.post(f"/shotcounter/shots/{booking['id']}/undo", headers=JSON_HEADERS)
+    assert again.status_code == 409
+
+    from app import ShotLog
+
+    with app.app_context():
+        amounts = [log.amount for log in ShotLog.query.order_by(ShotLog.id).all()]
+        assert amounts == [2, 5, -5]
+        assert sum(amounts) == db.session.get(Team, team_id).shots
+
+
+def test_undo_is_refused_after_time_window(client):
+    _create_and_activate_event(client)
+    client.post("/shotcounter/teams", data={"team_name": "Spaet"})
+    team_id = _team_id("Spaet")
+    booking = client.post(
+        "/shotcounter/shots", data={"team_id": team_id, "amount": 3}, headers=JSON_HEADERS
+    ).get_json()["booking"]
+
+    from app import ShotLog
+
+    with app.app_context():
+        log = db.session.get(ShotLog, booking["id"])
+        log.created_at = log.created_at - timedelta(minutes=5)
+        db.session.commit()
+
+    resp = client.post(f"/shotcounter/shots/{booking['id']}/undo", headers=JSON_HEADERS)
+    assert resp.status_code == 409
+    with app.app_context():
+        assert db.session.get(Team, team_id).shots == 3
+
+
+def test_teams_json_includes_rank_and_cards(client):
+    _create_and_activate_event(client)
+    for name in ("Alpha", "Beta"):
+        client.post("/shotcounter/teams", data={"team_name": name})
+    client.post("/shotcounter/shots", data={"team_id": _team_id("Beta"), "amount": 3})
+    client.post(
+        "/shotcounter/nfc/cards",
+        data=json.dumps({"uid": "04CAFE01", "team_id": _team_id("Alpha")}),
+        content_type="application/json",
+    )
+    teams = {t["name"]: t for t in client.get("/shotcounter/teams.json").get_json()["teams"]}
+    assert teams["Beta"]["rank"] == 1
+    assert teams["Alpha"]["rank"] == 2
+    assert [c["uid"] for c in teams["Alpha"]["cards"]] == ["04CAFE01"]
+
+
+def test_nfc_poll_reports_reader_state(client, monkeypatch):
+    from app import NfcBridgeStatus, utcnow
+
+    monkeypatch.setattr(app_module.nfc_bridge_manager, "bridge_status", lambda instance_path: (False, None))
+    _create_and_activate_event(client)
+
+    def reader_state():
+        return client.get("/shotcounter/nfc/poll").get_json()["reader"]["state"]
+
+    assert reader_state() == "offline"  # Bridge hat sich nie gemeldet
+
+    with app.app_context():
+        db.session.add(NfcBridgeStatus(id=1, reader_name="ACS ACR122U", last_seen_at=utcnow()))
+        db.session.commit()
+    assert reader_state() == "ready"
+
+    with app.app_context():
+        status = db.session.get(NfcBridgeStatus, 1)
+        status.reader_name = None
+        status.last_error = "Kein Leser gefunden"
+        db.session.commit()
+    assert reader_state() == "no_reader"
+
+    with app.app_context():
+        status = db.session.get(NfcBridgeStatus, 1)
+        status.last_seen_at = utcnow() - timedelta(seconds=60)
+        db.session.commit()
+    assert reader_state() == "offline"
+
+
+def test_nfc_card_delete_answers_with_json(client):
+    _create_and_activate_event(client)
+    client.post(
+        "/shotcounter/nfc/cards",
+        data=json.dumps({"uid": "04DEAD01", "new_team_name": "Kartenteam"}),
+        content_type="application/json",
+    )
+    with app.app_context():
+        card_id = NfcCard.query.filter_by(uid="04DEAD01").first().id
+    resp = client.post(f"/shotcounter/nfc/cards/{card_id}/delete", headers=JSON_HEADERS)
+    assert resp.get_json()["success"] is True
+    with app.app_context():
+        assert NfcCard.query.count() == 0
