@@ -136,10 +136,81 @@
     padding: 0.5rem;
     margin-bottom: 0.75rem;
   }
-  .nfc-unknown-box input[type="text"] {
+  .nfc-modal-content {
+    max-height: 94vh;
+    overflow-y: auto;
+  }
+  .nfc-modal-content .keypad button {
+    padding: 1.4rem 1rem;
+    min-height: 84px;
+  }
+  .nfc-bind-hint {
+    margin: -0.4rem 0 0.75rem;
+    color: #fbbf24;
+    font-weight: 600;
+  }
+  .nfc-bind-actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.75rem;
+    margin-top: 0.75rem;
+  }
+  .nfc-bind-actions[hidden] { display: none; }
+  .nfc-bind-actions button {
+    padding: 1rem;
+    font-size: 1.1rem;
+    font-weight: 700;
+  }
+  #nfc-team-search {
     width: 100%;
     box-sizing: border-box;
+    font-size: 1.3rem;
+    padding: 0.8rem 1rem;
     margin-bottom: 0.75rem;
+  }
+  .nfc-create-btn {
+    width: 100%;
+    padding: 1rem;
+    font-size: 1.15rem;
+    font-weight: 800;
+    margin-bottom: 0.75rem;
+    background: linear-gradient(135deg, #34d399, #22c55e);
+    color: #0b1222;
+    border: none;
+  }
+  .nfc-create-btn[hidden] { display: none; }
+  .nfc-team-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    max-height: 46vh;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  .nfc-team-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 0.75rem;
+    width: 100%;
+    padding: 1rem 1.1rem;
+    font-size: 1.2rem;
+    font-weight: 700;
+    text-align: left;
+    background: #1b243b;
+    border: 1px solid #273555;
+    color: #e2e8f0;
+  }
+  .nfc-team-meta {
+    font-size: 0.9rem;
+    font-weight: 600;
+    color: rgba(226,232,240,0.65);
+    white-space: nowrap;
+  }
+  .nfc-team-empty {
+    color: rgba(226,232,240,0.65);
+    text-align: center;
+    padding: 0.75rem;
   }
 </style>
 
@@ -186,8 +257,9 @@
 <div class="modal" id="nfc-modal">
   <div class="modal-content nfc-modal-content">
     <div id="nfc-known-view">
-      <h3>Karte erkannt</h3>
+      <h3 id="nfc-known-title">Karte erkannt</h3>
       <p class="nfc-team-name" id="nfc-team-name"></p>
+      <p class="nfc-bind-hint" id="nfc-bind-hint" hidden></p>
       <div class="nfc-display" id="nfc-display">0</div>
       <div class="keypad">
         {% for digit in [1,2,3,4,5,6,7,8,9] %}
@@ -198,13 +270,18 @@
         <button type="button" class="action" id="nfc-back-btn">←</button>
         <button type="button" class="action" id="nfc-submit-btn" style="grid-column: span 3;">Shots buchen</button>
       </div>
+      <div class="nfc-bind-actions" id="nfc-bind-actions" hidden>
+        <button type="button" class="secondary" id="nfc-change-team-btn">← Anderes Team</button>
+        <button type="button" class="secondary" id="nfc-bind-only-btn">Nur verknüpfen</button>
+      </div>
     </div>
     <div id="nfc-unknown-view" class="nfc-unknown-box" style="display: none;">
-      <h3>Unbekannte Karte</h3>
-      <p>Diese Karte ist noch keinem Team zugeordnet.</p>
-      <input type="text" id="nfc-new-team-name" placeholder="Neuer Teamname"
-             pattern="[\p{L}\p{N}_ .,'&()/-]+">
-      <button type="button" id="nfc-create-team-btn" style="width: 100%;">Team erstellen &amp; Karte verknüpfen</button>
+      <h3>Neue Karte erkannt</h3>
+      <p>Team suchen oder neuen Teamnamen eingeben:</p>
+      <input type="search" id="nfc-team-search" placeholder="Teamname…"
+             autocomplete="off" autocorrect="off" autocapitalize="words" spellcheck="false" enterkeyhint="go">
+      <button type="button" id="nfc-create-team-btn" class="nfc-create-btn" hidden></button>
+      <div class="nfc-team-list" id="nfc-team-list"></div>
     </div>
     <div class="modal-actions">
       <button type="button" id="nfc-cancel-btn">Schließen</button>
@@ -303,43 +380,177 @@
   });
 
   // --- NFC-Karten-Popup (Festbetrieb: Karte auflegen -> Shots buchen) ---
+  // Bekannte Karte: Team ist vorausgefüllt, nur noch Shots eintippen.
+  // Unbekannte Karte: 1) Team suchen/neu anlegen, 2) Shots eintippen. Die
+  // Karte wird erst beim Buchen bzw. "Nur verknüpfen" tatsächlich zugeordnet,
+  // damit ein Fehlgriff in der Teamliste folgenlos abgebrochen werden kann.
+  const TEAM_NAME_RE = /^[\p{L}\p{N}_ .,'&()\/-]+$/u;
   const nfcModal = document.getElementById("nfc-modal");
   const nfcKnownView = document.getElementById("nfc-known-view");
   const nfcUnknownView = document.getElementById("nfc-unknown-view");
+  const nfcKnownTitle = document.getElementById("nfc-known-title");
   const nfcTeamNameEl = document.getElementById("nfc-team-name");
+  const nfcBindHint = document.getElementById("nfc-bind-hint");
+  const nfcBindActions = document.getElementById("nfc-bind-actions");
   const nfcDisplayEl = document.getElementById("nfc-display");
-  const nfcNewTeamInput = document.getElementById("nfc-new-team-name");
+  const nfcSubmitBtn = document.getElementById("nfc-submit-btn");
+  const nfcBindOnlyBtn = document.getElementById("nfc-bind-only-btn");
+  const nfcSearchInput = document.getElementById("nfc-team-search");
+  const nfcCreateBtn = document.getElementById("nfc-create-team-btn");
+  const nfcTeamList = document.getElementById("nfc-team-list");
   let nfcBuffer = "";
   let nfcCurrentUid = null;
   let nfcCurrentTeam = null;
+  // Gewählte, aber noch nicht gespeicherte Zuordnung: {team_id} oder {new_team_name}
+  let nfcPendingBind = null;
+  let nfcTeams = [];
+  let nfcBusy = false;
+
+  const normalizeName = (value) =>
+    value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLocaleLowerCase("de").trim();
 
   const updateNfcDisplay = () => {
     nfcDisplayEl.textContent = nfcBuffer || "0";
   };
 
-  function openNfcModalKnown(team, uid) {
-    nfcCurrentTeam = team;
-    if (uid) nfcCurrentUid = uid;
+  function showKnownView(title, teamLabel, hint) {
     nfcBuffer = "";
     updateNfcDisplay();
-    nfcTeamNameEl.textContent = `${team.name} (${team.shots} Shots)`;
+    nfcKnownTitle.textContent = title;
+    nfcTeamNameEl.textContent = teamLabel;
+    nfcBindHint.textContent = hint || "";
+    nfcBindHint.hidden = !hint;
+    nfcBindActions.hidden = !nfcPendingBind;
     nfcKnownView.style.display = "";
     nfcUnknownView.style.display = "none";
     nfcModal.classList.add("open");
   }
 
-  function openNfcModalUnknown(uid) {
-    nfcCurrentUid = uid;
-    nfcNewTeamInput.value = "";
+  function openNfcModalKnown(team, uid) {
+    nfcCurrentTeam = team;
+    nfcPendingBind = null;
+    if (uid) nfcCurrentUid = uid;
+    showKnownView("Karte erkannt", `${team.name} (${team.shots} Shots)`);
+  }
+
+  function chooseExistingTeam(team) {
+    nfcCurrentTeam = null;
+    nfcPendingBind = { team_id: team.id };
+    showKnownView("Karte zuweisen", `${team.name} (${team.shots} Shots)`, "Karte wird diesem Team zugewiesen.");
+  }
+
+  function chooseNewTeam(name) {
+    if (!TEAM_NAME_RE.test(name)) {
+      alert("Ungültige Zeichen im Teamnamen. Erlaubt sind Buchstaben, Zahlen, Leerzeichen sowie . , - _ & / ( ) '");
+      return;
+    }
+    nfcCurrentTeam = null;
+    nfcPendingBind = { new_team_name: name };
+    showKnownView("Neues Team", name, "Team wird neu angelegt und mit der Karte verknüpft.");
+  }
+
+  function renderTeamList() {
+    const query = normalizeName(nfcSearchInput.value);
+    const rawQuery = nfcSearchInput.value.trim();
+    let matches = nfcTeams;
+    if (query) {
+      matches = nfcTeams
+        .filter((team) => normalizeName(team.name).includes(query))
+        .sort((a, b) => {
+          const aStarts = normalizeName(a.name).startsWith(query) ? 0 : 1;
+          const bStarts = normalizeName(b.name).startsWith(query) ? 0 : 1;
+          return aStarts - bStarts || a.name.localeCompare(b.name, "de");
+        });
+    }
+
+    const exactMatch = query && nfcTeams.some((team) => normalizeName(team.name) === query);
+    nfcCreateBtn.hidden = !rawQuery || exactMatch;
+    nfcCreateBtn.textContent = `＋ Neues Team „${rawQuery}“ erstellen`;
+
+    nfcTeamList.replaceChildren();
+    if (!matches.length) {
+      const empty = document.createElement("div");
+      empty.className = "nfc-team-empty";
+      empty.textContent = nfcTeams.length ? "Kein passendes Team gefunden." : "Noch keine Teams vorhanden.";
+      nfcTeamList.appendChild(empty);
+      return;
+    }
+    matches.slice(0, 60).forEach((team) => {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "nfc-team-item";
+      const name = document.createElement("span");
+      name.textContent = team.name;
+      const meta = document.createElement("span");
+      meta.className = "nfc-team-meta";
+      meta.textContent = `${team.shots} Shots` + (team.card_count ? ` · hat bereits Karte` : "");
+      btn.append(name, meta);
+      btn.addEventListener("click", () => chooseExistingTeam(team));
+      nfcTeamList.appendChild(btn);
+    });
+  }
+
+  async function loadTeams() {
+    try {
+      const res = await fetch("{{ url_for('shotcounter_teams_json') }}", { cache: "no-store" });
+      const data = await res.json();
+      if (data.success) nfcTeams = data.teams;
+    } catch (err) {
+      // Liste bleibt beim letzten Stand; neues Team anlegen funktioniert trotzdem
+    }
+    renderTeamList();
+  }
+
+  function showSearchView() {
+    nfcPendingBind = null;
+    nfcCurrentTeam = null;
     nfcKnownView.style.display = "none";
     nfcUnknownView.style.display = "";
     nfcModal.classList.add("open");
+    renderTeamList();
+  }
+
+  function openNfcModalUnknown(uid) {
+    nfcCurrentUid = uid;
+    nfcSearchInput.value = "";
+    showSearchView();
+    loadTeams();
   }
 
   function closeNfcModal() {
     nfcModal.classList.remove("open");
+    nfcSearchInput.blur();
     nfcCurrentUid = null;
     nfcCurrentTeam = null;
+    nfcPendingBind = null;
+  }
+
+  // Speichert die gewählte Zuordnung und liefert das (ggf. neue) Team zurück.
+  async function bindPendingCard() {
+    const res = await fetch("{{ url_for('nfc_card_quick_bind') }}", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ uid: nfcCurrentUid, ...nfcPendingBind }),
+    });
+    const data = await res.json();
+    if (!data.success) throw new Error(data.error || "Karte konnte nicht verknüpft werden.");
+    return data.team;
+  }
+
+  async function withBusy(fn) {
+    if (nfcBusy) return;
+    nfcBusy = true;
+    nfcSubmitBtn.disabled = true;
+    nfcBindOnlyBtn.disabled = true;
+    try {
+      await fn();
+    } catch (err) {
+      alert(err.message || "Netzwerkfehler.");
+    } finally {
+      nfcBusy = false;
+      nfcSubmitBtn.disabled = false;
+      nfcBindOnlyBtn.disabled = false;
+    }
   }
 
   document.querySelectorAll("[data-nfc-digit]").forEach((btn) => {
@@ -358,38 +569,45 @@
     nfcBuffer = nfcBuffer.slice(0, -1);
     updateNfcDisplay();
   });
-  document.getElementById("nfc-submit-btn").addEventListener("click", () => {
+  nfcSubmitBtn.addEventListener("click", () => {
     const amount = parseInt(nfcBuffer, 10);
-    if (!nfcCurrentTeam || !amount || amount <= 0) {
+    if (!amount || amount <= 0) {
       alert("Bitte eine gültige Shot-Anzahl eingeben.");
       return;
     }
-    teamIdInput.value = nfcCurrentTeam.id;
-    amountInput.value = amount;
-    nfcUidInput.value = nfcCurrentUid || "";
-    form.submit();
+    withBusy(async () => {
+      const team = nfcPendingBind ? await bindPendingCard() : nfcCurrentTeam;
+      if (!team) return;
+      teamIdInput.value = team.id;
+      amountInput.value = amount;
+      nfcUidInput.value = nfcCurrentUid || "";
+      form.submit();
+    });
   });
-  document.getElementById("nfc-create-team-btn").addEventListener("click", async () => {
-    const newTeamName = nfcNewTeamInput.value.trim();
-    if (!newTeamName) {
-      alert("Bitte einen Teamnamen eingeben.");
-      return;
+  nfcBindOnlyBtn.addEventListener("click", () => {
+    withBusy(async () => {
+      await bindPendingCard();
+      // Neu laden, damit Teamauswahl und Shot-Stände aktuell sind.
+      window.location.reload();
+    });
+  });
+  document.getElementById("nfc-change-team-btn").addEventListener("click", showSearchView);
+  nfcSearchInput.addEventListener("input", renderTeamList);
+  nfcSearchInput.addEventListener("keydown", (evt) => {
+    if (evt.key !== "Enter") return;
+    evt.preventDefault();
+    const first = nfcTeamList.querySelector(".nfc-team-item");
+    const onlyOne = nfcTeamList.querySelectorAll(".nfc-team-item").length === 1;
+    if (!nfcCreateBtn.hidden) {
+      nfcCreateBtn.click();
+    } else if (first && onlyOne) {
+      first.click();
     }
-    try {
-      const res = await fetch("{{ url_for('nfc_card_quick_bind') }}", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ uid: nfcCurrentUid, new_team_name: newTeamName }),
-      });
-      const data = await res.json();
-      if (data.success) {
-        openNfcModalKnown(data.team);
-      } else {
-        alert(data.error || "Team konnte nicht angelegt werden.");
-      }
-    } catch (err) {
-      alert("Netzwerkfehler beim Anlegen des Teams.");
-    }
+    nfcSearchInput.blur();
+  });
+  nfcCreateBtn.addEventListener("click", () => {
+    const name = nfcSearchInput.value.trim();
+    if (name) chooseNewTeam(name);
   });
   document.getElementById("nfc-cancel-btn").addEventListener("click", closeNfcModal);
   nfcModal.addEventListener("click", (evt) => {

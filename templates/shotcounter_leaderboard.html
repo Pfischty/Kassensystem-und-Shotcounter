@@ -151,6 +151,17 @@
     .leaderboard-grid { grid-template-columns: 1fr; }
   }
 
+  /* Highlight + Platzwechsel im Leaderboard */
+  .lb-card { will-change: transform; }
+  .lb-card--flash {
+    animation: lb-row-flash 1.6s ease-out;
+  }
+  @keyframes lb-row-flash {
+    0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--lb-tertiary) 90%, transparent), 0 10px 30px rgba(0,0,0,0.35); transform: scale(1.03); }
+    40% { box-shadow: 0 0 0 10px color-mix(in srgb, var(--lb-tertiary) 35%, transparent), 0 10px 30px rgba(0,0,0,0.35); }
+    100% { box-shadow: 0 0 0 0 transparent, 0 10px 30px rgba(0,0,0,0.35); transform: scale(1); }
+  }
+
   /* Willkommens- und Buchungs-Animation */
   .lb-celebration {
     position: fixed;
@@ -159,8 +170,9 @@
     display: none;
     align-items: center;
     justify-content: center;
-    background: rgba(5, 8, 16, 0.72);
-    backdrop-filter: blur(3px);
+    overflow: hidden;
+    background: radial-gradient(circle at center, rgba(15, 23, 42, 0.78), rgba(2, 4, 10, 0.92));
+    backdrop-filter: blur(4px);
   }
   .lb-celebration.show {
     display: flex;
@@ -169,44 +181,157 @@
   .lb-celebration.hide {
     animation: lb-fade-out 0.4s ease-in forwards;
   }
+  .lb-rays {
+    position: absolute;
+    width: 160vmax;
+    height: 160vmax;
+    left: 50%;
+    top: 50%;
+    margin: -80vmax 0 0 -80vmax;
+    background: repeating-conic-gradient(
+      from 0deg,
+      color-mix(in srgb, var(--accent) 22%, transparent) 0deg 6deg,
+      transparent 6deg 18deg
+    );
+    -webkit-mask-image: radial-gradient(circle, black 0%, transparent 60%);
+    mask-image: radial-gradient(circle, black 0%, transparent 60%);
+    animation: lb-spin 18s linear infinite;
+    opacity: 0.9;
+  }
+  .lb-confetti {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    z-index: 2;
+  }
   .lb-celebration-card {
+    --accent: var(--lb-secondary, #38bdf8);
+    position: relative;
+    z-index: 1;
     text-align: center;
-    padding: 2.5rem 4rem;
-    border-radius: 24px;
-    background: linear-gradient(160deg, var(--lb-card, #1e293b), #0b1222);
-    border: 2px solid color-mix(in srgb, var(--lb-secondary, #38bdf8) 60%, white 10%);
-    box-shadow: 0 25px 80px rgba(0,0,0,0.55);
-    animation: lb-pop-in 0.5s cubic-bezier(0.34, 1.56, 0.64, 1);
+    padding: 2.5rem 4.5rem 2.8rem;
+    max-width: 88vw;
+    border-radius: 28px;
+    background: linear-gradient(160deg, color-mix(in srgb, var(--lb-card, #1e293b) 92%, var(--accent) 8%), #0b1222);
+    border: 2px solid color-mix(in srgb, var(--accent) 70%, white 10%);
+    box-shadow:
+      0 0 60px color-mix(in srgb, var(--accent) 45%, transparent),
+      0 25px 80px rgba(0,0,0,0.6);
+    animation: lb-pop-in 0.6s cubic-bezier(0.34, 1.56, 0.64, 1);
   }
+  .lb-celebration { --accent: var(--lb-secondary, #38bdf8); }
+  .lb-celebration.is-booking,
+  .lb-celebration.is-booking .lb-celebration-card { --accent: var(--lb-tertiary, #34d399); }
   .lb-celebration-kicker {
-    font-size: 1.4rem;
-    font-weight: 700;
-    letter-spacing: 0.08em;
+    font-size: 1.5rem;
+    font-weight: 800;
+    letter-spacing: 0.18em;
     text-transform: uppercase;
-    color: var(--lb-secondary, #38bdf8);
-    margin: 0 0 0.5rem;
-  }
-  .lb-celebration.is-booking .lb-celebration-kicker {
-    color: var(--lb-tertiary, #34d399);
+    color: var(--accent);
+    margin: 0 0 0.6rem;
   }
   .lb-celebration-name {
-    font-size: clamp(2.5rem, 7vw, 5rem);
+    font-size: clamp(2.8rem, 8vw, 6rem);
     font-weight: 900;
+    line-height: 1.05;
     margin: 0;
     color: #f8fafc;
-    text-shadow: 0 4px 20px rgba(0,0,0,0.4);
+    text-shadow: 0 0 30px color-mix(in srgb, var(--accent) 55%, transparent), 0 4px 20px rgba(0,0,0,0.5);
+  }
+  .lb-letter {
+    display: inline-block;
+    opacity: 0;
+    animation: lb-letter-in 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
   }
   .lb-celebration-sub {
-    margin: 0.75rem 0 0;
-    font-size: 1.6rem;
+    margin: 1rem 0 0;
+    font-size: 1.8rem;
     font-weight: 700;
-    color: rgba(226,232,240,0.85);
+    color: rgba(226,232,240,0.9);
+    opacity: 0;
+    animation: lb-rise-in 0.5s ease-out forwards;
+  }
+  .lb-booking-row {
+    display: none;
+    align-items: center;
+    justify-content: center;
+    gap: 1.6rem;
+    margin-top: 1.2rem;
+  }
+  .lb-celebration.is-booking .lb-booking-row { display: flex; }
+  .lb-glass { width: clamp(70px, 9vw, 120px); height: auto; overflow: visible; }
+  .lb-glass-liquid {
+    transform-box: fill-box;
+    transform-origin: bottom;
+    transform: scaleY(0);
+    fill: var(--accent);
+  }
+  .lb-celebration.is-booking.show .lb-glass-liquid {
+    animation: lb-fill var(--count-ms, 1200ms) cubic-bezier(0.22, 1, 0.36, 1) forwards;
+  }
+  .lb-amount {
+    font-size: clamp(4rem, 12vw, 9rem);
+    font-weight: 900;
+    line-height: 1;
+    color: var(--accent);
+    font-variant-numeric: tabular-nums;
+    text-shadow: 0 0 40px color-mix(in srgb, var(--accent) 60%, transparent);
+  }
+  .lb-amount.bump { animation: lb-bump 0.35s ease-out; }
+  .lb-rank-badge {
+    display: inline-block;
+    margin-top: 1.2rem;
+    padding: 0.55rem 1.4rem;
+    border-radius: 999px;
+    font-size: 1.7rem;
+    font-weight: 900;
+    color: #0b1222;
+    background: linear-gradient(135deg, #f5d76e, #d4af37);
+    box-shadow: 0 0 30px rgba(245, 215, 110, 0.55);
+    opacity: 0;
+  }
+  .lb-rank-badge.visible {
+    animation: lb-badge-in 0.6s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+  }
+  .lb-rank-badge[hidden] { display: none; }
+  .lb-celebration.tier-mid .lb-celebration-card { transform: scale(1.06); }
+  .lb-celebration.tier-big .lb-celebration-card {
+    animation: lb-pop-in 0.6s cubic-bezier(0.34, 1.56, 0.64, 1), lb-shake 0.5s 0.6s ease-in-out 2;
   }
   @keyframes lb-fade-in { from { opacity: 0; } to { opacity: 1; } }
   @keyframes lb-fade-out { from { opacity: 1; } to { opacity: 0; } }
+  @keyframes lb-spin { to { transform: rotate(360deg); } }
   @keyframes lb-pop-in {
-    0% { transform: scale(0.6); opacity: 0; }
-    100% { transform: scale(1); opacity: 1; }
+    0% { transform: scale(0.5) rotate(-4deg); opacity: 0; }
+    100% { transform: scale(1) rotate(0); opacity: 1; }
+  }
+  @keyframes lb-letter-in {
+    0% { opacity: 0; transform: translateY(0.6em) scale(0.6); filter: blur(6px); }
+    100% { opacity: 1; transform: none; filter: none; }
+  }
+  @keyframes lb-rise-in {
+    from { opacity: 0; transform: translateY(12px); }
+    to { opacity: 1; transform: none; }
+  }
+  @keyframes lb-fill { to { transform: scaleY(1); } }
+  @keyframes lb-bump {
+    0% { transform: scale(1); }
+    40% { transform: scale(1.18); }
+    100% { transform: scale(1); }
+  }
+  @keyframes lb-badge-in {
+    0% { opacity: 0; transform: scale(0.4) translateY(10px); }
+    100% { opacity: 1; transform: none; }
+  }
+  @keyframes lb-shake {
+    0%, 100% { transform: translateX(0); }
+    25% { transform: translateX(-8px) rotate(-1deg); }
+    75% { transform: translateX(8px) rotate(1deg); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .lb-rays, .lb-letter, .lb-celebration-card { animation: none !important; opacity: 1; }
   }
 </style>
 
@@ -219,36 +344,72 @@
 </div>
 
 <div class="lb-celebration" id="lb-celebration">
+  <div class="lb-rays"></div>
+  <canvas class="lb-confetti" id="lb-confetti"></canvas>
   <div class="lb-celebration-card">
     <p class="lb-celebration-kicker" id="lb-celebration-kicker"></p>
     <p class="lb-celebration-name" id="lb-celebration-name"></p>
+    <div class="lb-booking-row">
+      <svg class="lb-glass" viewBox="0 0 60 80" aria-hidden="true">
+        <defs>
+          <clipPath id="lb-glass-clip"><path d="M8 6 L52 6 L46 74 L14 74 Z"/></clipPath>
+        </defs>
+        <rect class="lb-glass-liquid" x="0" y="16" width="60" height="60" clip-path="url(#lb-glass-clip)"/>
+        <path d="M8 6 L52 6 L46 74 L14 74 Z" fill="none" stroke="rgba(248,250,252,0.85)" stroke-width="3.5" stroke-linejoin="round"/>
+        <path d="M16 14 L18 64" stroke="rgba(255,255,255,0.35)" stroke-width="3" stroke-linecap="round"/>
+      </svg>
+      <span class="lb-amount" id="lb-amount">+0</span>
+    </div>
     <p class="lb-celebration-sub" id="lb-celebration-sub"></p>
+    <div class="lb-rank-badge" id="lb-rank-badge" hidden></div>
   </div>
 </div>
 
 <script>
-  const refreshUrl = document.querySelector(".leaderboard-hero").dataset.refreshUrl;
+  const heroEl = document.querySelector(".leaderboard-hero");
+  const refreshUrl = heroEl.dataset.refreshUrl;
   const gridEl = document.getElementById("leaderboard-grid");
   const fallbackTeams = {{ teams | tojson }};
+  const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
+  const escapeHtml = (value) =>
+    String(value).replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[ch]);
+
+  // Rendert die Liste neu und lässt Teams, die den Platz gewechselt haben,
+  // sanft an ihre neue Position gleiten (FLIP: alte Position merken,
+  // neu zeichnen, Differenz per transform zurückspielen).
   const renderTeams = (teams) => {
+    const oldTops = new Map();
+    gridEl.querySelectorAll("[data-team-id]").forEach((el) => {
+      oldTops.set(el.dataset.teamId, el.getBoundingClientRect().top);
+    });
+
     if (!teams.length) {
       gridEl.innerHTML = '<div class="lb-card"><div class="lb-empty">Keine Teams vorhanden.</div></div>';
       return;
     }
-    gridEl.innerHTML = teams.map((team, idx) => {
-      return `
-        <div class="lb-card">
+    gridEl.innerHTML = teams.map((team, idx) => `
+        <div class="lb-card" data-team-id="${team.id}">
           <div class="lb-rank lb-rank--${idx + 1}">#${idx + 1}</div>
           <div class="lb-info">
             <div>
-              <p class="lb-name">${team.name}</p>
+              <p class="lb-name">${escapeHtml(team.name)}</p>
               <p class="lb-shots">${team.shots} Shots</p>
             </div>
           </div>
         </div>
-      `;
-    }).join("");
+      `).join("");
+
+    if (reduceMotion || !oldTops.size) return;
+    gridEl.querySelectorAll("[data-team-id]").forEach((el) => {
+      const oldTop = oldTops.get(el.dataset.teamId);
+      const delta = oldTop === undefined ? 0 : oldTop - el.getBoundingClientRect().top;
+      if (Math.abs(delta) < 2) return;
+      el.animate(
+        [{ transform: `translateY(${delta}px)` }, { transform: "translateY(0)" }],
+        { duration: 900, easing: "cubic-bezier(0.22, 1, 0.36, 1)" }
+      );
+    });
   };
 
   const fetchAndRender = async () => {
@@ -262,12 +423,97 @@
     }
   };
 
+  const flashTeamRow = (teamId) => {
+    const row = gridEl.querySelector(`[data-team-id="${teamId}"]`);
+    if (!row) return;
+    row.classList.remove("lb-card--flash");
+    void row.offsetWidth; // Animation neu starten
+    row.classList.add("lb-card--flash");
+  };
+
   renderTeams(fallbackTeams);
   fetchAndRender();
   setInterval(fetchAndRender, 5000);
 
+  // --- Konfetti (eigenes Canvas, kein CDN - der Pi ist am Event evtl. offline) ---
+  const confettiCanvas = document.getElementById("lb-confetti");
+  const confettiCtx = confettiCanvas.getContext("2d");
+  let confettiParticles = [];
+  let confettiRunning = false;
+
+  function confettiColors() {
+    const css = getComputedStyle(heroEl);
+    return [
+      css.getPropertyValue("--lb-secondary").trim() || "#38bdf8",
+      css.getPropertyValue("--lb-tertiary").trim() || "#34d399",
+      "#f5d76e",
+      "#f8fafc",
+      "#f472b6",
+    ];
+  }
+
+  function burstConfetti(count) {
+    if (reduceMotion) return;
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    confettiCanvas.width = window.innerWidth * dpr;
+    confettiCanvas.height = window.innerHeight * dpr;
+    confettiCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    const colors = confettiColors();
+    const w = window.innerWidth;
+    const h = window.innerHeight;
+    for (let i = 0; i < count; i++) {
+      // Zwei Kanonen links und rechts unten, die zur Mitte schiessen.
+      const fromLeft = i % 2 === 0;
+      const angle = (fromLeft ? -60 : -120) + (Math.random() - 0.5) * 40;
+      const speed = 13 + Math.random() * 11;
+      confettiParticles.push({
+        x: fromLeft ? w * 0.08 : w * 0.92,
+        y: h * 0.95,
+        vx: Math.cos((angle * Math.PI) / 180) * speed,
+        vy: Math.sin((angle * Math.PI) / 180) * speed,
+        size: 7 + Math.random() * 8,
+        rot: Math.random() * Math.PI,
+        vr: (Math.random() - 0.5) * 0.35,
+        color: colors[i % colors.length],
+        life: 0,
+      });
+    }
+    if (!confettiRunning) {
+      confettiRunning = true;
+      requestAnimationFrame(stepConfetti);
+    }
+  }
+
+  function stepConfetti() {
+    const w = window.innerWidth;
+    const h = window.innerHeight;
+    confettiCtx.clearRect(0, 0, w, h);
+    confettiParticles = confettiParticles.filter((p) => p.y < h + 40 && p.life < 360);
+    confettiParticles.forEach((p) => {
+      p.life += 1;
+      p.vy += 0.32;
+      p.vx *= 0.985;
+      p.vy *= 0.985;
+      p.x += p.vx;
+      p.y += p.vy;
+      p.rot += p.vr;
+      confettiCtx.save();
+      confettiCtx.translate(p.x, p.y);
+      confettiCtx.rotate(p.rot);
+      confettiCtx.scale(1, Math.cos(p.life * 0.15)); // "Flattern"
+      confettiCtx.fillStyle = p.color;
+      confettiCtx.fillRect(-p.size / 2, -p.size / 4, p.size, p.size / 2);
+      confettiCtx.restore();
+    });
+    if (confettiParticles.length) {
+      requestAnimationFrame(stepConfetti);
+    } else {
+      confettiRunning = false;
+      confettiCtx.clearRect(0, 0, w, h);
+    }
+  }
+
   // --- Willkommens-/Buchungs-Animation ---
-  const heroEl = document.querySelector(".leaderboard-hero");
   const eventsUrl = heroEl.dataset.eventsUrl;
   let lastEventId = parseInt(heroEl.dataset.lastEventId, 10) || 0;
 
@@ -275,33 +521,101 @@
   const celebrationKicker = document.getElementById("lb-celebration-kicker");
   const celebrationName = document.getElementById("lb-celebration-name");
   const celebrationSub = document.getElementById("lb-celebration-sub");
+  const amountEl = document.getElementById("lb-amount");
+  const rankBadge = document.getElementById("lb-rank-badge");
   let celebrationQueue = [];
   let celebrationBusy = false;
+
+  function setLetters(name, stepMs) {
+    celebrationName.replaceChildren();
+    Array.from(name || "").forEach((ch, idx) => {
+      const span = document.createElement("span");
+      span.className = "lb-letter";
+      span.textContent = ch === " " ? "\u00a0" : ch;
+      span.style.animationDelay = `${idx * stepMs}ms`;
+      celebrationName.appendChild(span);
+    });
+  }
+
+  function countUp(target, durationMs) {
+    const start = performance.now();
+    let shown = 0;
+    const tick = (now) => {
+      const progress = Math.min(1, (now - start) / durationMs);
+      const eased = 1 - Math.pow(1 - progress, 3);
+      const value = Math.max(1, Math.round(eased * target));
+      if (value !== shown) {
+        shown = value;
+        amountEl.textContent = `+${value}`;
+        amountEl.classList.remove("bump");
+        void amountEl.offsetWidth;
+        amountEl.classList.add("bump");
+      }
+      if (progress < 1) requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  }
 
   function showNextCelebration() {
     if (celebrationBusy || celebrationQueue.length === 0) return;
     celebrationBusy = true;
     const evt = celebrationQueue.shift();
+    // Stauen sich Ereignisse, laufen die Animationen schneller ab.
+    const speed = celebrationQueue.length >= 2 ? 0.55 : 1;
+    const isBooking = evt.kind === "shots_booked";
 
-    celebrationEl.classList.remove("is-booking");
-    if (evt.first_booking) {
-      celebrationKicker.textContent = "Willkommen";
-      celebrationSub.textContent = "Auf die ersten Shots!";
-    } else {
+    celebrationEl.classList.remove("is-booking", "tier-mid", "tier-big");
+    celebrationSub.style.animationDelay = "";
+    rankBadge.hidden = true;
+    rankBadge.classList.remove("visible");
+
+    let visibleDuration;
+    if (isBooking) {
+      const amount = evt.amount || 1;
+      const countMs = Math.round(Math.min(600 + amount * 120, 1800) * speed);
       celebrationEl.classList.add("is-booking");
+      if (amount >= 10) celebrationEl.classList.add("tier-big");
+      else if (amount >= 5) celebrationEl.classList.add("tier-mid");
+      celebrationEl.style.setProperty("--count-ms", `${countMs}ms`);
       celebrationKicker.textContent = "Shots gebucht";
-      celebrationSub.textContent = `+${evt.amount} Shot${evt.amount === 1 ? "" : "s"}!`;
+      setLetters(evt.team_name, 25);
+      amountEl.textContent = "+0";
+      celebrationSub.textContent = evt.total_shots != null ? `Total ${evt.total_shots} Shots` : "";
+      celebrationSub.style.animationDelay = `${countMs}ms`;
+
+      const climbed = evt.rank_before && evt.rank_after && evt.rank_after < evt.rank_before;
+      if (climbed) {
+        rankBadge.textContent = evt.rank_after === 1 ? "🏆 Neu auf Platz 1!" : `▲ Neu auf Platz ${evt.rank_after}!`;
+        rankBadge.hidden = false;
+        setTimeout(() => {
+          rankBadge.classList.add("visible");
+          if (evt.rank_after <= 3) burstConfetti(evt.rank_after === 1 ? 220 : 140);
+        }, countMs + 150);
+      }
+      setTimeout(() => countUp(amount, countMs), 250);
+      if (amount >= 10) setTimeout(() => burstConfetti(Math.min(80 + amount * 6, 200)), 250 + countMs);
+      visibleDuration = (climbed ? 5200 : 3800) * speed;
+    } else {
+      const isNew = evt.kind === "team_created";
+      celebrationKicker.textContent = isNew ? "Neues Team" : "Willkommen";
+      const letterStep = 55;
+      setLetters(evt.team_name, letterStep);
+      celebrationSub.textContent = isNew ? "Neu im Rennen!" : "Ist am Start!";
+      const lettersMs = Array.from(evt.team_name || "").length * letterStep + 300;
+      celebrationSub.style.animationDelay = `${lettersMs}ms`;
+      setTimeout(() => burstConfetti(180), 200);
+      visibleDuration = Math.max(4500, lettersMs + 2500) * speed;
     }
-    celebrationName.textContent = evt.team_name || "";
 
     celebrationEl.classList.remove("hide");
     celebrationEl.classList.add("show");
 
-    const visibleDuration = evt.first_booking ? 4500 : 3200;
     setTimeout(() => {
       celebrationEl.classList.add("hide");
-      setTimeout(() => {
+      setTimeout(async () => {
         celebrationEl.classList.remove("show", "hide");
+        await fetchAndRender();
+        if (evt.team_id) flashTeamRow(evt.team_id);
         celebrationBusy = false;
         showNextCelebration();
       }, 400);

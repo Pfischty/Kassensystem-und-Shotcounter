@@ -431,6 +431,27 @@ def test_ensure_runtime_column_schema_adds_missing_columns(client):
         assert "first_booking" in {col["name"] for col in inspector.get_columns("shot_log")}
 
 
+def test_welcomed_at_migration_marks_teams_with_shots_as_already_welcomed(client):
+    """Nach dem Update sollen Teams, die schon Shots haben, nicht mitten im
+    Event nochmals als 'neu' begrüsst werden."""
+
+    from sqlalchemy import text
+
+    event = _create_and_activate_event(client)
+    with app.app_context():
+        db.session.add(Team(event_id=event.id, name="Schon Dabei", shots=4))
+        db.session.add(Team(event_id=event.id, name="Noch Nicht", shots=0))
+        db.session.commit()
+        db.session.execute(text("ALTER TABLE team DROP COLUMN welcomed_at"))
+        db.session.commit()
+
+        app_module.ensure_runtime_column_schema()
+
+        rows = dict(db.session.execute(text("SELECT name, welcomed_at FROM team")).all())
+        assert rows["Schon Dabei"] is not None
+        assert rows["Noch Nicht"] is None
+
+
 def test_leaderboard_hides_zero_shot_teams_by_default(client):
     _create_and_activate_event(client)
     client.post("/shotcounter/teams", data={"team_name": "Hat Shots"})
@@ -466,26 +487,128 @@ def test_leaderboard_shows_zero_shot_teams_when_toggle_disabled(client):
     assert "Noch Keine Shots" in names
 
 
-def test_leaderboard_events_reports_first_booking_then_regular_booking(client):
+def _showcase_events(client, after_id=0):
+    return client.get(f"/shotcounter/leaderboard/events?after_id={after_id}").get_json()["events"]
+
+
+def test_leaderboard_events_team_created_then_bookings_with_ranks(client):
     _create_and_activate_event(client)
-    client.post("/shotcounter/teams", data={"team_name": "Events Team"})
+    client.post("/shotcounter/teams", data={"team_name": "Leader"})
+    client.post("/shotcounter/teams", data={"team_name": "Chaser"})
     with app.app_context():
-        team_id = Team.query.filter_by(name="Events Team").first().id
+        leader_id = Team.query.filter_by(name="Leader").first().id
+        chaser_id = Team.query.filter_by(name="Chaser").first().id
 
-    client.post("/shotcounter/shots", data={"team_id": team_id, "amount": 3})
-    client.post("/shotcounter/shots", data={"team_id": team_id, "amount": 2})
+    client.post("/shotcounter/shots", data={"team_id": leader_id, "amount": 3})
+    client.post("/shotcounter/shots", data={"team_id": chaser_id, "amount": 5})
 
-    events = client.get("/shotcounter/leaderboard/events?after_id=0").get_json()["events"]
-    assert len(events) == 2
-    assert events[0]["first_booking"] is True
-    assert events[0]["amount"] == 3
-    assert events[1]["first_booking"] is False
-    assert events[1]["amount"] == 2
+    events = _showcase_events(client)
+    assert [e["kind"] for e in events] == ["team_created", "team_created", "shots_booked", "shots_booked"]
+    assert events[0]["team_name"] == "Leader"
 
-    # after_id filtert korrekt weitere, bereits gesehene Events raus.
-    later = client.get(f"/shotcounter/leaderboard/events?after_id={events[0]['id']}").get_json()["events"]
-    assert len(later) == 1
-    assert later[0]["id"] == events[1]["id"]
+    leader_booking = events[2]
+    assert leader_booking["amount"] == 3
+    assert leader_booking["total_shots"] == 3
+    # Bei Gleichstand (0:0) entscheidet der Name: "Chaser" < "Leader".
+    assert (leader_booking["rank_before"], leader_booking["rank_after"]) == (2, 1)
+
+    chaser_booking = events[3]
+    assert (chaser_booking["rank_before"], chaser_booking["rank_after"]) == (2, 1)
+
+    # after_id filtert bereits gesehene Events raus.
+    later = _showcase_events(client, after_id=events[2]["id"])
+    assert [e["id"] for e in later] == [events[3]["id"]]
+
+
+def test_imported_team_is_welcomed_once_on_first_card_scan(client):
+    _create_and_activate_event(client)
+    csv_content = "Team,Shots,NFC-UID\nImportiert,0,04D00D01\n"
+    client.post(
+        "/shotcounter/teams/import",
+        data={"teams_file": (BytesIO(csv_content.encode("utf-8")), "teams.csv")},
+        content_type="multipart/form-data",
+    )
+    # Der Import selbst löst keine Animation aus.
+    assert _showcase_events(client) == []
+
+    _nfc_scan(client, "04D00D01")
+    _nfc_scan(client, "04D00D01")
+    events = _showcase_events(client)
+    assert [(e["kind"], e["team_name"]) for e in events] == [("team_arrived", "Importiert")]
+
+
+def test_quick_bind_to_existing_team_welcomes_without_duplicate(client):
+    event = _create_and_activate_event(client)
+    client.post(
+        "/shotcounter/teams/import",
+        data={"teams_file": (BytesIO("Team\nBestehend\n".encode("utf-8")), "teams.csv")},
+        content_type="multipart/form-data",
+    )
+    with app.app_context():
+        team_id = Team.query.filter_by(name="Bestehend").first().id
+
+    resp = client.post(
+        "/shotcounter/nfc/cards",
+        data=json.dumps({"uid": "04E00E01", "team_id": team_id}),
+        content_type="application/json",
+    ).get_json()
+    assert resp["success"] is True
+    assert resp["created"] is False
+
+    # Gleicher Name als "neues Team" eingegeben -> bestehendes Team, kein Duplikat.
+    resp = client.post(
+        "/shotcounter/nfc/cards",
+        data=json.dumps({"uid": "04E00E02", "new_team_name": "Bestehend"}),
+        content_type="application/json",
+    ).get_json()
+    assert resp["created"] is False
+    assert resp["team"]["id"] == team_id
+
+    with app.app_context():
+        assert Team.query.filter_by(event_id=event.id, name="Bestehend").count() == 1
+        assert NfcCard.query.filter_by(team_id=team_id).count() == 2
+
+    assert [e["kind"] for e in _showcase_events(client)] == ["team_arrived"]
+
+
+def test_quick_bind_new_team_reports_team_created(client):
+    _create_and_activate_event(client)
+    resp = client.post(
+        "/shotcounter/nfc/cards",
+        data=json.dumps({"uid": "04F00F01", "new_team_name": "Frisch"}),
+        content_type="application/json",
+    ).get_json()
+    assert resp["created"] is True
+    assert [(e["kind"], e["team_name"]) for e in _showcase_events(client)] == [("team_created", "Frisch")]
+
+
+def test_first_manual_booking_welcomes_unwelcomed_team(client):
+    _create_and_activate_event(client)
+    client.post(
+        "/shotcounter/teams/import",
+        data={"teams_file": (BytesIO("Team\nOhneKarte\n".encode("utf-8")), "teams.csv")},
+        content_type="multipart/form-data",
+    )
+    with app.app_context():
+        team_id = Team.query.filter_by(name="OhneKarte").first().id
+
+    client.post("/shotcounter/shots", data={"team_id": team_id, "amount": 1})
+    client.post("/shotcounter/shots", data={"team_id": team_id, "amount": 1})
+    assert [e["kind"] for e in _showcase_events(client)] == ["team_arrived", "shots_booked", "shots_booked"]
+
+
+def test_teams_json_lists_teams_with_card_count(client):
+    _create_and_activate_event(client)
+    client.post(
+        "/shotcounter/nfc/cards",
+        data=json.dumps({"uid": "04A1A1A1", "new_team_name": "Mit Karte"}),
+        content_type="application/json",
+    )
+    client.post("/shotcounter/teams", data={"team_name": "Ohne Karte"})
+
+    teams = {t["name"]: t for t in client.get("/shotcounter/teams.json").get_json()["teams"]}
+    assert teams["Mit Karte"]["card_count"] == 1
+    assert teams["Ohne Karte"]["card_count"] == 0
 
 
 def test_health_endpoint(client):

@@ -42,7 +42,7 @@ from flask import (
 from flask_migrate import Migrate
 from flask_session import Session
 from flask_sqlalchemy import SQLAlchemy
-from sqlalchemy import event, func, inspect as sqla_inspect, text
+from sqlalchemy import and_, event, func, inspect as sqla_inspect, or_, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import attributes
@@ -202,6 +202,10 @@ class Team(db.Model):
     event_id = db.Column(db.Integer, db.ForeignKey("event.id", ondelete="CASCADE"), nullable=False)
     name = db.Column(db.String(150), nullable=False)
     shots = db.Column(db.Integer, default=0, nullable=False)
+    # Zeitpunkt, an dem das Team auf dem Vollbild-Leaderboard begrüsst wurde
+    # (Erstellung per UI oder erster Kartenscan). NULL = noch nie begrüsst,
+    # z. B. per CSV vorab importierte Teams.
+    welcomed_at = db.Column(db.DateTime)
 
     event = db.relationship("Event", backref=db.backref("teams", cascade="all, delete-orphan"))
 
@@ -309,6 +313,26 @@ class NfcScanEvent(db.Model):
 
     event = db.relationship("Event")
     card = db.relationship("NfcCard")
+
+
+class ShowcaseEvent(db.Model):
+    """Ereignis für die Animationen auf dem Vollbild-Leaderboard.
+
+    kind: team_created | team_arrived | shots_booked
+    """
+
+    id = db.Column(db.Integer, primary_key=True)
+    event_id = db.Column(db.Integer, db.ForeignKey("event.id", ondelete="CASCADE"), nullable=False, index=True)
+    kind = db.Column(db.String(20), nullable=False)
+    team_id = db.Column(db.Integer, db.ForeignKey("team.id", ondelete="SET NULL"), nullable=True)
+    team_name = db.Column(db.String(150))
+    amount = db.Column(db.Integer)
+    total_shots = db.Column(db.Integer)
+    rank_before = db.Column(db.Integer)
+    rank_after = db.Column(db.Integer)
+    created_at = db.Column(db.DateTime, default=utcnow)
+
+    event = db.relationship("Event", backref=db.backref("showcase_events", cascade="all, delete-orphan"))
 
 
 class NfcBridgeStatus(db.Model):
@@ -432,7 +456,7 @@ def ensure_runtime_indexes() -> None:
         raise
 
 
-def _ensure_column(table: str, column: str, ddl_type: str, default_sql: str | None = None) -> None:
+def _ensure_column(table: str, column: str, ddl_type: str, default_sql: str | None = None) -> bool:
     """Fügt eine fehlende Spalte per ALTER TABLE hinzu.
 
     Self-Healing analog zu ensure_runtime_schema(), aber für Spalten statt
@@ -444,14 +468,15 @@ def _ensure_column(table: str, column: str, ddl_type: str, default_sql: str | No
 
     inspector = sqla_inspect(db.engine)
     if not inspector.has_table(table):
-        return  # wird von ensure_runtime_schema() frisch mit allen Spalten angelegt
+        return False  # wird von ensure_runtime_schema() frisch mit allen Spalten angelegt
     existing_columns = {col["name"] for col in inspector.get_columns(table)}
     if column in existing_columns:
-        return
+        return False
     default_clause = f" DEFAULT {default_sql}" if default_sql else ""
     db.session.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {ddl_type}{default_clause}"))
     db.session.commit()
     app.logger.info("Spalte '%s' zu '%s' hinzugefügt (Schema-Selbstheilung).", column, table)
+    return True
 
 
 def ensure_runtime_column_schema() -> None:
@@ -461,6 +486,11 @@ def ensure_runtime_column_schema() -> None:
     try:
         _ensure_column("nfc_card", "last_shot_booked_at", "DATETIME")
         _ensure_column("shot_log", "first_booking", "BOOLEAN", default_sql="0")
+        if _ensure_column("team", "welcomed_at", "DATETIME"):
+            # Teams, die schon Shots haben, sind offensichtlich bereits da -
+            # sonst würden sie nach dem Update mitten im Event nochmals begrüsst.
+            db.session.execute(text("UPDATE team SET welcomed_at = CURRENT_TIMESTAMP WHERE shots > 0"))
+            db.session.commit()
     except Exception as exc:
         db.session.rollback()
         app.logger.error("Schema-Spalten-Selbstheilung fehlgeschlagen: %s", exc)
@@ -3631,6 +3661,32 @@ def _top_teams(event: Event, limit: int, *, hide_zero: bool = False) -> List[Tea
     return query.order_by(Team.shots.desc(), Team.name.asc()).limit(limit).all()
 
 
+def _team_rank(team: Team) -> int:
+    """Platz des Teams in derselben Sortierung wie das Leaderboard (Shots absteigend, dann Name)."""
+
+    ahead = Team.query.filter(
+        Team.event_id == team.event_id,
+        Team.id != team.id,
+        or_(Team.shots > team.shots, and_(Team.shots == team.shots, Team.name < team.name)),
+    ).count()
+    return ahead + 1
+
+
+def _record_showcase(event: Event, kind: str, team: Team, **fields) -> None:
+    """Merkt ein Ereignis für die Vollbild-Animation vor (Commit macht der Aufrufer)."""
+
+    db.session.add(ShowcaseEvent(event_id=event.id, kind=kind, team_id=team.id, team_name=team.name, **fields))
+
+
+def _welcome_team(event: Event, team: Team, kind: str = "team_arrived") -> None:
+    """Begrüsst ein Team genau einmal auf dem Vollbild-Leaderboard."""
+
+    if team.welcomed_at is not None:
+        return
+    team.welcomed_at = utcnow()
+    _record_showcase(event, kind, team, total_shots=team.shots)
+
+
 def _serialize_teams(teams: Iterable[Team]) -> List[Dict[str, int | str]]:
     return [{"id": team.id, "name": team.name, "shots": team.shots} for team in teams]
 
@@ -3690,7 +3746,7 @@ def shotcounter_leaderboard():
     limit = _leaderboard_limit(int(shot_settings["leaderboard_limit"]))
     teams = _top_teams(event, limit, hide_zero=bool(shot_settings["hide_zero_shot_teams"]))
     last_event_id = (
-        db.session.query(func.max(ShotLog.id)).filter(ShotLog.event_id == event.id).scalar() or 0
+        db.session.query(func.max(ShowcaseEvent.id)).filter(ShowcaseEvent.event_id == event.id).scalar() or 0
     )
     return render_template(
         "shotcounter_leaderboard.html",
@@ -3718,15 +3774,14 @@ def shotcounter_leaderboard_data():
 
 @app.route("/shotcounter/leaderboard/events")
 def shotcounter_leaderboard_events():
-    """Liefert neu gebuchte Shots seit `after_id` für Popup-Animationen auf
-    dem Vollbild-Leaderboard (Willkommen bei der ersten Buchung, sonst eine
-    kurze "+N Shots"-Animation)."""
+    """Liefert Ereignisse seit `after_id` für die Animationen auf dem
+    Vollbild-Leaderboard: neues Team, Team zum ersten Mal da, Shots gebucht."""
 
     event = require_active_event(shotcounter=True)
     after_id = request.args.get("after_id", type=int, default=0)
-    logs = (
-        ShotLog.query.filter(ShotLog.event_id == event.id, ShotLog.id > after_id)
-        .order_by(ShotLog.id.asc())
+    entries = (
+        ShowcaseEvent.query.filter(ShowcaseEvent.event_id == event.id, ShowcaseEvent.id > after_id)
+        .order_by(ShowcaseEvent.id.asc())
         .limit(20)
         .all()
     )
@@ -3735,12 +3790,39 @@ def shotcounter_leaderboard_events():
             "success": True,
             "events": [
                 {
-                    "id": log.id,
-                    "team_name": log.team_name,
-                    "amount": log.amount,
-                    "first_booking": bool(log.first_booking),
+                    "id": entry.id,
+                    "kind": entry.kind,
+                    "team_id": entry.team_id,
+                    "team_name": entry.team_name,
+                    "amount": entry.amount,
+                    "total_shots": entry.total_shots,
+                    "rank_before": entry.rank_before,
+                    "rank_after": entry.rank_after,
                 }
-                for log in logs
+                for entry in entries
+            ],
+        }
+    )
+
+
+@app.route("/shotcounter/teams.json")
+def shotcounter_teams_json():
+    """Aktuelle Teamliste für die Teamsuche im NFC-Popup der Touch-Ansicht."""
+
+    event = require_active_event(shotcounter=True)
+    card_counts = dict(
+        db.session.query(NfcCard.team_id, func.count(NfcCard.id))
+        .filter(NfcCard.event_id == event.id)
+        .group_by(NfcCard.team_id)
+        .all()
+    )
+    teams = Team.query.filter_by(event_id=event.id).order_by(Team.name.asc()).all()
+    return jsonify(
+        {
+            "success": True,
+            "teams": [
+                {"id": team.id, "name": team.name, "shots": team.shots, "card_count": card_counts.get(team.id, 0)}
+                for team in teams
             ],
         }
     )
@@ -3763,7 +3845,10 @@ def add_team():
         flash("Team existiert bereits.", "error")
         return redirect(_redirect_target())
 
-    db.session.add(Team(event_id=event.id, name=name, shots=0))
+    team = Team(event_id=event.id, name=name, shots=0)
+    db.session.add(team)
+    db.session.flush()
+    _welcome_team(event, team, kind="team_created")
     db.session.commit()
     app.logger.info("Team hinzugefügt: %s (Event %s)", name, event.name)
     flash("Team hinzugefügt.", "success")
@@ -3790,7 +3875,21 @@ def add_shots():
         return redirect(_redirect_target())
 
     first_booking = team.shots == 0
+    # Wer ohne Karte und ohne vorherige Begrüssung zum ersten Mal bucht,
+    # wird trotzdem noch begrüsst, bevor die Buchungs-Animation läuft.
+    _welcome_team(event, team)
+    rank_before = _team_rank(team)
     team.shots += amount
+    db.session.flush()
+    _record_showcase(
+        event,
+        "shots_booked",
+        team,
+        amount=amount,
+        total_shots=team.shots,
+        rank_before=rank_before,
+        rank_after=_team_rank(team),
+    )
     db.session.commit()
     actor, user_agent = resolve_actor()
     db.session.add(
@@ -3925,29 +4024,35 @@ def _prune_old_nfc_scan_events(event_id: int) -> None:
     db.session.commit()
 
 
-def _get_or_create_team(event: Event, *, team_id: int | None, new_team_name: str | None) -> tuple[Team | None, str | None]:
-    """Löst ein Team für die Kartenverknüpfung auf; legt es bei Bedarf an."""
+def _get_or_create_team(
+    event: Event, *, team_id: int | None, new_team_name: str | None
+) -> tuple[Team | None, str | None, bool]:
+    """Löst ein Team für die Kartenverknüpfung auf; legt es bei Bedarf an.
+
+    Rückgabe: (Team, Fehlermeldung, wurde_neu_angelegt).
+    """
 
     if team_id:
         team = Team.query.filter_by(id=team_id, event_id=event.id).first()
         if not team:
-            return None, "Team nicht gefunden."
-        return team, None
+            return None, "Team nicht gefunden.", False
+        return team, None, False
 
     name = _clean_team_name(new_team_name or "")
     if not name:
-        return None, "Bitte ein Team wählen oder einen neuen Teamnamen angeben."
+        return None, "Bitte ein Team wählen oder einen neuen Teamnamen angeben.", False
 
     is_valid, error = _validate_team_name(name)
     if not is_valid:
-        return None, error
+        return None, error, False
 
     team = Team.query.filter_by(event_id=event.id, name=name).first()
-    if not team:
-        team = Team(event_id=event.id, name=name, shots=0)
-        db.session.add(team)
-        db.session.flush()
-    return team, None
+    if team:
+        return team, None, False
+    team = Team(event_id=event.id, name=name, shots=0)
+    db.session.add(team)
+    db.session.flush()
+    return team, None, True
 
 
 @app.route("/internal/nfc/scan", methods=["POST"])
@@ -3974,7 +4079,7 @@ def internal_nfc_scan():
         .first()
     )
     if program_request:
-        team, error = _get_or_create_team(
+        team, error, _created = _get_or_create_team(
             event, team_id=program_request.team_id, new_team_name=program_request.new_team_name
         )
         if error:
@@ -4001,6 +4106,8 @@ def internal_nfc_scan():
     card = NfcCard.query.filter_by(uid=uid, event_id=event.id).first()
     if card:
         card.last_scanned_at = utcnow()
+        # Erster Scan eines bereits bekannten (z. B. importierten) Teams.
+        _welcome_team(event, card.team)
     db.session.add(NfcScanEvent(event_id=event.id, uid=uid, card_id=card.id if card else None))
     db.session.commit()
     _prune_old_nfc_scan_events(event.id)
@@ -4164,11 +4271,12 @@ def nfc_card_quick_bind():
     if not uid:
         return jsonify({"success": False, "error": "Ungültige UID."}), 400
 
-    team, error = _get_or_create_team(
+    team, error, created = _get_or_create_team(
         event, team_id=payload.get("team_id"), new_team_name=payload.get("new_team_name")
     )
     if error:
         return jsonify({"success": False, "error": error}), 400
+    _welcome_team(event, team, kind="team_created" if created else "team_arrived")
 
     existing = NfcCard.query.filter_by(uid=uid).first()
     now = utcnow()
@@ -4180,7 +4288,9 @@ def nfc_card_quick_bind():
         db.session.add(NfcCard(uid=uid, event_id=event.id, team_id=team.id, last_scanned_at=now))
     db.session.commit()
     app.logger.info("NFC-Karte %s per Schnellverknüpfung mit Team '%s' verbunden (Event %s)", uid, team.name, event.name)
-    return jsonify({"success": True, "team": {"id": team.id, "name": team.name, "shots": team.shots}})
+    return jsonify(
+        {"success": True, "created": created, "team": {"id": team.id, "name": team.name, "shots": team.shots}}
+    )
 
 
 @app.route("/shotcounter/nfc/poll")
@@ -4393,7 +4503,7 @@ def import_teams_csv():
             continue
 
         existing = Team.query.filter_by(event_id=event.id, name=raw_name).first()
-        team, team_error = _get_or_create_team(event, team_id=None, new_team_name=raw_name)
+        team, team_error, _created = _get_or_create_team(event, team_id=None, new_team_name=raw_name)
         if team_error or not team:
             problems.append(f"Zeile {line_no}: {team_error or 'Team konnte nicht angelegt werden.'}")
             continue
