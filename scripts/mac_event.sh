@@ -61,9 +61,17 @@ cleanup() {
   for pid in "${PIDS[@]:-}"; do
     [[ -n "${pid}" ]] && kill "${pid}" 2>/dev/null || true
   done
-  # Bridge sauber stoppen (gibt den Kartenleser frei)
+  # Bridge stoppen (gibt den Kartenleser frei). Hängt sie im PC/SC-Dienst,
+  # reagiert sie nicht auf SIGTERM -> nach 3 s hart beenden, sonst blockiert
+  # eine verwaiste Bridge beim nächsten Start die neue.
   if [[ -f instance/nfc_bridge.pid ]]; then
-    kill "$(cat instance/nfc_bridge.pid)" 2>/dev/null || true
+    bridge_pid="$(cat instance/nfc_bridge.pid)"
+    kill "${bridge_pid}" 2>/dev/null || true
+    for _ in 1 2 3 4 5 6; do
+      kill -0 "${bridge_pid}" 2>/dev/null || break
+      sleep 0.5
+    done
+    kill -9 "${bridge_pid}" 2>/dev/null || true
   fi
   "${APP_ROOT}/scripts/backup_db.sh" >/dev/null 2>&1 && echo "Letztes Backup erstellt." || true
 }

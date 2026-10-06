@@ -36,6 +36,7 @@ import logging
 import os
 import signal
 import sys
+import threading
 import time
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
@@ -74,6 +75,12 @@ HEARTBEAT_INTERVAL = float(os.environ.get("NFC_HEARTBEAT_INTERVAL", "5"))
 # gelesen werden konnte. Kurze Aussetzer (Karte am Rand des Lesefelds,
 # "Card is unresponsive", Leser kurz weg vom USB) lösen so keinen neuen Scan aus.
 REMOVAL_GRACE = float(os.environ.get("NFC_REMOVAL_GRACE", "1.0"))
+# Hängt ein Durchlauf der Lese-Schleife länger als das, beendet sich der
+# Prozess selbst, damit systemd bzw. scripts/mac_event.sh ihn neu startet.
+# Grund: Unter macOS kann SCardConnect im PC/SC-Dienst dauerhaft blockieren -
+# der Prozess lebt dann scheinbar, meldet aber keine Karten mehr und reagiert
+# auch nicht auf SIGTERM (Python-Signalhandler laufen erst nach dem C-Aufruf).
+WATCHDOG_TIMEOUT = float(os.environ.get("NFC_WATCHDOG_TIMEOUT", "15"))
 REQUEST_TIMEOUT = float(os.environ.get("NFC_HTTP_TIMEOUT", "3"))
 
 # Auf jeder Instanz (Entwicklungs-Mac, verschiedene Raspberry-Pis am Event)
@@ -308,8 +315,41 @@ def detect_kernel_driver_conflict() -> str | None:
     )
 
 
+class Watchdog:
+    """Beendet den Prozess, wenn die Lese-Schleife zu lange nicht vorankommt."""
+
+    def __init__(self, timeout: float) -> None:
+        self.timeout = timeout
+        self.last_beat = time.monotonic()
+
+    def beat(self) -> None:
+        self.last_beat = time.monotonic()
+
+    def start(self) -> None:
+        if self.timeout <= 0:
+            return
+        threading.Thread(target=self._run, name="nfc-watchdog", daemon=True).start()
+
+    def _run(self) -> None:
+        while True:
+            time.sleep(1)
+            stalled_for = time.monotonic() - self.last_beat
+            if stalled_for > self.timeout:
+                logger.error(
+                    "Lese-Schleife hängt seit %.0f s (vermutlich im PC/SC-Dienst). "
+                    "Beende die Bridge für einen Neustart.",
+                    stalled_for,
+                )
+                release_single_instance_lock()
+                logging.shutdown()
+                # os._exit statt sys.exit: der Hauptthread steckt in einem C-Aufruf fest.
+                os._exit(3)
+
+
 def main() -> None:
     logger.info("NFC-Bridge gestartet. Ziel-App: %s", BASE_URL)
+    watchdog = Watchdog(WATCHDOG_TIMEOUT)
+    watchdog.start()
 
     presence = CardPresence()
     last_logged_error: str | None = None
@@ -319,6 +359,7 @@ def main() -> None:
     last_selected_reader: str | None = None
 
     while True:
+        watchdog.beat()
         token = _load_token()
         if not token:
             if not last_warned_no_token:

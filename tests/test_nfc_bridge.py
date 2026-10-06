@@ -49,3 +49,28 @@ def test_different_card_is_reported_immediately():
 )
 def test_transient_card_errors_are_recognized(message, transient):
     assert nfc_bridge._is_transient_card_error(Exception(message)) is transient
+
+
+def test_watchdog_exits_when_read_loop_hangs(monkeypatch):
+    exits = []
+
+    def fake_exit(code):
+        exits.append(code)
+        raise SystemExit(code)
+
+    monkeypatch.setattr(nfc_bridge.os, "_exit", fake_exit)
+    monkeypatch.setattr(nfc_bridge, "release_single_instance_lock", lambda: None)
+    monkeypatch.setattr(nfc_bridge.time, "sleep", lambda _seconds: None)
+
+    watchdog = nfc_bridge.Watchdog(timeout=15)
+    watchdog.last_beat = nfc_bridge.time.monotonic() - 20  # Schleife hängt seit 20 s
+    with pytest.raises(SystemExit):
+        watchdog._run()
+    assert exits == [3]
+
+
+def test_watchdog_beat_keeps_process_alive():
+    watchdog = nfc_bridge.Watchdog(timeout=15)
+    watchdog.last_beat = 0
+    watchdog.beat()
+    assert nfc_bridge.time.monotonic() - watchdog.last_beat < 1
