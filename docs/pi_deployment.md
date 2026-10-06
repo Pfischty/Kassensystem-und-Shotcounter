@@ -69,8 +69,9 @@ Voraussetzung: `chromium` oder `chromium-browser` ist installiert.
 ## NFC-Kartenleser (ACR122U) für den Shotcounter
 Der Shotcounter kann Shot-Teams über NFC/RFID-Karten (getestet mit dem ACS ACR122U)
 erkennen: Karten werden im Adminbereich `/shotcounter/nfc` einem Team zugeordnet
-("anlernen") und lösen im Festbetrieb auf `/shotcounter/touch` automatisch ein
-Popup zum Buchen der Shot-Anzahl aus.
+("anlernen") und wählen im Festbetrieb auf `/shotcounter/touch` automatisch das
+Team zum Buchen der Shot-Anzahl aus. Unbekannte Karten lassen sich dort direkt
+einem Team zuweisen oder mit einem neuen Team verknüpfen.
 
 Der Kartenleser wird von einem eigenständigen Hintergrundprozess (`nfc_bridge.py`)
 angesprochen, nicht von der Web-App selbst — so funktioniert das Auslesen

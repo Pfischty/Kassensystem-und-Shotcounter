@@ -259,6 +259,8 @@ class ShotLog(db.Model):
     actor = db.Column(db.String(200))
     user_agent = db.Column(db.String(300))
     first_booking = db.Column(db.Boolean, default=False, nullable=False)
+    # Gesetzt bei einer Gegenbuchung ("rückgängig"): verweist auf die Original-Buchung.
+    undo_of_id = db.Column(db.Integer, db.ForeignKey("shot_log.id", ondelete="SET NULL"), nullable=True)
     created_at = db.Column(db.DateTime, default=utcnow)
 
     event = db.relationship("Event", backref=db.backref("shot_logs", cascade="all, delete-orphan"))
@@ -486,6 +488,7 @@ def ensure_runtime_column_schema() -> None:
     try:
         _ensure_column("nfc_card", "last_shot_booked_at", "DATETIME")
         _ensure_column("shot_log", "first_booking", "BOOLEAN", default_sql="0")
+        _ensure_column("shot_log", "undo_of_id", "INTEGER")
         if _ensure_column("team", "welcomed_at", "DATETIME"):
             # Teams, die schon Shots haben, sind offensichtlich bereits da -
             # sonst würden sie nach dem Update mitten im Event nochmals begrüsst.
@@ -3810,22 +3813,55 @@ def shotcounter_teams_json():
     """Aktuelle Teamliste für die Teamsuche im NFC-Popup der Touch-Ansicht."""
 
     event = require_active_event(shotcounter=True)
-    card_counts = dict(
-        db.session.query(NfcCard.team_id, func.count(NfcCard.id))
-        .filter(NfcCard.event_id == event.id)
-        .group_by(NfcCard.team_id)
-        .all()
-    )
-    teams = Team.query.filter_by(event_id=event.id).order_by(Team.name.asc()).all()
+    cards_by_team: Dict[int, List[Dict[str, object]]] = {}
+    for card in NfcCard.query.filter_by(event_id=event.id).order_by(NfcCard.created_at.asc()).all():
+        cards_by_team.setdefault(card.team_id, []).append({"id": card.id, "uid": card.uid})
+    # Gleiche Sortierung wie das Leaderboard -> Platz = Position in dieser Liste.
+    teams = Team.query.filter_by(event_id=event.id).order_by(Team.shots.desc(), Team.name.asc()).all()
     return jsonify(
         {
             "success": True,
             "teams": [
-                {"id": team.id, "name": team.name, "shots": team.shots, "card_count": card_counts.get(team.id, 0)}
-                for team in teams
+                {
+                    "id": team.id,
+                    "name": team.name,
+                    "shots": team.shots,
+                    "rank": idx + 1,
+                    "card_count": len(cards_by_team.get(team.id, [])),
+                    "cards": cards_by_team.get(team.id, []),
+                }
+                for idx, team in enumerate(teams)
             ],
         }
     )
+
+
+# Wie lange eine Buchung in der Touch-Ansicht rückgängig gemacht werden kann.
+# Der Server lässt etwas mehr Zeit als die Anzeige, damit ein Tippen in der
+# letzten Sekunde trotz Netzwerk-Verzögerung noch durchgeht.
+SHOT_UNDO_SECONDS = 30
+SHOT_UNDO_GRACE_SECONDS = 10
+
+
+def _wants_json() -> bool:
+    """Die Touch-Ansicht schickt Formulare per fetch und erwartet JSON statt Redirect."""
+
+    best = request.accept_mimetypes.best_match(["application/json", "text/html"])
+    return best == "application/json" and request.accept_mimetypes[best] > request.accept_mimetypes["text/html"]
+
+
+def _team_result(ok: bool, message: str, status: int = 200, **data):
+    """Antwort für die Team-Routen: JSON für die Touch-Ansicht, sonst Flash + Redirect."""
+
+    if _wants_json():
+        key = "message" if ok else "error"
+        return jsonify({"success": ok, key: message, **data}), status
+    flash(message, "success" if ok else "error")
+    return redirect(_redirect_target())
+
+
+def _team_payload(team: Team) -> Dict[str, object]:
+    return {"id": team.id, "name": team.name, "shots": team.shots, "rank": _team_rank(team)}
 
 
 @app.route("/shotcounter/teams", methods=["POST"])
@@ -3833,17 +3869,14 @@ def add_team():
     event = require_active_event(shotcounter=True)
     name = _clean_team_name(request.form.get("team_name") or "")
     if not name:
-        flash("Bitte einen Teamnamen angeben.", "error")
-        return redirect(_redirect_target())
+        return _team_result(False, "Bitte einen Teamnamen angeben.", 400)
 
     is_valid, error = _validate_team_name(name)
     if not is_valid:
-        flash(error, "error")
-        return redirect(_redirect_target())
+        return _team_result(False, error, 400)
 
     if Team.query.filter_by(event_id=event.id, name=name).first():
-        flash("Team existiert bereits.", "error")
-        return redirect(_redirect_target())
+        return _team_result(False, "Team existiert bereits.", 409)
 
     team = Team(event_id=event.id, name=name, shots=0)
     db.session.add(team)
@@ -3851,8 +3884,7 @@ def add_team():
     _welcome_team(event, team, kind="team_created")
     db.session.commit()
     app.logger.info("Team hinzugefügt: %s (Event %s)", name, event.name)
-    flash("Team hinzugefügt.", "success")
-    return redirect(_redirect_target())
+    return _team_result(True, "Team hinzugefügt.", team=_team_payload(team))
 
 
 @app.route("/shotcounter/shots", methods=["POST"])
@@ -3862,17 +3894,14 @@ def add_shots():
     amount = request.form.get("amount", type=int, default=1)
 
     if not team_id:
-        flash("Kein Team gewählt.", "error")
-        return redirect(_redirect_target())
+        return _team_result(False, "Kein Team gewählt.", 400)
 
     team = Team.query.filter_by(id=team_id, event_id=event.id).first()
     if not team:
-        flash("Team nicht gefunden.", "error")
-        return redirect(_redirect_target())
+        return _team_result(False, "Team nicht gefunden.", 404)
 
     if amount is None or amount <= 0:
-        flash("Bitte eine gültige Anzahl Shots angeben.", "error")
-        return redirect(_redirect_target())
+        return _team_result(False, "Bitte eine gültige Anzahl Shots angeben.", 400)
 
     first_booking = team.shots == 0
     # Wer ohne Karte und ohne vorherige Begrüssung zum ersten Mal bucht,
@@ -3892,17 +3921,16 @@ def add_shots():
     )
     db.session.commit()
     actor, user_agent = resolve_actor()
-    db.session.add(
-        ShotLog(
-            event_id=event.id,
-            team_id=team.id,
-            team_name=team.name,
-            amount=amount,
-            actor=actor,
-            user_agent=user_agent,
-            first_booking=first_booking,
-        )
+    log = ShotLog(
+        event_id=event.id,
+        team_id=team.id,
+        team_name=team.name,
+        amount=amount,
+        actor=actor,
+        user_agent=user_agent,
+        first_booking=first_booking,
     )
+    db.session.add(log)
     db.session.commit()
     app.logger.info("%s Shots zu Team %s hinzugefügt (Event %s)", amount, team.name, event.name)
 
@@ -3913,8 +3941,53 @@ def add_shots():
             card.last_shot_booked_at = utcnow()
             db.session.commit()
 
-    flash("Shots verbucht.", "success")
-    return redirect(_redirect_target())
+    return _team_result(
+        True,
+        "Shots verbucht.",
+        team=_team_payload(team),
+        booking={"id": log.id, "amount": amount, "undo_seconds": SHOT_UNDO_SECONDS},
+    )
+
+
+@app.route("/shotcounter/shots/<int:log_id>/undo", methods=["POST"])
+def undo_shots(log_id: int):
+    """Macht eine gerade erfolgte Buchung rückgängig (Tippfehler an der Theke).
+
+    Die ursprüngliche Buchung bleibt im Log; es wird eine Gegenbuchung mit
+    negativer Anzahl geschrieben, damit Summen und Export nachvollziehbar bleiben.
+    """
+
+    event = require_active_event(shotcounter=True)
+    log = ShotLog.query.filter_by(id=log_id, event_id=event.id).first()
+    if not log or log.amount <= 0 or log.undo_of_id:
+        return _team_result(False, "Buchung nicht gefunden.", 404)
+    if ShotLog.query.filter_by(undo_of_id=log.id).first():
+        return _team_result(False, "Buchung wurde bereits rückgängig gemacht.", 409)
+    age = (utcnow() - log.created_at).total_seconds() if log.created_at else None
+    if age is None or age > SHOT_UNDO_SECONDS + SHOT_UNDO_GRACE_SECONDS:
+        return _team_result(False, "Zu spät – bitte den Shot-Stand im Team bearbeiten.", 409)
+
+    team = Team.query.filter_by(id=log.team_id, event_id=event.id).first()
+    if not team:
+        return _team_result(False, "Team nicht gefunden.", 404)
+
+    removed = min(log.amount, team.shots)
+    team.shots -= removed
+    actor, user_agent = resolve_actor()
+    db.session.add(
+        ShotLog(
+            event_id=event.id,
+            team_id=team.id,
+            team_name=team.name,
+            amount=-removed,
+            actor=actor,
+            user_agent=user_agent,
+            undo_of_id=log.id,
+        )
+    )
+    db.session.commit()
+    app.logger.info("Buchung %s rückgängig: -%s Shots für Team %s", log.id, removed, team.name)
+    return _team_result(True, f"{removed} Shots zurückgebucht.", team=_team_payload(team))
 
 
 @app.route("/shotcounter/teams/<int:team_id>/update", methods=["POST"])
@@ -3922,8 +3995,7 @@ def update_team(team_id: int):
     event = require_active_event(shotcounter=True)
     team = Team.query.filter_by(id=team_id, event_id=event.id).first()
     if not team:
-        flash("Team nicht gefunden.", "error")
-        return redirect(_redirect_target())
+        return _team_result(False, "Team nicht gefunden.", 404)
 
     new_name = _clean_team_name(request.form.get("team_name") or "")
     new_shots = request.form.get("shots", type=int)
@@ -3931,22 +4003,18 @@ def update_team(team_id: int):
     if new_name:
         is_valid, error = _validate_team_name(new_name)
         if not is_valid:
-            flash(error, "error")
-            return redirect(_redirect_target())
+            return _team_result(False, error, 400)
         if new_name != team.name and Team.query.filter_by(event_id=event.id, name=new_name).first():
-            flash("Teamname bereits vergeben.", "error")
-            return redirect(_redirect_target())
+            return _team_result(False, "Teamname bereits vergeben.", 409)
         team.name = new_name
 
     if new_shots is not None:
         if new_shots < 0:
-            flash("Shots müssen 0 oder höher sein.", "error")
-            return redirect(_redirect_target())
+            return _team_result(False, "Shots müssen 0 oder höher sein.", 400)
         team.shots = new_shots
 
     db.session.commit()
-    flash("Team aktualisiert.", "success")
-    return redirect(_redirect_target())
+    return _team_result(True, "Team aktualisiert.", team=_team_payload(team))
 
 
 @app.route("/shotcounter/teams/<int:team_id>/delete", methods=["POST"])
@@ -3954,13 +4022,11 @@ def delete_team(team_id: int):
     event = require_active_event(shotcounter=True)
     team = Team.query.filter_by(id=team_id, event_id=event.id).first()
     if not team:
-        flash("Team nicht gefunden.", "error")
-        return redirect(_redirect_target())
+        return _team_result(False, "Team nicht gefunden.", 404)
 
     db.session.delete(team)
     db.session.commit()
-    flash("Team gelöscht.", "success")
-    return redirect(_redirect_target())
+    return _team_result(True, "Team gelöscht.")
 
 
 # ---------------------------------------------------------------------------
@@ -4202,15 +4268,19 @@ def nfc_program_start():
     team_id = request.form.get("team_id", type=int)
     new_team_name = _clean_team_name(request.form.get("new_team_name") or "") or None
 
-    if not team_id and not new_team_name:
-        flash("Bitte ein Team wählen oder einen neuen Teamnamen angeben.", "error")
+    def fail(message: str):
+        if _wants_json():
+            return jsonify({"success": False, "error": message}), 400
+        flash(message, "error")
         return redirect(url_for("nfc_cards"))
+
+    if not team_id and not new_team_name:
+        return fail("Bitte ein Team wählen oder einen neuen Teamnamen angeben.")
 
     if new_team_name:
         is_valid, error = _validate_team_name(new_team_name)
         if not is_valid:
-            flash(error, "error")
-            return redirect(url_for("nfc_cards"))
+            return fail(error)
 
     # Nur eine aktive Anlern-Anfrage gleichzeitig.
     NfcProgramRequest.query.filter_by(event_id=event.id, status="pending").update({"status": "cancelled"})
@@ -4264,10 +4334,14 @@ def nfc_card_delete(card_id: int):
     event = require_active_event(shotcounter=True)
     card = NfcCard.query.filter_by(id=card_id, event_id=event.id).first()
     if not card:
+        if _wants_json():
+            return jsonify({"success": False, "error": "Karte nicht gefunden."}), 404
         flash("Karte nicht gefunden.", "error")
         return redirect(url_for("nfc_cards"))
     db.session.delete(card)
     db.session.commit()
+    if _wants_json():
+        return jsonify({"success": True, "message": "Karten-Verknüpfung entfernt."})
     flash("Karten-Verknüpfung entfernt.", "success")
     return redirect(url_for("nfc_cards"))
 
@@ -4308,18 +4382,54 @@ def nfc_card_quick_bind():
     )
 
 
+# Meldet sich die Bridge so lange nicht (Heartbeat alle 5 s), gilt sie als aus.
+NFC_BRIDGE_OFFLINE_AFTER_SECONDS = 15
+
+
+def _nfc_reader_status() -> Dict[str, object]:
+    """Zustand von Bridge und Kartenleser für die Statusanzeige der Touch-Ansicht.
+
+    state: ready (Leser bereit) | no_reader (Bridge läuft, Leser fehlt/Fehler) | offline (Bridge aus)
+    Das Alter wird hier auf dem Server berechnet, damit eine falsch gehende
+    iPad-Uhr den Status nicht verfälscht.
+    """
+
+    status = db.session.get(NfcBridgeStatus, 1)
+    age = None
+    if status and status.last_seen_at:
+        age = max(0, int((utcnow() - status.last_seen_at).total_seconds()))
+
+    if age is None or age > NFC_BRIDGE_OFFLINE_AFTER_SECONDS:
+        state = "offline"
+    elif status.last_error or not status.reader_name:
+        state = "no_reader"
+    else:
+        state = "ready"
+
+    process_running, _pid = nfc_bridge_manager.bridge_status(app.instance_path)
+    return {
+        "state": state,
+        "reader_name": status.reader_name if status else None,
+        "error": status.last_error if status else None,
+        "last_seen_seconds": age,
+        "process_running": process_running,
+        "can_control": nfc_bridge_manager.PSUTIL_AVAILABLE,
+    }
+
+
 @app.route("/shotcounter/nfc/poll")
 def nfc_poll():
-    """Wird von der Touch-Ansicht gepollt, um neu erkannte Karten als Popup anzuzeigen."""
+    """Wird von der Touch-Ansicht gepollt: neu erkannte Karte + Status des Lesers."""
 
     event = require_active_event(shotcounter=True)
+    reader = _nfc_reader_status()
     pending = (
         NfcScanEvent.query.filter_by(event_id=event.id, consumed=False)
         .order_by(NfcScanEvent.id.asc())
         .all()
     )
     if not pending:
-        return jsonify({"success": True, "scan": None})
+        return jsonify({"success": True, "scan": None, "reader": reader})
 
     # Nur die neueste Erkennung ausliefern; ältere, liegengebliebene Scans
     # (z. B. weil die Touch-Ansicht kurz nicht gepollt hat) werden verworfen,
@@ -4340,14 +4450,18 @@ def nfc_poll():
             # für sie gebucht wurde - Popup unterdrücken, statt es sofort
             # wieder aufspringen zu lassen.
             db.session.commit()
-            return jsonify({"success": True, "scan": None})
+            return jsonify({"success": True, "scan": None, "reader": reader})
 
     team_payload = None
     if card:
         team_payload = {"id": card.team.id, "name": card.team.name, "shots": card.team.shots}
     db.session.commit()
     return jsonify(
-        {"success": True, "scan": {"uid": latest.uid, "known": team_payload is not None, "team": team_payload}}
+        {
+            "success": True,
+            "scan": {"uid": latest.uid, "known": team_payload is not None, "team": team_payload},
+            "reader": reader,
+        }
     )
 
 
