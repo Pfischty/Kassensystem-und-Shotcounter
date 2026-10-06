@@ -36,6 +36,7 @@ import logging
 import os
 import signal
 import sys
+import threading
 import time
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
@@ -70,7 +71,16 @@ SECRET_FILE = Path(os.environ.get("NFC_SECRET_FILE", REPO_ROOT / "instance" / "n
 PID_FILE = Path(os.environ.get("NFC_PID_FILE", REPO_ROOT / "instance" / "nfc_bridge.pid"))
 POLL_INTERVAL = float(os.environ.get("NFC_POLL_INTERVAL", "0.5"))
 HEARTBEAT_INTERVAL = float(os.environ.get("NFC_HEARTBEAT_INTERVAL", "5"))
-SCAN_DEBOUNCE = float(os.environ.get("NFC_SCAN_DEBOUNCE", "3"))
+# Eine Karte gilt erst als abgehoben, wenn sie so lange am Stück nicht mehr
+# gelesen werden konnte. Kurze Aussetzer (Karte am Rand des Lesefelds,
+# "Card is unresponsive", Leser kurz weg vom USB) lösen so keinen neuen Scan aus.
+REMOVAL_GRACE = float(os.environ.get("NFC_REMOVAL_GRACE", "1.0"))
+# Hängt ein Durchlauf der Lese-Schleife länger als das, beendet sich der
+# Prozess selbst, damit systemd bzw. scripts/mac_event.sh ihn neu startet.
+# Grund: Unter macOS kann SCardConnect im PC/SC-Dienst dauerhaft blockieren -
+# der Prozess lebt dann scheinbar, meldet aber keine Karten mehr und reagiert
+# auch nicht auf SIGTERM (Python-Signalhandler laufen erst nach dem C-Aufruf).
+WATCHDOG_TIMEOUT = float(os.environ.get("NFC_WATCHDOG_TIMEOUT", "15"))
 REQUEST_TIMEOUT = float(os.environ.get("NFC_HTTP_TIMEOUT", "3"))
 
 # Auf jeder Instanz (Entwicklungs-Mac, verschiedene Raspberry-Pis am Event)
@@ -173,10 +183,9 @@ def _describe_post_error(exc: Exception) -> str:
 
     if isinstance(exc, error.HTTPError) and exc.code == 403:
         return (
-            f"{exc} - Token stimmt nicht mit {SECRET_FILE} überein. "
-            "Die App liest den Token inzwischen bei jeder Anfrage frisch ein, "
-            "das sollte sich also von selbst lösen; bleibt es bestehen, prüfen, "
-            "ob Bridge und App dasselbe instance/-Verzeichnis sehen."
+            f"{exc} - Die App nimmt Scans nur über 127.0.0.1 und mit dem Token aus "
+            f"{SECRET_FILE} an. Ziel-App ist {BASE_URL}: Zeigt das nicht auf 127.0.0.1/localhost, "
+            "NFC_BASE_URL korrigieren; sonst prüfen, ob Bridge und App dasselbe instance/-Verzeichnis sehen."
         )
     return str(exc)
 
@@ -198,6 +207,40 @@ def send_heartbeat(token: str, reader_name: str | None, error_message: str | Non
         )
     except (error.URLError, error.HTTPError, TimeoutError) as exc:
         logger.debug("Heartbeat konnte nicht gemeldet werden: %s", _describe_post_error(exc))
+
+
+class CardPresence:
+    """Merkt sich, welche Karte gerade auf dem Leser liegt.
+
+    Jede Karte wird genau einmal pro Auflegen gemeldet. Als abgehoben gilt
+    sie erst nach REMOVAL_GRACE Sekunden ohne erfolgreichen Lesevorgang.
+    """
+
+    def __init__(self, removal_grace: float = REMOVAL_GRACE) -> None:
+        self.removal_grace = removal_grace
+        self.current_uid: str | None = None
+        self.last_seen_at = 0.0
+
+    def seen(self, uid: str, now: float) -> bool:
+        """Karte gelesen. True, wenn sie neu aufgelegt wurde und gemeldet werden soll."""
+
+        is_new = uid != self.current_uid
+        self.current_uid = uid
+        self.last_seen_at = now
+        return is_new
+
+    def not_seen(self, now: float) -> None:
+        """In diesem Durchlauf keine Karte lesbar (keine Karte, Lesefehler, kein Leser)."""
+
+        if self.current_uid and now - self.last_seen_at >= self.removal_grace:
+            self.current_uid = None
+
+
+def _is_transient_card_error(exc: Exception) -> bool:
+    """Karte nur halb im Feld bzw. gerade abgehoben - normal, kein Grund für eine Warnung."""
+
+    message = str(exc).lower()
+    return "unresponsive" in message or "removed" in message or "no smart card" in message
 
 
 def get_uid(connection) -> str | None:
@@ -272,17 +315,51 @@ def detect_kernel_driver_conflict() -> str | None:
     )
 
 
+class Watchdog:
+    """Beendet den Prozess, wenn die Lese-Schleife zu lange nicht vorankommt."""
+
+    def __init__(self, timeout: float) -> None:
+        self.timeout = timeout
+        self.last_beat = time.monotonic()
+
+    def beat(self) -> None:
+        self.last_beat = time.monotonic()
+
+    def start(self) -> None:
+        if self.timeout <= 0:
+            return
+        threading.Thread(target=self._run, name="nfc-watchdog", daemon=True).start()
+
+    def _run(self) -> None:
+        while True:
+            time.sleep(1)
+            stalled_for = time.monotonic() - self.last_beat
+            if stalled_for > self.timeout:
+                logger.error(
+                    "Lese-Schleife hängt seit %.0f s (vermutlich im PC/SC-Dienst). "
+                    "Beende die Bridge für einen Neustart.",
+                    stalled_for,
+                )
+                release_single_instance_lock()
+                logging.shutdown()
+                # os._exit statt sys.exit: der Hauptthread steckt in einem C-Aufruf fest.
+                os._exit(3)
+
+
 def main() -> None:
     logger.info("NFC-Bridge gestartet. Ziel-App: %s", BASE_URL)
+    watchdog = Watchdog(WATCHDOG_TIMEOUT)
+    watchdog.start()
 
-    last_uid: str | None = None
-    last_scan_at: float = 0.0
+    presence = CardPresence()
+    last_logged_error: str | None = None
     last_heartbeat_at: float = 0.0
     last_warned_no_token = False
     last_warned_no_reader = False
     last_selected_reader: str | None = None
 
     while True:
+        watchdog.beat()
         token = _load_token()
         if not token:
             if not last_warned_no_token:
@@ -324,7 +401,7 @@ def main() -> None:
                     else:
                         logger.warning("Kein PC/SC-Leser gefunden. Ist der ACR122U angeschlossen?")
                     last_warned_no_reader = True
-                last_uid = None
+                presence.not_seen(time.time())
                 last_selected_reader = None
                 if time.time() - last_heartbeat_at > HEARTBEAT_INTERVAL:
                     send_heartbeat(token, None, no_reader_message)
@@ -340,34 +417,38 @@ def main() -> None:
             if reader_name != last_selected_reader:
                 logger.info("Verwende Leser: %s", reader_name)
                 last_selected_reader = reader_name
-                last_uid = None  # neuer/anderer Leser -> Debounce zurücksetzen
 
+            uid = None
             connection = active_reader.createConnection()
             try:
                 connection.connect()
             except NoCardException:
-                last_uid = None  # Karte abgehoben -> nächstes Auflegen löst wieder aus
+                pass
             except CardConnectionException as exc:
-                # z. B. Leser wurde während des Verbindungsaufbaus getrennt,
-                # oder ist exklusiv durch einen anderen Prozess belegt.
-                logger.warning("Verbindung zum Leser fehlgeschlagen: %s", exc)
-                last_uid = None
+                # "unresponsive" = Karte nur halb im Feld -> normal. Alles andere
+                # (Leser getrennt, exklusiv belegt) nur einmal pro Fehlerbild
+                # loggen statt alle 0,5 s.
+                if not _is_transient_card_error(exc) and str(exc) != last_logged_error:
+                    logger.warning("Verbindung zum Leser fehlgeschlagen: %s", exc)
+                    last_logged_error = str(exc)
             else:
                 try:
                     uid = get_uid(connection)
                 except CardConnectionException as exc:
-                    logger.warning("Karte konnte nicht gelesen werden (evtl. abgehoben): %s", exc)
-                    uid = None
-                if uid:
-                    now = time.time()
-                    if uid != last_uid or (now - last_scan_at) > SCAN_DEBOUNCE:
-                        send_scan(uid, token)
-                        last_scan_at = now
-                    last_uid = uid
+                    if not _is_transient_card_error(exc):
+                        logger.warning("Karte konnte nicht gelesen werden: %s", exc)
                 try:
                     connection.disconnect()
                 except CardConnectionException:
                     pass
+
+            now = time.time()
+            if uid:
+                last_logged_error = None
+                if presence.seen(uid, now):
+                    send_scan(uid, token)
+            else:
+                presence.not_seen(now)
 
             if time.time() - last_heartbeat_at > HEARTBEAT_INTERVAL:
                 send_heartbeat(token, reader_name)
@@ -375,7 +456,7 @@ def main() -> None:
 
         except Exception as exc:  # noqa: BLE001 - Event darf wegen Hardware-Hakeln nicht sterben
             logger.error("Unerwarteter Fehler in der Lese-Schleife: %s", exc)
-            last_uid = None
+            presence.not_seen(time.time())
             try:
                 send_heartbeat(token, reader_name, str(exc))
                 last_heartbeat_at = time.time()

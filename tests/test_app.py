@@ -401,6 +401,15 @@ def test_nfc_bridge_process_routes_use_manager(client, monkeypatch):
     assert start_resp["pid"] == 999
     assert "http://" in start_resp["message"]
 
+    # Auch wenn "Bridge starten" über die Netzwerk-IP gedrückt wird (z. B. vom
+    # iPad), muss die Bridge die App über Loopback ansprechen - sonst 403.
+    start_resp = client.post(
+        "/shotcounter/nfc/bridge/start",
+        base_url="http://10.30.30.247:8000",
+        environ_overrides={"SERVER_PORT": "8000"},
+    ).get_json()
+    assert start_resp["message"] == "Gestartet für http://127.0.0.1:8000"
+
     monkeypatch.setattr(
         app_module.nfc_bridge_manager, "stop_bridge", lambda instance_path: (True, "Gestoppt.")
     )

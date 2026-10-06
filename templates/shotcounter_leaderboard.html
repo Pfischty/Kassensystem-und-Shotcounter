@@ -296,10 +296,79 @@
     animation: lb-badge-in 0.6s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
   }
   .lb-rank-badge[hidden] { display: none; }
-  .lb-celebration.tier-mid .lb-celebration-card { transform: scale(1.06); }
+  /* Gewichtung: Strahlen nur bei grossen Momenten (ab 10 Shots, neues Team) */
+  .lb-rays { display: none; }
+  .lb-celebration.with-rays .lb-rays { display: block; }
+
+  /* Klein (< 5 Shots): kompaktes Banner unten, Leaderboard bleibt sichtbar */
+  .lb-celebration.tier-small {
+    align-items: flex-end;
+    padding-bottom: 6vh;
+    background: linear-gradient(to top, rgba(2, 4, 10, 0.88), rgba(2, 4, 10, 0.35) 45%, transparent 75%);
+    backdrop-filter: none;
+  }
+  .lb-celebration.tier-small .lb-celebration-card {
+    padding: 1.1rem 2.8rem 1.3rem;
+    animation: lb-slide-up 0.45s cubic-bezier(0.22, 1, 0.36, 1);
+  }
+  .lb-celebration.tier-small .lb-celebration-kicker { font-size: 1.05rem; margin-bottom: 0.3rem; }
+  .lb-celebration.tier-small .lb-celebration-name { font-size: clamp(2rem, 5vw, 3.4rem); }
+  .lb-celebration.tier-small .lb-booking-row { margin-top: 0.4rem; gap: 1rem; }
+  .lb-celebration.tier-small .lb-glass { width: clamp(42px, 5vw, 60px); }
+  .lb-celebration.tier-small .lb-amount { font-size: clamp(2.6rem, 7vw, 4.4rem); }
+  .lb-celebration.tier-small .lb-celebration-sub { font-size: 1.2rem; margin-top: 0.4rem; }
+  .lb-celebration.tier-small .lb-rank-badge { font-size: 1.2rem; margin-top: 0.6rem; }
+
+  /* Gross (ab 10 Shots): Karte wackelt */
   .lb-celebration.tier-big .lb-celebration-card {
     animation: lb-pop-in 0.6s cubic-bezier(0.34, 1.56, 0.64, 1), lb-shake 0.5s 0.6s ease-in-out 2;
   }
+
+  /* Podest: Medaillenfarbe, Medaille fällt rein, Glanz läuft über die Karte */
+  .lb-celebration.is-booking.podium-1, .lb-celebration.is-booking.podium-1 .lb-celebration-card { --accent: #f5d76e; }
+  .lb-celebration.is-booking.podium-2, .lb-celebration.is-booking.podium-2 .lb-celebration-card { --accent: #e5e7eb; }
+  .lb-celebration.is-booking.podium-3, .lb-celebration.is-booking.podium-3 .lb-celebration-card { --accent: #e0a96d; }
+  .lb-celebration.is-podium .lb-celebration-card {
+    overflow: hidden;
+    border-width: 3px;
+    padding-top: 1.8rem;
+    box-shadow:
+      0 0 120px color-mix(in srgb, var(--accent) 70%, transparent),
+      0 25px 80px rgba(0,0,0,0.6);
+  }
+  .lb-celebration.is-podium .lb-celebration-card::after {
+    content: "";
+    position: absolute;
+    inset: -50%;
+    background: linear-gradient(115deg, transparent 42%, rgba(255,255,255,0.38) 50%, transparent 58%);
+    transform: translateX(-60%);
+    animation: lb-shine 1.4s 0.5s ease-in-out 2;
+    pointer-events: none;
+  }
+  .lb-medal {
+    display: none;
+    font-size: clamp(4.5rem, 11vw, 8rem);
+    line-height: 1;
+    margin-bottom: 0.4rem;
+    filter: drop-shadow(0 0 25px color-mix(in srgb, var(--accent) 80%, transparent));
+  }
+  .lb-celebration.is-podium .lb-medal {
+    display: block;
+    animation: lb-medal-drop 0.9s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+  }
+  .lb-celebration.podium-1 .lb-celebration-name { font-size: clamp(3.4rem, 10vw, 7.5rem); }
+  .lb-celebration.podium-1 .lb-celebration-card {
+    animation: lb-pop-in 0.6s cubic-bezier(0.34, 1.56, 0.64, 1), lb-pulse-glow 1.2s 0.6s ease-in-out 3;
+  }
+  .lb-flash {
+    position: absolute;
+    inset: 0;
+    background: radial-gradient(circle, rgba(255, 244, 200, 0.85), transparent 70%);
+    opacity: 0;
+    pointer-events: none;
+    z-index: 3;
+  }
+  .lb-celebration.podium-1.show .lb-flash { animation: lb-flash 0.9s ease-out; }
   @keyframes lb-fade-in { from { opacity: 0; } to { opacity: 1; } }
   @keyframes lb-fade-out { from { opacity: 1; } to { opacity: 0; } }
   @keyframes lb-spin { to { transform: rotate(360deg); } }
@@ -325,13 +394,36 @@
     0% { opacity: 0; transform: scale(0.4) translateY(10px); }
     100% { opacity: 1; transform: none; }
   }
+  @keyframes lb-slide-up {
+    from { opacity: 0; transform: translateY(60px); }
+    to { opacity: 1; transform: none; }
+  }
+  @keyframes lb-shine {
+    from { transform: translateX(-60%); }
+    to { transform: translateX(60%); }
+  }
+  @keyframes lb-medal-drop {
+    0% { opacity: 0; transform: translateY(-120px) rotate(-25deg) scale(0.6); }
+    70% { opacity: 1; transform: translateY(8px) rotate(6deg) scale(1.08); }
+    100% { opacity: 1; transform: none; }
+  }
+  @keyframes lb-pulse-glow {
+    0%, 100% { box-shadow: 0 0 120px color-mix(in srgb, var(--accent) 70%, transparent), 0 25px 80px rgba(0,0,0,0.6); }
+    50% { box-shadow: 0 0 200px color-mix(in srgb, var(--accent) 95%, transparent), 0 25px 80px rgba(0,0,0,0.6); }
+  }
+  @keyframes lb-flash {
+    0% { opacity: 0; }
+    20% { opacity: 1; }
+    100% { opacity: 0; }
+  }
   @keyframes lb-shake {
     0%, 100% { transform: translateX(0); }
     25% { transform: translateX(-8px) rotate(-1deg); }
     75% { transform: translateX(8px) rotate(1deg); }
   }
   @media (prefers-reduced-motion: reduce) {
-    .lb-rays, .lb-letter, .lb-celebration-card { animation: none !important; opacity: 1; }
+    .lb-rays, .lb-letter, .lb-celebration-card, .lb-medal { animation: none !important; opacity: 1; }
+    .lb-celebration-card::after, .lb-flash { display: none; }
   }
 </style>
 
@@ -346,7 +438,9 @@
 <div class="lb-celebration" id="lb-celebration">
   <div class="lb-rays"></div>
   <canvas class="lb-confetti" id="lb-confetti"></canvas>
+  <div class="lb-flash"></div>
   <div class="lb-celebration-card">
+    <div class="lb-medal" id="lb-medal" aria-hidden="true"></div>
     <p class="lb-celebration-kicker" id="lb-celebration-kicker"></p>
     <p class="lb-celebration-name" id="lb-celebration-name"></p>
     <div class="lb-booking-row">
@@ -452,30 +546,44 @@
     ];
   }
 
-  function burstConfetti(count) {
+  // mode "cannons": zwei Kanonen unten links/rechts; "rain": Regen von oben (Platz 1)
+  function burstConfetti(count, { colors = confettiColors(), mode = "cannons" } = {}) {
     if (reduceMotion) return;
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
     confettiCanvas.width = window.innerWidth * dpr;
     confettiCanvas.height = window.innerHeight * dpr;
     confettiCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    const colors = confettiColors();
     const w = window.innerWidth;
     const h = window.innerHeight;
     for (let i = 0; i < count; i++) {
-      // Zwei Kanonen links und rechts unten, die zur Mitte schiessen.
-      const fromLeft = i % 2 === 0;
-      const angle = (fromLeft ? -60 : -120) + (Math.random() - 0.5) * 40;
-      const speed = 13 + Math.random() * 11;
-      confettiParticles.push({
-        x: fromLeft ? w * 0.08 : w * 0.92,
-        y: h * 0.95,
-        vx: Math.cos((angle * Math.PI) / 180) * speed,
-        vy: Math.sin((angle * Math.PI) / 180) * speed,
+      const base = {
         size: 7 + Math.random() * 8,
         rot: Math.random() * Math.PI,
         vr: (Math.random() - 0.5) * 0.35,
         color: colors[i % colors.length],
         life: 0,
+      };
+      if (mode === "rain") {
+        confettiParticles.push({
+          ...base,
+          x: Math.random() * w,
+          y: -20 - Math.random() * h * 0.6,
+          vx: (Math.random() - 0.5) * 2,
+          vy: 2 + Math.random() * 3,
+          g: 0.06,
+        });
+        continue;
+      }
+      const fromLeft = i % 2 === 0;
+      const angle = (fromLeft ? -60 : -120) + (Math.random() - 0.5) * 40;
+      const speed = 13 + Math.random() * 11;
+      confettiParticles.push({
+        ...base,
+        x: fromLeft ? w * 0.08 : w * 0.92,
+        y: h * 0.95,
+        vx: Math.cos((angle * Math.PI) / 180) * speed,
+        vy: Math.sin((angle * Math.PI) / 180) * speed,
+        g: 0.32,
       });
     }
     if (!confettiRunning) {
@@ -488,10 +596,10 @@
     const w = window.innerWidth;
     const h = window.innerHeight;
     confettiCtx.clearRect(0, 0, w, h);
-    confettiParticles = confettiParticles.filter((p) => p.y < h + 40 && p.life < 360);
+    confettiParticles = confettiParticles.filter((p) => p.y < h + 40 && p.life < 480);
     confettiParticles.forEach((p) => {
       p.life += 1;
-      p.vy += 0.32;
+      p.vy += p.g;
       p.vx *= 0.985;
       p.vy *= 0.985;
       p.x += p.vx;
@@ -523,8 +631,20 @@
   const celebrationSub = document.getElementById("lb-celebration-sub");
   const amountEl = document.getElementById("lb-amount");
   const rankBadge = document.getElementById("lb-rank-badge");
+  const medalEl = document.getElementById("lb-medal");
+  const CELEBRATION_CLASSES = [
+    "is-booking", "tier-small", "tier-mid", "tier-big", "with-rays",
+    "is-podium", "podium-1", "podium-2", "podium-3",
+  ];
+  const PODIUM = {
+    1: { medal: "🥇", kicker: "👑 Neue Nummer 1!", colors: ["#f5d76e", "#d4af37", "#fff3b0", "#f8fafc"] },
+    2: { medal: "🥈", kicker: "Neu auf Platz 2!", colors: ["#e5e7eb", "#c0c0c0", "#94a3b8", "#f8fafc"] },
+    3: { medal: "🥉", kicker: "Neu auf Platz 3!", colors: ["#e0a96d", "#cd7f32", "#f3c99a", "#f8fafc"] },
+  };
+  const HOLD_MEDAL = { 1: "🥇", 2: "🥈", 3: "🥉" };
   let celebrationQueue = [];
   let celebrationBusy = false;
+  const demoMode = new URLSearchParams(window.location.search).has("demo");
 
   function setLetters(name, stepMs) {
     celebrationName.replaceChildren();
@@ -561,50 +681,71 @@
     celebrationBusy = true;
     const evt = celebrationQueue.shift();
     // Stauen sich Ereignisse, laufen die Animationen schneller ab.
-    const speed = celebrationQueue.length >= 2 ? 0.55 : 1;
+    const speed = celebrationQueue.length >= 2 && !demoMode ? 0.55 : 1;
     const isBooking = evt.kind === "shots_booked";
 
-    celebrationEl.classList.remove("is-booking", "tier-mid", "tier-big");
+    celebrationEl.classList.remove(...CELEBRATION_CLASSES);
     celebrationSub.style.animationDelay = "";
     rankBadge.hidden = true;
     rankBadge.classList.remove("visible");
 
     let visibleDuration;
     if (isBooking) {
+      // Gewichtung:
+      //   < 5 Shots   -> kleines Banner unten
+      //   5-9 Shots   -> Karte in der Mitte
+      //   ab 10 Shots -> Karte wackelt, Strahlen, Konfetti
+      //   aufs Podest -> Medaille, Medaillenfarbe, Glanz; Platz 1 zusätzlich Flash + Konfettiregen
       const amount = evt.amount || 1;
+      const climbed = evt.rank_before && evt.rank_after && evt.rank_after < evt.rank_before;
+      const podium = climbed && evt.rank_after <= 3 ? PODIUM[evt.rank_after] : null;
+      let tier = amount >= 10 ? "tier-big" : amount >= 5 ? "tier-mid" : "tier-small";
+      if (podium && tier === "tier-small") tier = "tier-mid"; // Podest nie als kleines Banner
+
       const countMs = Math.round(Math.min(600 + amount * 120, 1800) * speed);
-      celebrationEl.classList.add("is-booking");
-      if (amount >= 10) celebrationEl.classList.add("tier-big");
-      else if (amount >= 5) celebrationEl.classList.add("tier-mid");
+      celebrationEl.classList.add("is-booking", tier);
+      if (amount >= 10) celebrationEl.classList.add("with-rays");
+      if (podium) celebrationEl.classList.add("is-podium", `podium-${evt.rank_after}`);
       celebrationEl.style.setProperty("--count-ms", `${countMs}ms`);
-      celebrationKicker.textContent = "Shots gebucht";
-      setLetters(evt.team_name, 25);
+
+      const holdMedal = !climbed && evt.rank_after <= 3 ? `${HOLD_MEDAL[evt.rank_after]} ` : "";
+      celebrationKicker.textContent = podium ? podium.kicker : `${holdMedal}Shots gebucht`;
+      medalEl.textContent = podium ? podium.medal : "";
+      setLetters(evt.team_name, podium ? 45 : 25);
       amountEl.textContent = "+0";
       celebrationSub.textContent = evt.total_shots != null ? `Total ${evt.total_shots} Shots` : "";
       celebrationSub.style.animationDelay = `${countMs}ms`;
 
-      const climbed = evt.rank_before && evt.rank_after && evt.rank_after < evt.rank_before;
-      if (climbed) {
-        rankBadge.textContent = evt.rank_after === 1 ? "🏆 Neu auf Platz 1!" : `▲ Neu auf Platz ${evt.rank_after}!`;
+      if (climbed && !podium) {
+        rankBadge.textContent = `▲ Neu auf Platz ${evt.rank_after}!`;
         rankBadge.hidden = false;
-        setTimeout(() => {
-          rankBadge.classList.add("visible");
-          if (evt.rank_after <= 3) burstConfetti(evt.rank_after === 1 ? 220 : 140);
-        }, countMs + 150);
+        setTimeout(() => rankBadge.classList.add("visible"), countMs + 150);
       }
       setTimeout(() => countUp(amount, countMs), 250);
-      if (amount >= 10) setTimeout(() => burstConfetti(Math.min(80 + amount * 6, 200)), 250 + countMs);
-      visibleDuration = (climbed ? 5200 : 3800) * speed;
+
+      if (podium) {
+        const isFirst = evt.rank_after === 1;
+        setTimeout(() => burstConfetti(isFirst ? 240 : 150, { colors: podium.colors }), 400);
+        if (isFirst) setTimeout(() => burstConfetti(220, { colors: podium.colors, mode: "rain" }), 900);
+      } else if (amount >= 10) {
+        setTimeout(() => burstConfetti(Math.min(80 + amount * 6, 200)), 250 + countMs);
+      }
+
+      const baseDuration = { "tier-small": 2600, "tier-mid": 3600, "tier-big": 4500 }[tier];
+      const podiumDuration = podium ? (evt.rank_after === 1 ? 6800 : 5600) : 0;
+      visibleDuration = Math.max(baseDuration, podiumDuration, climbed ? 4200 : 0) * speed;
     } else {
       const isNew = evt.kind === "team_created";
+      if (isNew) celebrationEl.classList.add("with-rays");
+      medalEl.textContent = "";
       celebrationKicker.textContent = isNew ? "Neues Team" : "Willkommen";
       const letterStep = 55;
       setLetters(evt.team_name, letterStep);
       celebrationSub.textContent = isNew ? "Neu im Rennen!" : "Ist am Start!";
       const lettersMs = Array.from(evt.team_name || "").length * letterStep + 300;
       celebrationSub.style.animationDelay = `${lettersMs}ms`;
-      setTimeout(() => burstConfetti(180), 200);
-      visibleDuration = Math.max(4500, lettersMs + 2500) * speed;
+      setTimeout(() => burstConfetti(isNew ? 180 : 90), 200);
+      visibleDuration = Math.max(isNew ? 4500 : 3800, lettersMs + 2200) * speed;
     }
 
     celebrationEl.classList.remove("hide");
@@ -637,6 +778,23 @@
       console.error("Leaderboard-Events Refresh fehlgeschlagen", err);
     }
   };
+
+  // Vorschau aller Animationen ohne echte Buchungen: /shotcounter/leaderboard?demo=1
+  if (demoMode) {
+    celebrationQueue.push(
+      { kind: "team_created", team_name: "Demo Neues Team" },
+      { kind: "team_arrived", team_name: "Demo Bekanntes Team" },
+      { kind: "shots_booked", team_name: "Demo Klein", amount: 2, total_shots: 14, rank_before: 9, rank_after: 9 },
+      { kind: "shots_booked", team_name: "Demo Aufsteiger", amount: 3, total_shots: 21, rank_before: 9, rank_after: 6 },
+      { kind: "shots_booked", team_name: "Demo Mittel", amount: 7, total_shots: 30, rank_before: 5, rank_after: 5 },
+      { kind: "shots_booked", team_name: "Demo Gross", amount: 15, total_shots: 48, rank_before: 6, rank_after: 4 },
+      { kind: "shots_booked", team_name: "Demo Bronze", amount: 4, total_shots: 52, rank_before: 4, rank_after: 3 },
+      { kind: "shots_booked", team_name: "Demo Silber", amount: 6, total_shots: 60, rank_before: 3, rank_after: 2 },
+      { kind: "shots_booked", team_name: "Demo Leader", amount: 3, total_shots: 70, rank_before: 1, rank_after: 1 },
+      { kind: "shots_booked", team_name: "Demo Neue Nummer 1", amount: 12, total_shots: 82, rank_before: 2, rank_after: 1 },
+    );
+    showNextCelebration();
+  }
 
   fetchNewEvents();
   setInterval(fetchNewEvents, 1500);

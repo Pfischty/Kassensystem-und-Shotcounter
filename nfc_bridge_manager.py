@@ -78,10 +78,9 @@ def bridge_status(instance_path: str) -> tuple[bool, int | None]:
 def start_bridge(instance_path: str, base_url: str) -> tuple[bool, str, int | None]:
     """Startet nfc_bridge.py als eigenständigen Kindprozess.
 
-    `base_url` wird typischerweise aus der eingehenden HTTP-Anfrage
-    übernommen (`request.host_url`), damit die Bridge automatisch denselben
-    Host/Port anspricht, unter dem die Web-App gerade erreichbar ist — ohne
-    dass man Umgebungsvariablen von Hand setzen muss.
+    `base_url` ist die Loopback-Adresse der laufenden Web-App
+    (http://127.0.0.1:<Port>), damit man keine Umgebungsvariablen von Hand
+    setzen muss. Die App nimmt Scans nur von 127.0.0.1 an.
     """
 
     if not PSUTIL_AVAILABLE:

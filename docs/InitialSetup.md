@@ -69,8 +69,9 @@ eingebaut (kein `pcscd` nötig); unter Linux siehe
    aktiviert lassen) → aktivieren.
 3. NFC-Bridge starten — **kein zweites Terminal nötig**: `/shotcounter/nfc`
    öffnen und im Kasten "NFC-Bridge-Prozess" auf "Bridge starten" klicken.
-   Das startet `nfc_bridge.py` im Hintergrund und zeigt ihm automatisch den
-   richtigen Host/Port (den der Browser gerade benutzt) — ganz ohne
+   Das startet `nfc_bridge.py` im Hintergrund und verbindet es automatisch
+   über `127.0.0.1` mit dem Port der laufenden App — egal, ob der Button am
+   Rechner selbst oder z. B. auf dem iPad gedrückt wird, und ohne
    `NFC_BASE_URL` von Hand zu setzen. Funktioniert plattformunabhängig
    (macOS/Linux/Windows), da die Prozesssteuerung über `psutil` läuft statt
    über systemd. Der Punkt daneben wird grün, sobald die Bridge läuft;
@@ -92,6 +93,30 @@ ist ausdrücklich für genau diesen lokalen Testfall gedacht; im Dauerbetrieb
 auf dem Pi bleibt der systemd-Dienst (`pi_manage.sh write-nfc`) die
 empfohlene Lösung, da er unabhängig vom Browser läuft und bei einem Absturz
 automatisch neu startet.
+
+## Eventbetrieb auf einem Mac (Ersatz für den Pi)
+
+Fällt der Raspberry Pi aus, kann ein Mac den Betrieb übernehmen:
+
+```bash
+./scripts/mac_event.sh
+```
+
+Das Script startet die App mit gunicorn auf Port 8000, die NFC-Bridge (mit
+Neustart nach Absturz), ein Datenbank-Backup alle 10 Minuten nach
+`instance/backups/` und hält den Mac wach. Beim Start zeigt es die Adressen
+für iPad, Leaderboard und Kasse an (`http://<mac-name>.local:8000/...`).
+Ctrl+C beendet alles und macht ein letztes Backup.
+
+- Mac am Netzteil lassen; mit zugeklapptem Deckel schläft ein MacBook ohne
+  externen Bildschirm trotzdem ein.
+- iPad und Leaderboard-Bildschirm müssen im selben Netz sein. Fragt macOS, ob
+  Python eingehende Verbindungen annehmen darf: "Erlauben".
+- Beim ersten Start wird `instance/mac_event.env` mit einem `SECRET_KEY`
+  angelegt; dort lassen sich auch `ADMIN_USERNAME`/`ADMIN_PASSWORD` setzen.
+- Optionen: `PORT=8001`, `BACKUP_INTERVAL_MIN=5`, `NFC=0` (ohne Kartenleser).
+- Kartenleser direkt oder über einen USB-Hub mit eigenem Netzteil anschliessen;
+  billige USB-C-Adapter sind die häufigste Ursache für Leser-Aussetzer.
 
 ## Raspberry-Pi-Grundsetup
 
