@@ -1882,6 +1882,10 @@ document.addEventListener('click', (e) => {
       if (autoReloadCheckbox && snapshot.shared_settings) {
         autoReloadCheckbox.checked = snapshot.shared_settings.auto_reload_on_add !== false; // default to true
       }
+      const terminalPaymentCheckbox = form.querySelector('input[name="show_terminal_payment"]');
+      if (terminalPaymentCheckbox && snapshot.shared_settings) {
+        terminalPaymentCheckbox.checked = snapshot.shared_settings.show_terminal_payment !== false; // default to true
+      }
 
       const productEditor = form.querySelector("[data-product-editor]");
       const kassInput = form.querySelector('input[name="kassensystem_settings"]');
@@ -2062,6 +2066,10 @@ document.addEventListener('click', (e) => {
         const autoReloadCheckbox = form.querySelector('input[name="auto_reload_on_add"]');
         if (autoReloadCheckbox) {
           currentSettings.auto_reload_on_add = autoReloadCheckbox.checked;
+        }
+        const terminalPaymentCheckbox = form.querySelector('input[name="show_terminal_payment"]');
+        if (terminalPaymentCheckbox) {
+          currentSettings.show_terminal_payment = terminalPaymentCheckbox.checked;
         }
 
         if (priceSettingsWrapper && priceSettingsWrapper.priceSettingsApi) {

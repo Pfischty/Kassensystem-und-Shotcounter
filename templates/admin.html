@@ -356,6 +356,8 @@
       </div>
       <div class="field-inline" style="margin: 0.6rem 0;">
         <label><input type="checkbox" name="auto_reload_on_add" data-shared-setting> Auto-Reload beim Hinzufügen (Kasse)</label>
+        <input type="hidden" name="show_terminal_payment_present" value="1">
+        <label><input type="checkbox" name="show_terminal_payment" checked data-shared-setting> Kartenzahlung (SumUp) in der Kasse anzeigen</label>
       </div>
       <div class="muted" style="margin-bottom: 0.6rem;">Wenn deaktiviert, wird die Kasse nicht neu geladen beim Hinzufügen von Artikeln (performanter).</div>
       {% if events %}

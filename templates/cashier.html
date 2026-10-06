@@ -332,7 +332,7 @@
         <div class="summary-actions-header">
           <div class="event-controls">
             <div class="event-name">{{ event.name }}</div>
-            {% if sumup_configured %}
+            {% if sumup_configured and show_terminal_payment %}
               <span id="terminal-header-title" class="event-terminal">
                 {% if assigned_terminal %}
                   Terminal: {{ assigned_terminal.name }}
@@ -352,6 +352,7 @@
             {% endif %}
           </div>
         </div>
+        {% if show_terminal_payment %}
         <div class="terminal-panel">
           {% if not sumup_configured %}
             <div class="hint">SumUp Zugangsdaten fehlen. Bitte im Adminbereich hinterlegen.</div>
@@ -362,6 +363,7 @@
             <div id="terminal-payment-status" class="terminal-status">Bereit.</div>
           {% endif %}
         </div>
+        {% endif %}
         <a href="{{ url_for('remove_last') }}" id="remove-last-link"><button class="secondary">Letzter Artikel löschen</button></a>
         <a href="{{ url_for('checkout') }}"><button class="checkout-btn">Bestellung abschliessen</button></a>
       </div>
@@ -400,7 +402,7 @@
   </div>
 </div>
 
-{% if sumup_configured %}
+{% if sumup_configured and show_terminal_payment %}
   <div class="dialog-backdrop" id="terminal-binding-dialog" aria-hidden="true">
     <div class="dialog-card" role="dialog" aria-modal="true" aria-labelledby="terminal-binding-title">
       <div class="dialog-header">

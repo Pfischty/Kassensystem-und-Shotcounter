@@ -1290,8 +1290,13 @@ def validate_price_list_settings(raw: dict | None) -> Dict[str, int | float | st
 
 def validate_shared_settings(raw: dict | None) -> Dict:
     base = raw if isinstance(raw, dict) else {}
-    sanitized = {k: v for k, v in base.items() if k not in {"auto_reload_on_add", "price_list"}}
+    sanitized = {
+        k: v for k, v in base.items() if k not in {"auto_reload_on_add", "show_terminal_payment", "price_list"}
+    }
     sanitized["auto_reload_on_add"] = bool(base.get("auto_reload_on_add", True))
+    # Kartenzahlung (SumUp) in der Kasse anzeigen; aus = Block "Zahlung starten"
+    # und Terminal-Angaben werden für dieses Event ausgeblendet.
+    sanitized["show_terminal_payment"] = bool(base.get("show_terminal_payment", True))
     sanitized["price_list"] = validate_price_list_settings(base.get("price_list"))
     return sanitized
 
@@ -1942,6 +1947,9 @@ def create_event():
             shared_settings["auto_reload_on_add"] = bool(request.form.get("auto_reload_on_add"))
         else:
             shared_settings["auto_reload_on_add"] = False
+        # Fehlt das Feld im Formular (ältere Clients), bleibt die Kartenzahlung sichtbar.
+        if "show_terminal_payment_present" in request.form:
+            shared_settings["show_terminal_payment"] = bool(request.form.get("show_terminal_payment"))
 
         shared_settings = validate_shared_settings(shared_settings)
         
@@ -1979,6 +1987,8 @@ def update_event(event_id: int):
     try:
         event.shared_settings = parse_json_field(request.form.get("shared_settings"))
         event.shared_settings["auto_reload_on_add"] = bool(request.form.get("auto_reload_on_add"))
+        if "show_terminal_payment_present" in request.form:
+            event.shared_settings["show_terminal_payment"] = bool(request.form.get("show_terminal_payment"))
         event.shared_settings = validate_shared_settings(event.shared_settings)
         
         event.kassensystem_settings = validate_and_normalize_buttons(
@@ -3427,6 +3437,9 @@ def cashier():
     
     # Get auto_reload setting from shared_settings (default to True for backward compatibility)
     auto_reload = event.shared_settings.get("auto_reload_on_add", True) if event.shared_settings else True
+    show_terminal_payment = (
+        event.shared_settings.get("show_terminal_payment", True) if event.shared_settings else True
+    )
     
     return render_template(
         "cashier.html", 
@@ -3438,6 +3451,7 @@ def cashier():
         cashier_font_size=float(price_settings.get("cashier_font_size", 1.0)),
         event=event,
         auto_reload=auto_reload,
+        show_terminal_payment=show_terminal_payment,
         assigned_terminal=assigned_terminal,
         inactive_terminal=inactive_terminal,
         available_terminals=available_terminals,
