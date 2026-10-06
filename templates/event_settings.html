@@ -216,6 +216,11 @@
 
       <div class="stack" style="margin: 0.8rem 0;">
         <strong>SumUp Terminal-Zuordnung</strong>
+      <div class="field-inline" style="margin: 0.4rem 0;">
+        <input type="hidden" name="show_terminal_payment_present" value="1">
+        <label><input type="checkbox" name="show_terminal_payment" {% if not event.shared_settings or event.shared_settings.get('show_terminal_payment', True) %}checked{% endif %} data-shared-setting> Kartenzahlung (SumUp) in der Kasse anzeigen</label>
+      </div>
+      <div class="muted" style="margin-bottom: 0.4rem;">Wenn deaktiviert, blendet die Kasse den Block „Zahlung starten“ und die Terminal-Angaben für dieses Event aus.</div>
         <div class="muted">Festes Terminal für diese Kasse. Wenn kein Terminal zugeordnet ist, kann in der Kasse ein freies Terminal gewählt werden.</div>
         <select name="assigned_terminal_id">
           <option value="">Kein Terminal</option>

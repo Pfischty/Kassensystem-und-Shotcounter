@@ -2093,3 +2093,46 @@ def test_nfc_card_delete_answers_with_json(client):
     assert resp.get_json()["success"] is True
     with app.app_context():
         assert NfcCard.query.count() == 0
+
+
+def test_terminal_payment_block_can_be_hidden_per_event(client):
+    event = _create_and_activate_event(client)
+    with app.app_context():
+        assert db.session.get(Event, event.id).shared_settings.get("show_terminal_payment") is True
+
+    # Standard: Kasse zeigt den Kartenzahlungs-Block.
+    assert 'class="terminal-panel"' in client.get("/cashier").get_data(as_text=True)
+
+    # Event-Einstellungen: Schalter abgewählt (Checkbox fehlt, Marker-Feld ist da).
+    client.post(
+        f"/admin/events/{event.id}/update",
+        data={"kassensystem_enabled": "on", "shotcounter_enabled": "on", "show_terminal_payment_present": "1"},
+    )
+    with app.app_context():
+        assert db.session.get(Event, event.id).shared_settings.get("show_terminal_payment") is False
+
+    html = client.get("/cashier").get_data(as_text=True)
+    assert 'class="terminal-panel"' not in html
+    assert 'id="terminal-pay-btn"' not in html
+    assert 'id="terminal-header-title"' not in html
+
+    # Wieder einschalten.
+    client.post(
+        f"/admin/events/{event.id}/update",
+        data={
+            "kassensystem_enabled": "on",
+            "shotcounter_enabled": "on",
+            "show_terminal_payment_present": "1",
+            "show_terminal_payment": "on",
+        },
+    )
+    assert 'class="terminal-panel"' in client.get("/cashier").get_data(as_text=True)
+
+
+def test_terminal_payment_stays_visible_when_form_lacks_the_field(client):
+    """Ältere Formulare ohne das neue Feld dürfen die Kartenzahlung nicht abschalten."""
+
+    event = _create_and_activate_event(client)
+    client.post(f"/admin/events/{event.id}/update", data={"kassensystem_enabled": "on"})
+    with app.app_context():
+        assert db.session.get(Event, event.id).shared_settings.get("show_terminal_payment") is True
