@@ -2832,6 +2832,42 @@ def api_terminals():
     )
 
 
+@app.route("/api/terminals/<int:terminal_id>/status")
+def api_terminal_connection_status(terminal_id: int):
+    """Report whether the physical card reader is currently reachable/online.
+
+    This is distinct from a payment's status: a cashier previously had no way to
+    tell, before even starting a payment, whether the terminal itself is switched
+    on and connected - that connectivity check only existed in the password
+    protected admin area. Exposing a read-only version here lets the cashier UI show
+    it at a glance.
+    """
+
+    require_active_event(kassensystem=True)
+    terminal = Terminal.query.filter_by(id=terminal_id).first_or_404()
+
+    try:
+        client = _sumup_client()
+        response = client.get_reader_status(terminal.sumup_device_id)
+    except SumUpClientError as exc:
+        payload = _sumup_error_payload(exc, context="terminal_status")
+        payload["online"] = False
+        return jsonify(payload), _sumup_http_status_for_error(exc)
+
+    data = response.get("data") if isinstance(response.get("data"), dict) else {}
+    device_status = (data.get("status") or "").strip().upper()
+    device_state = (data.get("state") or "").strip().upper()
+
+    return jsonify(
+        {
+            "success": True,
+            "online": device_status == "ONLINE",
+            "status": device_status or "UNKNOWN",
+            "state": device_state or "UNKNOWN",
+        }
+    )
+
+
 @app.route("/api/terminals/<int:terminal_id>/active-payment")
 def api_terminal_active_payment(terminal_id: int):
     """Report the current pending payment (if any) for a terminal.

@@ -201,6 +201,26 @@
   .terminal-status.success { color: #22c55e; }
   .terminal-status.error { color: #f87171; }
   .terminal-status.clickable { cursor: pointer; text-decoration: underline dotted; }
+  .terminal-connection-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    font-size: 0.8em;
+    margin-left: 0.5rem;
+    color: #94a3b8;
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+  .terminal-connection-badge::before {
+    content: "";
+    width: 0.5rem;
+    height: 0.5rem;
+    border-radius: 50%;
+    background: currentColor;
+    display: inline-block;
+  }
+  .terminal-connection-badge.online { color: #22c55e; }
+  .terminal-connection-badge.offline { color: #f87171; }
   .products-card { flex:0 0 auto; display:flex; flex-direction:column; justify-content:flex-end; }
   .dialog-backdrop {
     position: fixed;
@@ -345,6 +365,7 @@
                   Terminal: nicht gesetzt
                 {% endif %}
               </span>
+              <span id="terminal-connection-badge" class="terminal-connection-badge" title="Terminal-Status wird geprüft …">Prüfe …</span>
               <button id="terminal-settings-btn" class="icon-button" type="button" aria-label="Kartengeraet-Bindung oeffnen" title="Kartengeraet-Bindung">
                 <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
                   <path d="M12 8.75a3.25 3.25 0 1 0 0 6.5 3.25 3.25 0 0 0 0-6.5Zm8.25 3.25a.8.8 0 0 0 .75-.8.8.8 0 0 0-.75-.8l-1.1-.17a7.32 7.32 0 0 0-.48-1.14l.66-.9a.8.8 0 0 0-.08-1.1.8.8 0 0 0-1.1-.08l-.9.66a7.32 7.32 0 0 0-1.14-.48l-.17-1.1a.8.8 0 0 0-.8-.75.8.8 0 0 0-.8.75l-.17 1.1a7.32 7.32 0 0 0-1.14.48l-.9-.66a.8.8 0 0 0-1.1.08.8.8 0 0 0-.08 1.1l.66.9c-.2.36-.36.74-.48 1.14l-1.1.17a.8.8 0 0 0-.75.8.8.8 0 0 0 .75.8l1.1.17c.12.4.28.78.48 1.14l-.66.9a.8.8 0 0 0 .08 1.1.8.8 0 0 0 1.1.08l.9-.66c.36.2.74.36 1.14.48l.17 1.1a.8.8 0 0 0 .8.75.8.8 0 0 0 .8-.75l.17-1.1c.4-.12.78-.28 1.14-.48l.9.66a.8.8 0 0 0 1.1-.08.8.8 0 0 0 .08-1.1l-.66-.9c.2-.36.36-.74.48-1.14l1.1-.17Z" fill="currentColor"/>
@@ -596,6 +617,7 @@
   const terminalStatus = document.getElementById('terminal-payment-status');
   const terminalPanelTitle = document.getElementById('terminal-panel-title');
   const terminalHeaderTitle = document.getElementById('terminal-header-title');
+  const terminalConnectionBadge = document.getElementById('terminal-connection-badge');
   const terminalSettingsBtn = document.getElementById('terminal-settings-btn');
   const terminalBindingDialog = document.getElementById('terminal-binding-dialog');
   const terminalBindingSelect = document.getElementById('terminal-binding-select');
@@ -640,6 +662,8 @@
   // terminal - only a sustained failure should.
   let pollFailureCount = 0;
   const MAX_CONSECUTIVE_POLL_FAILURES = 5;
+  let terminalConnectionPoller = null;
+  const TERMINAL_CONNECTION_POLL_INTERVAL_MS = 25000;
   let paymentContext = {
     status: 'draft',
     terminalName: '',
@@ -683,6 +707,60 @@
     updateTerminalTitle(terminalName || '', '');
     updateTerminalPayState();
     resumeActivePaymentIfAny(terminalId);
+    startTerminalConnectionPolling(terminalId);
+  }
+
+  function setTerminalConnectionBadge(state, label, title) {
+    if (!terminalConnectionBadge) return;
+    terminalConnectionBadge.classList.remove('online', 'offline');
+    if (state) {
+      terminalConnectionBadge.classList.add(state);
+    }
+    terminalConnectionBadge.textContent = label;
+    terminalConnectionBadge.title = title || label;
+  }
+
+  async function refreshTerminalConnectionStatus(terminalId) {
+    if (!terminalId || !terminalConnectionBadge) {
+      return;
+    }
+    try {
+      const response = await fetch(`/api/terminals/${terminalId}/status`);
+      const data = await response.json();
+      if (!data.success) {
+        setTerminalConnectionBadge('offline', 'Offline', data.error || 'Terminal nicht erreichbar.');
+        return;
+      }
+      if (data.online) {
+        const busy = data.state === 'BUSY';
+        setTerminalConnectionBadge('online', busy ? 'Beschäftigt' : 'Online', `Terminal online (${data.state || 'IDLE'}).`);
+      } else {
+        setTerminalConnectionBadge('offline', 'Offline', `Terminal-Status: ${data.status || 'unbekannt'}.`);
+      }
+    } catch (error) {
+      console.error('Terminal-Status-Fehler:', error);
+      setTerminalConnectionBadge('offline', 'Nicht erreichbar', 'Terminal-Status konnte nicht geladen werden.');
+    }
+  }
+
+  function startTerminalConnectionPolling(terminalId) {
+    if (terminalConnectionPoller) {
+      clearInterval(terminalConnectionPoller);
+      terminalConnectionPoller = null;
+    }
+    if (!terminalConnectionBadge) {
+      return;
+    }
+    if (!terminalId) {
+      setTerminalConnectionBadge('', '', '');
+      return;
+    }
+    setTerminalConnectionBadge('', 'Prüfe …', 'Terminal-Status wird geprüft …');
+    refreshTerminalConnectionStatus(terminalId);
+    terminalConnectionPoller = setInterval(
+      () => refreshTerminalConnectionStatus(terminalId),
+      TERMINAL_CONNECTION_POLL_INTERVAL_MS
+    );
   }
 
   async function resumeActivePaymentIfAny(terminalId) {
@@ -737,6 +815,7 @@
       updateTerminalTitle('', '');
     }
     updateTerminalPayState();
+    startTerminalConnectionPolling(null);
   }
 
   function openBindingDialog() {

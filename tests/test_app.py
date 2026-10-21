@@ -2183,6 +2183,80 @@ def test_watchdog_skips_freshly_created_pending_payments(client, monkeypatch):
         assert refreshed.status == "pending"
 
 
+def test_terminal_status_reports_online(client, monkeypatch):
+    _create_and_activate_event(client)
+    with app.app_context():
+        terminal = Terminal(name="Reader Status Online", sumup_device_id="rdr_STATUS_ONLINE", active=True)
+        db.session.add(terminal)
+        db.session.commit()
+        terminal_id = terminal.id
+
+    class FakeClient:
+        def get_reader_status(self, _device_id):
+            return {"data": {"status": "ONLINE", "state": "IDLE"}}
+
+    monkeypatch.setattr(app_module, "_sumup_client", lambda: FakeClient())
+
+    response = client.get(f"/api/terminals/{terminal_id}/status")
+    assert response.status_code == 200
+    data = response.get_json()
+    assert data["success"] is True
+    assert data["online"] is True
+    assert data["status"] == "ONLINE"
+    assert data["state"] == "IDLE"
+
+
+def test_terminal_status_reports_offline_without_crashing(client, monkeypatch):
+    """A device that is switched off or unreachable should be reported as a clean
+    "not online" result, not surfaced as an unhandled error - the whole point of this
+    endpoint is to tell the cashier that at a glance."""
+
+    _create_and_activate_event(client)
+    with app.app_context():
+        terminal = Terminal(name="Reader Status Offline", sumup_device_id="rdr_STATUS_OFFLINE", active=True)
+        db.session.add(terminal)
+        db.session.commit()
+        terminal_id = terminal.id
+
+    class FakeClient:
+        def get_reader_status(self, _device_id):
+            return {"data": {"status": "OFFLINE", "state": "UNKNOWN"}}
+
+    monkeypatch.setattr(app_module, "_sumup_client", lambda: FakeClient())
+
+    response = client.get(f"/api/terminals/{terminal_id}/status")
+    assert response.status_code == 200
+    data = response.get_json()
+    assert data["success"] is True
+    assert data["online"] is False
+    assert data["status"] == "OFFLINE"
+
+
+def test_terminal_status_maps_client_error(client, monkeypatch):
+    _create_and_activate_event(client)
+    with app.app_context():
+        terminal = Terminal(name="Reader Status Error", sumup_device_id="rdr_STATUS_ERROR", active=True)
+        db.session.add(terminal)
+        db.session.commit()
+        terminal_id = terminal.id
+
+    class FakeClient:
+        def get_reader_status(self, _device_id):
+            raise SumUpClientError(
+                "SumUp API Fehler (404): Resource not found",
+                status_code=404,
+                error_type="http",
+            )
+
+    monkeypatch.setattr(app_module, "_sumup_client", lambda: FakeClient())
+
+    response = client.get(f"/api/terminals/{terminal_id}/status")
+    assert response.status_code == 502
+    data = response.get_json()
+    assert data["success"] is False
+    assert data["online"] is False
+
+
 def test_active_payment_lookup_returns_none_without_pending_payment(client):
     """The GUI resume-after-reload flow relies on this returning a clean "nothing
     active" answer when the terminal genuinely has no pending payment."""
