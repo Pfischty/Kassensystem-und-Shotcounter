@@ -43,9 +43,9 @@ from pathlib import Path
 from urllib import error, request
 
 try:
+    from smartcard import scard
     from smartcard.Exceptions import CardConnectionException, NoCardException
-    from smartcard.pcsc.PCSCExceptions import EstablishContextException, ListReadersException
-    from smartcard.System import readers
+    from smartcard.pcsc.PCSCReader import PCSCReader
     from smartcard.util import toHexString
 except ImportError:  # pragma: no cover - klare Fehlermeldung statt Traceback
     print(
@@ -69,7 +69,6 @@ GET_UID_APDU = [0xFF, 0xCA, 0x00, 0x00, 0x00]
 BASE_URL = os.environ.get("NFC_BASE_URL", "http://127.0.0.1:8000").rstrip("/")
 SECRET_FILE = Path(os.environ.get("NFC_SECRET_FILE", REPO_ROOT / "instance" / "nfc_secret.txt"))
 PID_FILE = Path(os.environ.get("NFC_PID_FILE", REPO_ROOT / "instance" / "nfc_bridge.pid"))
-POLL_INTERVAL = float(os.environ.get("NFC_POLL_INTERVAL", "0.5"))
 HEARTBEAT_INTERVAL = float(os.environ.get("NFC_HEARTBEAT_INTERVAL", "5"))
 # Eine Karte gilt erst als abgehoben, wenn sie so lange am Stück nicht mehr
 # gelesen werden konnte. Kurze Aussetzer (Karte am Rand des Lesefelds,
@@ -82,6 +81,9 @@ REMOVAL_GRACE = float(os.environ.get("NFC_REMOVAL_GRACE", "1.0"))
 # auch nicht auf SIGTERM (Python-Signalhandler laufen erst nach dem C-Aufruf).
 WATCHDOG_TIMEOUT = float(os.environ.get("NFC_WATCHDOG_TIMEOUT", "15"))
 REQUEST_TIMEOUT = float(os.environ.get("NFC_HTTP_TIMEOUT", "3"))
+# So lange wartet die Bridge pro Durchlauf auf eine Meldung des Kartendienstes
+# ("Karte aufgelegt/abgehoben"), bevor sie Heartbeat & Co. erledigt.
+STATUS_WAIT_MS = int(os.environ.get("NFC_STATUS_WAIT_MS", "500"))
 
 # Auf jeder Instanz (Entwicklungs-Mac, verschiedene Raspberry-Pis am Event)
 # wird der Leser nicht über einen festen USB-Pfad angesprochen, sondern über
@@ -235,6 +237,49 @@ class CardPresence:
         if self.current_uid and now - self.last_seen_at >= self.removal_grace:
             self.current_uid = None
 
+    def touch(self, now: float) -> None:
+        """Die bereits gelesene Karte liegt weiterhin auf (ohne erneut zu lesen)."""
+
+        if self.current_uid:
+            self.last_seen_at = now
+
+
+class CardTracker:
+    """Setzt die Meldungen des Kartendienstes ("Karte da" / "Karte weg") in Scans um.
+
+    Die UID wird genau einmal pro Auflegen gelesen - nicht bei jedem Durchlauf.
+    Früher hat die Bridge alle 0,5 s eine Verbindung zur Karte auf- und abgebaut
+    (auch ohne Karte); das hat den ACR122U bzw. den macOS-Kartendienst
+    regelmässig aufgehängt. Schlägt das Lesen fehl (Karte am Rand des Felds),
+    wird es im nächsten Durchlauf erneut versucht, solange die Karte aufliegt.
+    """
+
+    def __init__(self, presence: CardPresence | None = None) -> None:
+        self.presence = presence or CardPresence()
+        self.present = False
+        self.needs_read = False
+
+    def update(self, present: bool, now: float) -> None:
+        if present and not self.present:
+            self.needs_read = True
+        if not present:
+            self.needs_read = False
+            self.presence.not_seen(now)
+        elif not self.needs_read:
+            self.presence.touch(now)
+        self.present = present
+
+    def try_read(self, read_uid, now: float) -> str | None:
+        """Liest die UID, falls nötig. Gibt sie zurück, wenn sie gemeldet werden soll."""
+
+        if not self.needs_read:
+            return None
+        uid = read_uid()
+        if not uid:
+            return None  # nächster Durchlauf versucht es erneut
+        self.needs_read = False
+        return uid if self.presence.seen(uid, now) else None
+
 
 def _is_transient_card_error(exc: Exception) -> bool:
     """Karte nur halb im Feld bzw. gerade abgehoben - normal, kein Grund für eine Warnung."""
@@ -346,17 +391,83 @@ class Watchdog:
                 os._exit(3)
 
 
+class PcscError(Exception):
+    """Kartendienst nicht erreichbar oder Leser weg - Kontext neu aufbauen."""
+
+
+def _check(hresult: int, what: str) -> None:
+    if hresult != scard.SCARD_S_SUCCESS:
+        raise PcscError(f"{what}: {scard.SCardGetErrorMessage(hresult)}")
+
+
+def _list_readers(hcontext) -> list[str]:
+    hresult, names = scard.SCardListReaders(hcontext, [])
+    if hresult == scard.SCARD_E_NO_READERS_AVAILABLE:
+        return []
+    _check(hresult, "Leser auflisten")
+    return list(names or [])
+
+
+def _read_uid(reader_name: str, warn_once) -> str | None:
+    """Verbindet sich kurz mit der aufgelegten Karte und liest ihre UID."""
+
+    connection = PCSCReader(reader_name).createConnection()
+    try:
+        connection.connect()
+    except NoCardException:
+        return None
+    except CardConnectionException as exc:
+        if not _is_transient_card_error(exc):
+            warn_once(f"Verbindung zur Karte fehlgeschlagen: {exc}")
+        return None
+    try:
+        return get_uid(connection)
+    except CardConnectionException as exc:
+        if not _is_transient_card_error(exc):
+            warn_once(f"Karte konnte nicht gelesen werden: {exc}")
+        return None
+    finally:
+        try:
+            connection.disconnect()
+        except CardConnectionException:
+            pass
+
+
 def main() -> None:
     logger.info("NFC-Bridge gestartet. Ziel-App: %s", BASE_URL)
     watchdog = Watchdog(WATCHDOG_TIMEOUT)
     watchdog.start()
 
-    presence = CardPresence()
-    last_logged_error: str | None = None
-    last_heartbeat_at: float = 0.0
+    tracker = CardTracker()
+    hcontext = None
+    reader_name: str | None = None
+    reader_state = scard.SCARD_STATE_UNAWARE
+    last_heartbeat_at = 0.0
+    last_warning: str | None = None
     last_warned_no_token = False
-    last_warned_no_reader = False
-    last_selected_reader: str | None = None
+
+    def warn_once(message: str, level: int = logging.WARNING) -> None:
+        nonlocal last_warning
+        if message != last_warning:
+            logger.log(level, message)
+            last_warning = message
+
+    def heartbeat(token: str, error_message: str | None = None, force: bool = False) -> None:
+        nonlocal last_heartbeat_at
+        if force or time.time() - last_heartbeat_at > HEARTBEAT_INTERVAL:
+            send_heartbeat(token, reader_name if not error_message else None, error_message)
+            last_heartbeat_at = time.time()
+
+    def drop_context() -> None:
+        nonlocal hcontext, reader_name, reader_state
+        if hcontext is not None:
+            try:
+                scard.SCardReleaseContext(hcontext)
+            except Exception:  # noqa: BLE001
+                pass
+        hcontext = None
+        reader_name = None
+        reader_state = scard.SCARD_STATE_UNAWARE
 
     while True:
         watchdog.beat()
@@ -372,99 +483,71 @@ def main() -> None:
             continue
         last_warned_no_token = False
 
-        reader_name = None
         try:
-            try:
-                available = readers()
-            except (EstablishContextException, ListReadersException) as exc:
-                # Typischerweise: pcscd läuft nicht (Linux) bzw. PC/SC-Dienst
-                # ist auf dieser Instanz nicht erreichbar.
-                if not last_warned_no_reader:
-                    logger.error(
-                        "PC/SC-Dienst nicht erreichbar (läuft 'pcscd'? siehe "
-                        "docs/pi_deployment.md): %s",
-                        exc,
+            if hcontext is None:
+                hresult, hcontext = scard.SCardEstablishContext(scard.SCARD_SCOPE_USER)
+                if hresult != scard.SCARD_S_SUCCESS:
+                    hcontext = None
+                    raise PcscError(
+                        "PC/SC-Dienst nicht erreichbar (läuft 'pcscd'? siehe docs/pi_deployment.md): "
+                        + scard.SCardGetErrorMessage(hresult)
                     )
-                    last_warned_no_reader = True
-                if time.time() - last_heartbeat_at > HEARTBEAT_INTERVAL:
-                    send_heartbeat(token, None, f"PC/SC-Dienst nicht erreichbar: {exc}")
-                    last_heartbeat_at = time.time()
-                time.sleep(2)
-                continue
 
-            if not available:
-                kernel_conflict = detect_kernel_driver_conflict()
-                no_reader_message = kernel_conflict or "Kein Leser gefunden"
-                if not last_warned_no_reader:
-                    if kernel_conflict:
-                        logger.error("Kein PC/SC-Leser gefunden. %s", kernel_conflict)
-                    else:
-                        logger.warning("Kein PC/SC-Leser gefunden. Ist der ACR122U angeschlossen?")
-                    last_warned_no_reader = True
-                presence.not_seen(time.time())
-                last_selected_reader = None
-                if time.time() - last_heartbeat_at > HEARTBEAT_INTERVAL:
-                    send_heartbeat(token, None, no_reader_message)
-                    last_heartbeat_at = time.time()
-                time.sleep(2)
-                continue
-            last_warned_no_reader = False
-
-            active_reader, selection_warning = select_reader(available)
-            if selection_warning:
-                logger.warning(selection_warning)
-            reader_name = str(active_reader)
-            if reader_name != last_selected_reader:
+            if reader_name is None:
+                selected, selection_warning = select_reader(_list_readers(hcontext))
+                if selected is None:
+                    kernel_conflict = detect_kernel_driver_conflict()
+                    warn_once(
+                        f"Kein PC/SC-Leser gefunden. {kernel_conflict or 'Ist der ACR122U angeschlossen?'}",
+                        logging.ERROR if kernel_conflict else logging.WARNING,
+                    )
+                    tracker.update(False, time.time())
+                    heartbeat(token, kernel_conflict or "Kein Leser gefunden")
+                    time.sleep(2)
+                    continue
+                if selection_warning:
+                    warn_once(selection_warning)
+                reader_name = str(selected)
+                reader_state = scard.SCARD_STATE_UNAWARE
                 logger.info("Verwende Leser: %s", reader_name)
-                last_selected_reader = reader_name
+                last_warning = None
 
-            uid = None
-            connection = active_reader.createConnection()
-            try:
-                connection.connect()
-            except NoCardException:
-                pass
-            except CardConnectionException as exc:
-                # "unresponsive" = Karte nur halb im Feld -> normal. Alles andere
-                # (Leser getrennt, exklusiv belegt) nur einmal pro Fehlerbild
-                # loggen statt alle 0,5 s.
-                if not _is_transient_card_error(exc) and str(exc) != last_logged_error:
-                    logger.warning("Verbindung zum Leser fehlgeschlagen: %s", exc)
-                    last_logged_error = str(exc)
-            else:
-                try:
-                    uid = get_uid(connection)
-                except CardConnectionException as exc:
-                    if not _is_transient_card_error(exc):
-                        logger.warning("Karte konnte nicht gelesen werden: %s", exc)
-                try:
-                    connection.disconnect()
-                except CardConnectionException:
-                    pass
-
+            # Wartet, bis sich am Leser etwas ändert (oder STATUS_WAIT_MS um sind).
+            # Kein Zugriff auf die Karte selbst - der passiert nur in _read_uid.
+            hresult, states = scard.SCardGetStatusChange(hcontext, STATUS_WAIT_MS, [(reader_name, reader_state)])
             now = time.time()
-            if uid:
-                last_logged_error = None
-                if presence.seen(uid, now):
-                    send_scan(uid, token)
+            if hresult == scard.SCARD_E_TIMEOUT:
+                event_state = reader_state
             else:
-                presence.not_seen(now)
+                _check(hresult, "Status abfragen")
+                event_state = states[0][1]
+                if event_state & (scard.SCARD_STATE_UNAVAILABLE | scard.SCARD_STATE_UNKNOWN):
+                    raise PcscError("Leser nicht mehr verfügbar (USB getrennt?)")
+                reader_state = event_state & ~scard.SCARD_STATE_CHANGED
 
-            if time.time() - last_heartbeat_at > HEARTBEAT_INTERVAL:
-                send_heartbeat(token, reader_name)
-                last_heartbeat_at = time.time()
+            # Unser eigenes Lesen ändert Bits wie INUSE und weckt GetStatusChange
+            # auf - CardTracker reagiert aber nur auf den Wechsel "Karte da/weg".
+            tracker.update(bool(event_state & scard.SCARD_STATE_PRESENT), now)
+            uid = tracker.try_read(lambda: _read_uid(reader_name, warn_once), now)
+            if uid:
+                send_scan(uid, token)
+            heartbeat(token)
 
+        except PcscError as exc:
+            warn_once(str(exc))
+            tracker.update(False, time.time())
+            heartbeat(token, str(exc), force=True)
+            drop_context()
+            time.sleep(1)
         except Exception as exc:  # noqa: BLE001 - Event darf wegen Hardware-Hakeln nicht sterben
             logger.error("Unerwarteter Fehler in der Lese-Schleife: %s", exc)
-            presence.not_seen(time.time())
+            tracker.update(False, time.time())
             try:
-                send_heartbeat(token, reader_name, str(exc))
-                last_heartbeat_at = time.time()
+                heartbeat(token, str(exc), force=True)
             except Exception:  # noqa: BLE001
                 pass
+            drop_context()
             time.sleep(2)
-
-        time.sleep(POLL_INTERVAL)
 
 
 if __name__ == "__main__":
