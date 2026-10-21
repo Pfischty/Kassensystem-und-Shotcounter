@@ -199,6 +199,83 @@
   body.modal-open {
     overflow: hidden;
   }
+
+  /* --- Netzwerk & System-Update: gemeinsame Bausteine --- */
+  .panel-toolbar { display:flex; justify-content:flex-end; margin-bottom: 0.8rem; }
+  .panel-toolbar .icon-btn { padding: 0.4rem 0.7rem; font-size: 0.85rem; }
+  .icon-btn.is-spinning .spin { display:inline-block; animation: spin 0.8s linear infinite; }
+
+  .info-card {
+    background: rgba(255,255,255,0.04);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 1rem;
+  }
+  .info-card__head { display:flex; align-items:center; gap:0.5rem; margin-bottom: 0.7rem; }
+  .info-card__head .glyph { font-size: 1.1rem; line-height:1; }
+  .info-card__head h3 { margin:0; font-size:1rem; color:#cbd5e1; }
+  .info-row { display:flex; justify-content:space-between; align-items:center; gap:0.6rem; padding: 0.35rem 0; border-bottom: 1px dashed rgba(255,255,255,0.06); }
+  .info-row:last-child { border-bottom:none; }
+  .info-row__label { color:#94a3b8; font-size:0.9rem; }
+  .info-row__value { font-weight:600; text-align:right; }
+  .info-row__value.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-weight:500; }
+  .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+
+  .status-dot { display:inline-block; width:0.55rem; height:0.55rem; border-radius:50%; margin-right:0.4rem; vertical-align:middle; }
+  .status-dot.up { background: var(--success); box-shadow: 0 0 6px rgba(52,211,153,0.7); }
+  .status-dot.down { background: var(--danger); box-shadow: 0 0 6px rgba(248,113,113,0.6); }
+
+  .signal-meter { display:inline-flex; align-items:flex-end; gap:2px; height:12px; vertical-align:middle; }
+  .signal-meter span { width:4px; border-radius:1px; background: rgba(255,255,255,0.15); }
+  .signal-meter span:nth-child(1) { height:25%; }
+  .signal-meter span:nth-child(2) { height:50%; }
+  .signal-meter span:nth-child(3) { height:75%; }
+  .signal-meter span:nth-child(4) { height:100%; }
+  .signal-meter span.on { background: var(--accent); }
+
+  .network-grid { display:grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap:1rem; }
+
+  .connect-box {
+    margin-top: 1rem;
+    padding: 1rem;
+    background: rgba(255,255,255,0.02);
+    border: 1px dashed var(--border);
+    border-radius: 10px;
+  }
+  .connect-box h4 { margin: 0 0 0.8rem 0; display:flex; align-items:center; gap:0.4rem; }
+  .field-hint { font-size: 0.8rem; color: #94a3b8; margin-top: 0.3rem; }
+
+  .wifi-list { display:flex; flex-direction:column; gap:0.4rem; max-height: 280px; overflow-y:auto; padding-right: 2px; }
+  .wifi-network {
+    display:flex; justify-content:space-between; align-items:center; gap:0.6rem;
+    padding: 0.55rem 0.7rem;
+    background: rgba(255,255,255,0.03);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    cursor: pointer;
+    transition: background 0.15s ease, border-color 0.15s ease;
+  }
+  .wifi-network:hover { background: rgba(255,255,255,0.07); border-color: rgba(255,255,255,0.25); }
+  .wifi-network.is-connected { border-color: rgba(52,211,153,0.5); background: rgba(52,211,153,0.08); }
+  .wifi-network__name { display:flex; align-items:center; gap:0.5rem; min-width:0; }
+  .wifi-network__name span.ssid { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .wifi-network__meta { display:flex; align-items:center; gap:0.5rem; flex-shrink:0; }
+  .lock-icon { opacity:0.7; font-size:0.9rem; }
+
+  .update-steps { display:flex; flex-direction:column; gap:0.5rem; margin-top: 0.6rem; }
+  .update-step { display:flex; align-items:center; gap:0.6rem; font-size: 0.9rem; color:#94a3b8; }
+  .update-step .dot { width:0.6rem; height:0.6rem; border-radius:50%; background: rgba(255,255,255,0.15); flex-shrink:0; }
+  .update-step.is-active { color: var(--text); }
+  .update-step.is-active .dot { background: var(--accent); box-shadow: 0 0 6px rgba(56,189,248,0.7); }
+  .update-step.is-done { color: var(--success); }
+  .update-step.is-done .dot { background: var(--success); }
+  .update-step.is-error { color: var(--danger); }
+  .update-step.is-error .dot { background: var(--danger); }
+
+  .spinner { display:inline-block; width:0.85rem; height:0.85rem; border-radius:50%; border:2px solid rgba(255,255,255,0.25); border-top-color: var(--accent); animation: spin 0.7s linear infinite; vertical-align:middle; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .log-tail { white-space:pre-wrap; font-size:0.8rem; max-height:220px; overflow:auto; background: rgba(0,0,0,0.3); padding:0.6rem; border-radius:6px; margin-top: 0.6rem; }
 </style>
 
 <!-- Events Section (moved to top) -->
@@ -714,8 +791,13 @@
     <button type="button" class="secondary" data-toggle>Details einblenden</button>
   </div>
   <div class="collapsible__content" hidden>
+    <div class="panel-toolbar">
+      <button type="button" class="secondary icon-btn" id="network-refresh-btn" title="Neu laden">
+        <span class="spin">⟳</span> Aktualisieren
+      </button>
+    </div>
     <div id="network-status">
-      <p class="muted">Lade Netzwerkinformationen...</p>
+      <p class="muted"><span class="spinner"></span> Lade Netzwerkinformationen...</p>
     </div>
   </div>
 </div>
@@ -730,8 +812,13 @@
     <button type="button" class="secondary" data-toggle>Details einblenden</button>
   </div>
   <div class="collapsible__content" hidden>
+    <div class="panel-toolbar">
+      <button type="button" class="secondary icon-btn" id="git-refresh-btn" title="Neu laden">
+        <span class="spin">⟳</span> Aktualisieren
+      </button>
+    </div>
     <div id="git-status">
-      <p class="muted">Lade Git-Informationen...</p>
+      <p class="muted"><span class="spinner"></span> Lade Git-Informationen...</p>
     </div>
   </div>
 </div>

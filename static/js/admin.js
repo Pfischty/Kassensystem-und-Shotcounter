@@ -2287,6 +2287,21 @@ document.addEventListener('click', (e) => {
     });
 
   // Network Management UI
+  const escapeHtml = (value) =>
+    String(value ?? '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+
+  const signalMeter = (quality) => {
+    const q = Number(quality) || 0;
+    const steps = [25, 50, 75, 100];
+    const bars = steps.map((threshold) => `<span class="${q >= threshold ? 'on' : ''}"></span>`).join('');
+    return `<span class="signal-meter" title="${q}%">${bars}</span>`;
+  };
+
   const loadNetworkStatus = async () => {
     const container = document.getElementById('network-status');
     if (!container) return;
@@ -2295,38 +2310,43 @@ document.addEventListener('click', (e) => {
       const response = await fetch('/admin/network');
       const data = await response.json();
 
-      let html = '<div style="display: grid; gap: 1.5rem;">';
+      let html = '<div class="network-grid">';
 
       // LAN (eth0) Section
-      html += '<div class="stack">';
-      html += '<h3 style="margin: 0; color: #cbd5e1;">LAN Interface (eth0)</h3>';
+      html += '<div class="info-card">';
+      html += '<div class="info-card__head"><span class="glyph">🖧</span><h3>LAN (eth0)</h3></div>';
       if (data.eth0.exists) {
-        html += '<div style="background: rgba(255,255,255,0.04); padding: 1rem; border-radius: 8px; border: 1px solid var(--border);">';
-        html += `<div class="field-inline" style="margin-bottom: 0.5rem;"><strong>IP-Adresse:</strong> <span>${data.eth0.ip || 'N/A'}</span></div>`;
-        html += `<div class="field-inline" style="margin-bottom: 0.5rem;"><strong>Subnetzmaske:</strong> <span>${data.eth0.netmask || 'N/A'}</span></div>`;
-        html += `<div class="field-inline"><strong>Status:</strong> <span class="badge ${data.eth0.status === 'up' ? 'badge-green' : 'badge-red'}">${data.eth0.status}</span></div>`;
-        html += '</div>';
+        const up = data.eth0.status === 'up';
+        html += `<div class="info-row"><span class="info-row__label">Status</span><span class="info-row__value"><span class="status-dot ${up ? 'up' : 'down'}"></span>${escapeHtml(data.eth0.status)}</span></div>`;
+        html += `<div class="info-row"><span class="info-row__label">IP-Adresse</span><span class="info-row__value mono">${escapeHtml(data.eth0.ip) || 'N/A'}</span></div>`;
+        html += `<div class="info-row"><span class="info-row__label">Subnetzmaske</span><span class="info-row__value mono">${escapeHtml(data.eth0.netmask) || 'N/A'}</span></div>`;
       } else {
         html += '<p class="muted">Interface nicht gefunden</p>';
       }
       html += '</div>';
 
       // WLAN (wlan0) Section
-      html += '<div class="stack">';
-      html += '<h3 style="margin: 0; color: #cbd5e1;">WLAN Interface (wlan0)</h3>';
+      html += '<div class="info-card">';
+      html += '<div class="info-card__head"><span class="glyph">📶</span><h3>WLAN (wlan0)</h3></div>';
       if (data.wlan0.exists) {
-        html += '<div style="background: rgba(255,255,255,0.04); padding: 1rem; border-radius: 8px; border: 1px solid var(--border);">';
-        html += `<div class="field-inline" style="margin-bottom: 0.5rem;"><strong>IP-Adresse:</strong> <span>${data.wlan0.ip || 'Nicht verbunden'}</span></div>`;
-        html += `<div class="field-inline" style="margin-bottom: 0.5rem;"><strong>SSID:</strong> <span>${data.wlan0.ssid || 'Nicht verbunden'}</span></div>`;
+        const up = data.wlan0.status === 'up';
+        html += `<div class="info-row"><span class="info-row__label">Status</span><span class="info-row__value"><span class="status-dot ${up ? 'up' : 'down'}"></span>${escapeHtml(data.wlan0.status)}</span></div>`;
+        html += `<div class="info-row"><span class="info-row__label">SSID</span><span class="info-row__value">${escapeHtml(data.wlan0.ssid) || 'Nicht verbunden'}</span></div>`;
+        html += `<div class="info-row"><span class="info-row__label">IP-Adresse</span><span class="info-row__value mono">${escapeHtml(data.wlan0.ip) || 'Nicht verbunden'}</span></div>`;
         if (data.wlan0.signal_level) {
-          html += `<div class="field-inline" style="margin-bottom: 0.5rem;"><strong>Signalstärke:</strong> <span>${data.wlan0.signal_level}</span></div>`;
+          html += `<div class="info-row"><span class="info-row__label">Signalstärke</span><span class="info-row__value">${escapeHtml(data.wlan0.signal_level)}</span></div>`;
         }
-        html += `<div class="field-inline"><strong>Status:</strong> <span class="badge ${data.wlan0.status === 'up' ? 'badge-green' : 'badge-red'}">${data.wlan0.status}</span></div>`;
-        html += '</div>';
+      } else {
+        html += '<p class="muted">Interface nicht gefunden</p>';
+      }
+      html += '</div>';
 
+      html += '</div>'; // .network-grid
+
+      if (data.wlan0.exists) {
         // WiFi Connect Form
-        html += '<div style="margin-top: 1rem; padding: 1rem; background: rgba(255,255,255,0.02); border: 1px dashed var(--border); border-radius: 8px;">';
-        html += '<h4 style="margin: 0 0 0.8rem 0;">Neues WLAN verbinden</h4>';
+        html += '<div class="connect-box">';
+        html += '<h4>📡 Neues WLAN verbinden</h4>';
         html += '<form id="wifi-connect-form">';
         html += '<div class="stack" style="margin-bottom: 0.8rem;">';
         html += '<label>SSID (Netzwerkname)</label>';
@@ -2334,42 +2354,37 @@ document.addEventListener('click', (e) => {
         html += '</div>';
         html += '<div class="stack" style="margin-bottom: 0.8rem;">';
         html += '<label>Passwort</label>';
-        html += '<input type="password" name="password" placeholder="Passwort (leer = offenes Netz, sonst min. 8 Zeichen)">';
+        html += '<input type="password" name="password" placeholder="Passwort eingeben">';
+        html += '<div class="field-hint">Leer lassen für ein offenes Netz, sonst mindestens 8 Zeichen.</div>';
         html += '</div>';
         html += '<div class="field-inline">';
         html += '<button type="submit">Verbinden</button>';
-        html += '<button type="button" onclick="scanWifi()" class="secondary">Netzwerke scannen</button>';
+        html += '<button type="button" onclick="scanWifi()" class="secondary">🔍 Netzwerke scannen</button>';
         html += '</div>';
         html += '<div id="wifi-connect-message" style="margin-top: 0.8rem;"></div>';
         html += '</form>';
         html += '<div id="wifi-scan-results" style="margin-top: 1rem;"></div>';
         html += '</div>';
-      } else {
-        html += '<p class="muted">Interface nicht gefunden</p>';
       }
-      html += '</div>';
 
       // DHCP Leases Section
-      html += '<div class="stack">';
-      html += '<h3 style="margin: 0; color: #cbd5e1;">Verbundene Clients (DHCP)</h3>';
+      html += '<div class="info-card" style="margin-top: 1rem;">';
+      html += '<div class="info-card__head"><span class="glyph">🖥️</span><h3>Verbundene Clients (DHCP)</h3></div>';
       if (data.dhcp_leases && data.dhcp_leases.length > 0) {
-        html += '<div style="background: rgba(255,255,255,0.04); padding: 1rem; border-radius: 8px; border: 1px solid var(--border);">';
-        html += '<table style="width: 100%; border-collapse: collapse;">';
-        html += '<thead><tr style="border-bottom: 1px solid var(--border);"><th style="text-align: left; padding: 0.5rem;">IP</th><th style="text-align: left; padding: 0.5rem;">MAC</th><th style="text-align: left; padding: 0.5rem;">Hostname</th></tr></thead>';
+        html += '<table>';
+        html += '<thead><tr><th>IP</th><th>MAC</th><th>Hostname</th></tr></thead>';
         html += '<tbody>';
         data.dhcp_leases.forEach(lease => {
-          html += `<tr style="border-bottom: 1px solid rgba(255,255,255,0.05);"><td style="padding: 0.5rem;">${lease.ip}</td><td style="padding: 0.5rem; font-family: monospace;">${lease.mac}</td><td style="padding: 0.5rem;">${lease.hostname}</td></tr>`;
+          html += `<tr><td class="mono">${escapeHtml(lease.ip)}</td><td class="mono">${escapeHtml(lease.mac)}</td><td>${escapeHtml(lease.hostname)}</td></tr>`;
         });
         html += '</tbody></table>';
-        html += '</div>';
       } else {
         html += '<p class="muted">Keine verbundenen Clients</p>';
       }
       html += '</div>';
 
-      html += '</div>';
-
       container.innerHTML = html;
+      container.dataset.currentSsid = data.wlan0.ssid || '';
 
       // Attach WiFi connect handler
       const wifiForm = document.getElementById('wifi-connect-form');
@@ -2378,7 +2393,7 @@ document.addEventListener('click', (e) => {
           e.preventDefault();
           const formData = new FormData(e.target);
           const messageDiv = document.getElementById('wifi-connect-message');
-          messageDiv.innerHTML = '<p class="muted">Verbinde...</p>';
+          messageDiv.innerHTML = '<p class="muted"><span class="spinner"></span> Verbinde...</p>';
 
           try {
             const response = await fetch('/admin/network/wifi/connect', {
@@ -2388,18 +2403,18 @@ document.addEventListener('click', (e) => {
             const result = await response.json();
 
             if (result.success) {
-              messageDiv.innerHTML = `<p style="color: #10b981;">${result.message}</p>`;
+              messageDiv.innerHTML = `<p style="color: var(--success);">✓ ${escapeHtml(result.message)}</p>`;
               setTimeout(() => loadNetworkStatus(), 5000);
             } else {
-              messageDiv.innerHTML = `<p style="color: #ef4444;">Fehler: ${result.error}</p>`;
+              messageDiv.innerHTML = `<p style="color: var(--danger);">Fehler: ${escapeHtml(result.error)}</p>`;
             }
           } catch (error) {
-            messageDiv.innerHTML = `<p style="color: #ef4444;">Fehler: ${error.message}</p>`;
+            messageDiv.innerHTML = `<p style="color: var(--danger);">Fehler: ${escapeHtml(error.message)}</p>`;
           }
         });
       }
     } catch (error) {
-      container.innerHTML = `<p style="color: #ef4444;">Fehler beim Laden: ${error.message}</p>`;
+      container.innerHTML = `<p style="color: var(--danger);">Fehler beim Laden: ${escapeHtml(error.message)}</p>`;
     }
   };
 
@@ -2407,25 +2422,24 @@ document.addEventListener('click', (e) => {
     const resultsDiv = document.getElementById('wifi-scan-results');
     if (!resultsDiv) return;
 
-    resultsDiv.innerHTML = '<p class="muted">Scanne nach Netzwerken...</p>';
+    resultsDiv.innerHTML = '<p class="muted"><span class="spinner"></span> Scanne nach Netzwerken...</p>';
 
     try {
       const response = await fetch('/admin/network/wifi/scan');
       const data = await response.json();
 
       if (data.success && data.networks.length > 0) {
+        const currentSsid = document.getElementById('network-status')?.dataset.currentSsid || '';
         let html = '<h4 style="margin: 0.8rem 0;">Verfügbare Netzwerke</h4>';
-        html += '<div style="display: flex; flex-direction: column; gap: 0.5rem;">';
+        html += '<div class="wifi-list">';
         data.networks.forEach(network => {
-          const escapedSsid = network.ssid.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
           const ssidForJs = network.ssid.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/"/g, '\\"');
-          html += `<div style="padding: 0.6rem; background: rgba(255,255,255,0.04); border: 1px solid var(--border); border-radius: 6px; cursor: pointer;" onclick="document.querySelector('input[name=ssid]').value='${ssidForJs}'">`;
-          html += `<div style="display: flex; justify-content: space-between; align-items: center;">`;
-          html += `<strong>${escapedSsid}</strong>`;
-          html += `<div style="display: flex; gap: 0.5rem; align-items: center;">`;
-          html += `<span class="pill">${network.encryption}</span>`;
-          html += `<span class="muted" style="font-size: 0.85rem;">${network.quality}%</span>`;
-          html += `</div></div></div>`;
+          const isOpen = network.encryption === 'Open';
+          const isConnected = network.ssid === currentSsid;
+          html += `<div class="wifi-network${isConnected ? ' is-connected' : ''}" onclick="document.querySelector('input[name=ssid]').value='${ssidForJs}'; document.querySelector('input[name=password]').focus();">`;
+          html += `<div class="wifi-network__name">${signalMeter(network.quality)}<span class="ssid">${escapeHtml(network.ssid)}</span>${isConnected ? ' <span class="badge badge-green" style="flex-shrink:0;">verbunden</span>' : ''}</div>`;
+          html += `<div class="wifi-network__meta">${isOpen ? '' : '<span class="lock-icon">🔒</span>'}<span class="pill">${escapeHtml(network.encryption)}</span><span class="muted" style="font-size: 0.85rem;">${network.quality}%</span></div>`;
+          html += `</div>`;
         });
         html += '</div>';
         resultsDiv.innerHTML = html;
@@ -2433,7 +2447,7 @@ document.addEventListener('click', (e) => {
         resultsDiv.innerHTML = '<p class="muted">Keine Netzwerke gefunden</p>';
       }
     } catch (error) {
-      resultsDiv.innerHTML = `<p style="color: #ef4444;">Fehler: ${error.message}</p>`;
+      resultsDiv.innerHTML = `<p style="color: var(--danger);">Fehler: ${escapeHtml(error.message)}</p>`;
     }
   };
 
@@ -2453,25 +2467,25 @@ document.addEventListener('click', (e) => {
         throw new Error(`Unerwartete Server-Antwort: ${text}`);
       }
 
-      let html = '<div class="stack">';
-      html += '<div style="background: rgba(255,255,255,0.04); padding: 1rem; border-radius: 8px; border: 1px solid var(--border);">';
-      html += `<div class="field-inline" style="margin-bottom: 0.5rem;"><strong>Branch:</strong> <span>${data.branch || 'N/A'}</span></div>`;
-      html += `<div class="field-inline" style="margin-bottom: 0.5rem;"><strong>Commit:</strong> <span style="font-family: monospace;">${data.commit_short || 'N/A'}</span></div>`;
-      html += `<div class="field-inline" style="margin-bottom: 0.5rem;"><strong>Nicht committete Änderungen:</strong> <span class="badge ${data.has_changes ? 'badge-red' : 'badge-green'}">${data.has_changes ? 'Ja' : 'Nein'}</span></div>`;
+      let html = '<div class="info-card">';
+      html += '<div class="info-card__head"><span class="glyph">🗂️</span><h3>Repository-Status</h3></div>';
+      html += `<div class="info-row"><span class="info-row__label">Branch</span><span class="info-row__value mono">${escapeHtml(data.branch) || 'N/A'}</span></div>`;
+      html += `<div class="info-row"><span class="info-row__label">Commit</span><span class="info-row__value mono">${escapeHtml(data.commit_short) || 'N/A'}</span></div>`;
+      html += `<div class="info-row"><span class="info-row__label">Nicht committete Änderungen</span><span class="info-row__value"><span class="badge ${data.has_changes ? 'badge-red' : 'badge-green'}">${data.has_changes ? 'Ja' : 'Nein'}</span></span></div>`;
 
       if (data.behind > 0) {
-        html += `<div class="field-inline"><strong>Status:</strong> <span class="badge badge-yellow">${data.behind} Commit(s) hinter Remote</span></div>`;
+        html += `<div class="info-row"><span class="info-row__label">Status</span><span class="info-row__value"><span class="badge badge-yellow">${data.behind} Commit(s) hinter Remote</span></span></div>`;
       } else {
-        html += `<div class="field-inline"><strong>Status:</strong> <span class="badge badge-green">Aktuell</span></div>`;
+        html += `<div class="info-row"><span class="info-row__label">Status</span><span class="info-row__value"><span class="badge badge-green">Aktuell</span></span></div>`;
       }
       html += '</div>';
 
-      html += '<div style="margin-top: 1rem; padding: 1rem; background: rgba(255,255,255,0.02); border: 1px dashed var(--border); border-radius: 8px;">';
-      html += '<h4 style="margin: 0 0 0.8rem 0;">Repository aktualisieren</h4>';
+      html += '<div class="connect-box">';
+      html += '<h4>⬆️ Repository aktualisieren</h4>';
       html += '<p class="muted" style="margin-bottom: 0.8rem;">Lädt die neueste Version vom Git-Repository und startet den Service neu.</p>';
 
       if (data.has_changes) {
-        html += '<p style="color: #f59e0b; margin-bottom: 0.8rem;"><strong>⚠️ Warnung:</strong> Es gibt nicht committete Änderungen. Update ist nicht möglich.</p>';
+        html += '<p style="color: var(--warning); margin-bottom: 0.8rem;"><strong>⚠️ Warnung:</strong> Es gibt nicht committete Änderungen. Update ist nicht möglich.</p>';
         html += '<button type="button" class="secondary" disabled>Update nicht möglich</button>';
       } else {
         html += '<button type="button" onclick="performGitUpdate()" class="primary">Jetzt aktualisieren</button>';
@@ -2479,12 +2493,33 @@ document.addEventListener('click', (e) => {
       html += '<div id="git-update-message" style="margin-top: 0.8rem;"></div>';
       html += '</div>';
 
-      html += '</div>';
-
       container.innerHTML = html;
     } catch (error) {
-      container.innerHTML = `<p style="color: #ef4444;">Fehler beim Laden: ${error.message}</p>`;
+      container.innerHTML = `<p style="color: var(--danger);">Fehler beim Laden: ${escapeHtml(error.message)}</p>`;
     }
+  };
+
+  const UPDATE_STEPS = [
+    { key: 'trigger', label: 'Update anstoßen' },
+    { key: 'running', label: 'Service aktualisiert & startet neu' },
+    { key: 'done', label: 'Fertig' },
+  ];
+
+  // Rendert die Schritt-Anzeige für den Update-Vorgang. `activeKey` ist der
+  // gerade laufende Schritt, alles davor gilt als erledigt; bei einem Fehler
+  // wird der aktive Schritt stattdessen rot markiert.
+  const renderUpdateSteps = (activeKey, isError = false) => {
+    const activeIndex = UPDATE_STEPS.findIndex((step) => step.key === activeKey);
+    let html = '<div class="update-steps">';
+    UPDATE_STEPS.forEach((step, index) => {
+      let cls = '';
+      if (isError && index === activeIndex) cls = 'is-error';
+      else if (index < activeIndex || (index === activeIndex && activeKey === 'done')) cls = 'is-done';
+      else if (index === activeIndex) cls = 'is-active';
+      html += `<div class="update-step ${cls}"><span class="dot"></span>${step.label}${cls === 'is-active' ? ' <span class="spinner"></span>' : ''}</div>`;
+    });
+    html += '</div>';
+    return html;
   };
 
   // Pollt den Update-Fortschritt. Der Trigger-Request kehrt sofort zurück
@@ -2509,31 +2544,31 @@ document.addEventListener('click', (e) => {
 
     if (!data) {
       if (attempt < maxAttempts) {
+        messageDiv.innerHTML = renderUpdateSteps('running') + '<p class="muted">Dienst während Neustart kurz nicht erreichbar, warte weiter ...</p>';
         setTimeout(() => pollGitUpdateStatus(messageDiv, attempt + 1), 3000);
       } else {
-        messageDiv.innerHTML = '<p style="color: #ef4444;">Dienst antwortet nach dem Update nicht mehr. Bitte manuell prüfen (journalctl -u kassensystem-update.service).</p>';
+        messageDiv.innerHTML = renderUpdateSteps('running', true) + '<p style="color: var(--danger);">Dienst antwortet nach dem Update nicht mehr. Bitte manuell prüfen (journalctl -u kassensystem-update.service).</p>';
       }
       return;
     }
 
     if (data.running) {
       if (attempt < maxAttempts) {
-        messageDiv.innerHTML = '<p class="muted">Update läuft (Dienst wird neu gestartet) ...</p>';
+        messageDiv.innerHTML = renderUpdateSteps('running');
         setTimeout(() => pollGitUpdateStatus(messageDiv, attempt + 1), 5000);
       } else {
-        messageDiv.innerHTML = '<p style="color: #f59e0b;">Update läuft ungewöhnlich lange. Bitte Logs prüfen.</p>';
+        messageDiv.innerHTML = renderUpdateSteps('running', true) + '<p style="color: var(--warning);">Update läuft ungewöhnlich lange. Bitte Logs prüfen.</p>';
       }
       return;
     }
 
     if ((data.result || '').toLowerCase() === 'success') {
-      messageDiv.innerHTML = '<p style="color: #10b981;">Update erfolgreich. Seite wird neu geladen...</p>';
+      messageDiv.innerHTML = renderUpdateSteps('done') + '<p style="color: var(--success);">✓ Update erfolgreich. Seite wird neu geladen...</p>';
       setTimeout(() => location.reload(), 3000);
     } else {
-      let html = `<p style="color: #ef4444;">Update fehlgeschlagen (${data.result || 'unbekannt'}).</p>`;
+      let html = renderUpdateSteps('running', true) + `<p style="color: var(--danger);">Update fehlgeschlagen (${escapeHtml(data.result) || 'unbekannt'}).</p>`;
       if (data.log_tail) {
-        const escapedLog = data.log_tail.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-        html += `<pre style="white-space: pre-wrap; font-size: 0.8rem; max-height: 220px; overflow: auto; background: rgba(0,0,0,0.3); padding: 0.6rem; border-radius: 4px;">${escapedLog}</pre>`;
+        html += `<pre class="log-tail">${escapeHtml(data.log_tail)}</pre>`;
       }
       messageDiv.innerHTML = html;
     }
@@ -2549,7 +2584,7 @@ document.addEventListener('click', (e) => {
     );
     if (!confirmed) return;
 
-    messageDiv.innerHTML = '<p class="muted">Update wird gestartet...</p>';
+    messageDiv.innerHTML = renderUpdateSteps('trigger');
 
     try {
       const response = await fetch('/admin/system/git-update', {
@@ -2561,12 +2596,12 @@ document.addEventListener('click', (e) => {
         result = await response.json();
       } else {
         const text = await response.text();
-        messageDiv.innerHTML = `<p style="color: #ef4444;">Fehler: Unerwartete Antwort vom Server: ${text}</p>`;
+        messageDiv.innerHTML = renderUpdateSteps('trigger', true) + `<p style="color: var(--danger);">Fehler: Unerwartete Antwort vom Server: ${escapeHtml(text)}</p>`;
         return;
       }
 
       if (!result.success) {
-        messageDiv.innerHTML = `<p style="color: #ef4444;">Fehler: ${result.error}</p>`;
+        messageDiv.innerHTML = renderUpdateSteps('trigger', true) + `<p style="color: var(--danger);">Fehler: ${escapeHtml(result.error)}</p>`;
         return;
       }
     } catch (error) {
@@ -2596,4 +2631,19 @@ document.addEventListener('click', (e) => {
       });
     }
   });
+
+  // Manuelles Neuladen über die Toolbar-Buttons, inkl. kurzer Spin-Animation
+  const wireRefreshButton = (buttonId, loadFn) => {
+    const btn = document.getElementById(buttonId);
+    if (!btn) return;
+    btn.addEventListener('click', async () => {
+      btn.disabled = true;
+      btn.classList.add('is-spinning');
+      await loadFn();
+      btn.classList.remove('is-spinning');
+      btn.disabled = false;
+    });
+  };
+  wireRefreshButton('network-refresh-btn', loadNetworkStatus);
+  wireRefreshButton('git-refresh-btn', loadGitStatus);
 })();
