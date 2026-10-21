@@ -2334,7 +2334,7 @@ document.addEventListener('click', (e) => {
         html += '</div>';
         html += '<div class="stack" style="margin-bottom: 0.8rem;">';
         html += '<label>Passwort</label>';
-        html += '<input type="password" name="password" placeholder="Passwort (min. 8 Zeichen)">';
+        html += '<input type="password" name="password" placeholder="Passwort (leer = offenes Netz, sonst min. 8 Zeichen)">';
         html += '</div>';
         html += '<div class="field-inline">';
         html += '<button type="submit">Verbinden</button>';

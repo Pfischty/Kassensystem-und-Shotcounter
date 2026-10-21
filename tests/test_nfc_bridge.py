@@ -74,3 +74,64 @@ def test_watchdog_beat_keeps_process_alive():
     watchdog.last_beat = 0
     watchdog.beat()
     assert nfc_bridge.time.monotonic() - watchdog.last_beat < 1
+
+
+class _FakeCard:
+    """Simuliert _read_uid: zählt Lesevorgänge, liefert optional zuerst Fehlschläge."""
+
+    def __init__(self, uid, failures=0):
+        self.uid = uid
+        self.failures = failures
+        self.reads = 0
+
+    def __call__(self):
+        self.reads += 1
+        if self.failures:
+            self.failures -= 1
+            return None
+        return self.uid
+
+
+def test_tracker_reads_card_only_once_while_it_lies_on_the_reader():
+    tracker = nfc_bridge.CardTracker(CardPresence(removal_grace=1.0))
+    card = _FakeCard("04AA")
+    tracker.update(True, 0.0)
+    assert tracker.try_read(card, 0.0) == "04AA"
+    for t in (0.5, 1.0, 5.0, 60.0):
+        tracker.update(True, t)
+        assert tracker.try_read(card, t) is None
+    assert card.reads == 1  # keine Verbindung mehr, solange die Karte liegt
+
+
+def test_tracker_retries_until_the_card_can_be_read():
+    tracker = nfc_bridge.CardTracker(CardPresence(removal_grace=1.0))
+    card = _FakeCard("04AA", failures=2)  # Karte zuerst nur am Rand des Felds
+    tracker.update(True, 0.0)
+    assert tracker.try_read(card, 0.0) is None
+    tracker.update(True, 0.5)
+    assert tracker.try_read(card, 0.5) is None
+    tracker.update(True, 1.0)
+    assert tracker.try_read(card, 1.0) == "04AA"
+    assert card.reads == 3
+
+
+def test_tracker_reports_again_after_lift_and_replace():
+    tracker = nfc_bridge.CardTracker(CardPresence(removal_grace=1.0))
+    card = _FakeCard("04AA")
+    tracker.update(True, 0.0)
+    assert tracker.try_read(card, 0.0) == "04AA"
+    tracker.update(False, 3.0)
+    tracker.update(False, 4.5)
+    tracker.update(True, 5.0)
+    assert tracker.try_read(card, 5.0) == "04AA"
+
+
+def test_tracker_ignores_short_bounce_of_a_card_lying_for_a_long_time():
+    tracker = nfc_bridge.CardTracker(CardPresence(removal_grace=1.0))
+    card = _FakeCard("04AA")
+    tracker.update(True, 0.0)
+    tracker.try_read(card, 0.0)
+    tracker.update(True, 30.0)  # liegt seit 30 s
+    tracker.update(False, 30.2)  # kurzer Aussetzer
+    tracker.update(True, 30.6)
+    assert tracker.try_read(card, 30.6) is None

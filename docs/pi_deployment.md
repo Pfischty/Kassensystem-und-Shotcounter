@@ -212,15 +212,26 @@ App gemeldet (sichtbar auf `/shotcounter/nfc` statt eines nichtssagenden
   Der Befehl installiert Abhängigkeiten, schreibt keine Git-Daten wenn `--offline` gesetzt ist, und startet den Dienst neu.
 
 ## WLAN-Helfer (optional für Wartung)
-- Netzwerk hinzufügen und direkt re-konfigurieren:
+- Netzwerk hinzufügen und verbinden (auch über die Admin-Oberfläche nutzbar):
   ```bash
   sudo ./scripts/pi_manage.sh wifi-add "<SSID>" "<Passwort>"
+  # Offenes Netz ohne Passwort:
+  sudo ./scripts/pi_manage.sh wifi-add "<SSID>"
   ```
-  Das ergänzt `/etc/wpa_supplicant/wpa_supplicant.conf` und stößt ein `wpa_cli reconfigure` an.
+  Das Script erkennt automatisch, ob `wlan0` von **NetworkManager** (Standard
+  auf aktuellen Raspberry-Pi-OS-Images seit Bookworm) oder klassisch von
+  `wpa_supplicant` verwaltet wird, und nutzt entsprechend `nmcli` bzw.
+  `wpa_cli`/`wpa_supplicant.conf`. Ein vorhandenes Profil/Netzwerk mit
+  derselben SSID wird vorher entfernt (kein Duplikat-Müll bei erneutem
+  Hinzufügen), und es wird bis zu 10s auf eine echte Verbindung gewartet,
+  statt nur "keine Fehlermeldung" als Erfolg zu werten.
 - WLAN-Schnittstelle aktivieren/deaktivieren:
   ```bash
   sudo ./scripts/pi_manage.sh wifi-up
   sudo ./scripts/pi_manage.sh wifi-down
   ```
 
-> Hinweis: Die WLAN-Helfer erwarten ein klassisches Raspberry-Pi-Setup mit `wpa_supplicant` und Interface `wlan0`. In restriktiven Umgebungen kannst du die Befehle anpassen (z. B. für `NetworkManager`). Für Sicherheit empfiehlt es sich, WLAN nur während Wartungsfenstern zu aktivieren und Zugriffe zu beschränken (Firewall/SSH).
+> Für Sicherheit empfiehlt es sich, WLAN nur während Wartungsfenstern zu aktivieren und Zugriffe zu beschränken (Firewall/SSH). Damit die Admin-Oberfläche (`/admin/network/wifi/connect`) das Script ohne Passwortabfrage ausführen kann, braucht der Service-User eine passende `NOPASSWD`-Sudo-Regel für genau diesen Pfad, z. B. in `/etc/sudoers.d/kassensystem-wifi`:
+> ```
+> kassensystem ALL=(root) NOPASSWD: /pfad/zu/scripts/pi_manage.sh wifi-add *, /pfad/zu/scripts/pi_manage.sh wifi-up, /pfad/zu/scripts/pi_manage.sh wifi-down
+> ```
