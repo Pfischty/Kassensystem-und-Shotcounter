@@ -2832,6 +2832,50 @@ def api_terminals():
     )
 
 
+@app.route("/api/terminals/<int:terminal_id>/active-payment")
+def api_terminal_active_payment(terminal_id: int):
+    """Report the current pending payment (if any) for a terminal.
+
+    The cashier UI only tracks the active payment in page-local JavaScript state
+    (`activePaymentId`). A page reload, or simply re-opening the cashier view in a
+    new tab, wipes that state even though a real payment may still be running on the
+    terminal. Without a server-truth lookup like this, the cashier would see a fresh
+    "ready" screen with no way to find or cancel it - the terminal would appear
+    unusable until the payment times out on its own.
+    """
+
+    event = require_active_event(kassensystem=True)
+    terminal = Terminal.query.filter_by(id=terminal_id).first_or_404()
+
+    payment = (
+        TerminalPayment.query.filter_by(terminal_id=terminal.id, event_id=event.id, status="pending")
+        .order_by(TerminalPayment.id.desc())
+        .first()
+    )
+    if payment:
+        try:
+            _reconcile_pending_terminal_payment(payment)
+            db.session.commit()
+        except SumUpClientError:
+            db.session.rollback()
+
+    if not payment or payment.status != "pending":
+        return jsonify({"success": True, "payment": None})
+
+    return jsonify(
+        {
+            "success": True,
+            "payment": {
+                "payment_id": payment.id,
+                "status": payment.status,
+                "amount_cents": payment.amount_cents,
+                "currency": payment.currency,
+                "created_at": payment.created_at.isoformat() + "Z",
+            },
+        }
+    )
+
+
 @app.route("/api/terminal-payments", methods=["POST"])
 def api_create_terminal_payment():
     event = require_active_event(kassensystem=True)

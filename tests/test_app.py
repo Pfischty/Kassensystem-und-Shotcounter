@@ -2183,6 +2183,106 @@ def test_watchdog_skips_freshly_created_pending_payments(client, monkeypatch):
         assert refreshed.status == "pending"
 
 
+def test_active_payment_lookup_returns_none_without_pending_payment(client):
+    """The GUI resume-after-reload flow relies on this returning a clean "nothing
+    active" answer when the terminal genuinely has no pending payment."""
+
+    _create_and_activate_event(client)
+    with app.app_context():
+        terminal = Terminal(name="Reader Lookup Idle", sumup_device_id="rdr_LOOKUP_IDLE", active=True)
+        db.session.add(terminal)
+        db.session.commit()
+        terminal_id = terminal.id
+
+    response = client.get(f"/api/terminals/{terminal_id}/active-payment")
+    assert response.status_code == 200
+    data = response.get_json()
+    assert data["success"] is True
+    assert data["payment"] is None
+
+
+def test_active_payment_lookup_returns_pending_payment(client, monkeypatch):
+    """Lets the cashier UI recover a payment it lost track of (page reload, tab
+    reopened) instead of leaving the terminal looking idle while a real payment is
+    still running - the exact gap that made it impossible to cancel after a reload."""
+
+    event = _create_and_activate_event(client)
+    with app.app_context():
+        terminal = Terminal(name="Reader Lookup Pending", sumup_device_id="rdr_LOOKUP_PENDING", active=True)
+        db.session.add(terminal)
+        db.session.flush()
+
+        payment = TerminalPayment(
+            terminal_id=terminal.id,
+            event_id=event.id,
+            amount_cents=750,
+            currency="CHF",
+            status="pending",
+            sumup_payment_id="txn_lookup",
+        )
+        db.session.add(payment)
+        db.session.commit()
+        terminal_id = terminal.id
+        payment_id = payment.id
+
+    class FakeClient:
+        def get_payment_status(self, _payment_id):
+            raise SumUpClientError(
+                "SumUp API Fehler (404): Resource not found",
+                status_code=404,
+                error_type="http",
+            )
+
+    monkeypatch.setattr(app_module, "_sumup_client", lambda: FakeClient())
+
+    response = client.get(f"/api/terminals/{terminal_id}/active-payment")
+    assert response.status_code == 200
+    data = response.get_json()
+    assert data["success"] is True
+    assert data["payment"]["payment_id"] == payment_id
+    assert data["payment"]["status"] == "pending"
+    assert data["payment"]["amount_cents"] == 750
+
+
+def test_active_payment_lookup_hides_payment_resolved_during_reconcile(client, monkeypatch):
+    """If the lookup's own reconcile call resolves the payment to a final state, it
+    must not be reported as "active" anymore."""
+
+    event = _create_and_activate_event(client)
+    with app.app_context():
+        terminal = Terminal(name="Reader Lookup Resolved", sumup_device_id="rdr_LOOKUP_RESOLVED", active=True)
+        db.session.add(terminal)
+        db.session.flush()
+
+        payment = TerminalPayment(
+            terminal_id=terminal.id,
+            event_id=event.id,
+            amount_cents=750,
+            currency="CHF",
+            status="pending",
+            sumup_payment_id="txn_lookup_resolved",
+        )
+        db.session.add(payment)
+        db.session.commit()
+        terminal_id = terminal.id
+
+    class FakeClient:
+        def get_payment_status(self, _payment_id):
+            return type(
+                "Resp",
+                (),
+                {"status": "successful", "raw": {"data": {"status": "successful"}}},
+            )()
+
+    monkeypatch.setattr(app_module, "_sumup_client", lambda: FakeClient())
+
+    response = client.get(f"/api/terminals/{terminal_id}/active-payment")
+    assert response.status_code == 200
+    data = response.get_json()
+    assert data["success"] is True
+    assert data["payment"] is None
+
+
 def test_sumup_http_status_distinguishes_rate_limit_from_not_found():
     """429 (rate limit, transient) must not be collapsed into the same 502 as a 404
     (resource not found, a config/setup problem) - callers need to tell them apart to

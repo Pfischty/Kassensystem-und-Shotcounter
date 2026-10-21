@@ -200,6 +200,7 @@
   }
   .terminal-status.success { color: #22c55e; }
   .terminal-status.error { color: #f87171; }
+  .terminal-status.clickable { cursor: pointer; text-decoration: underline dotted; }
   .products-card { flex:0 0 auto; display:flex; flex-direction:column; justify-content:flex-end; }
   .dialog-backdrop {
     position: fixed;
@@ -681,6 +682,46 @@
     terminalSelect.value = terminalId || '';
     updateTerminalTitle(terminalName || '', '');
     updateTerminalPayState();
+    resumeActivePaymentIfAny(terminalId);
+  }
+
+  async function resumeActivePaymentIfAny(terminalId) {
+    // The browser only tracks the active payment in page-local JS state, which is
+    // lost on every reload. Without checking the server, a payment that is still
+    // genuinely running on the terminal would become invisible and uncancellable
+    // the moment the cashier reloads the page or reopens the tab.
+    if (!terminalId || activePaymentId !== null) {
+      return;
+    }
+    try {
+      const response = await fetch(`/api/terminals/${terminalId}/active-payment`);
+      const data = await response.json();
+      if (!data.success || !data.payment) {
+        return;
+      }
+      const payment = data.payment;
+      activePaymentId = payment.payment_id;
+      pollFailureCount = 0;
+      const resolvedName = fixedAssignedTerminalName || getTerminalNameById(terminalId) || `#${terminalId}`;
+      const parsedStartedAt = Date.parse(payment.created_at || '');
+      paymentContext = {
+        status: 'pending',
+        terminalName: resolvedName,
+        baseAmountCents: payment.amount_cents,
+        tipCents: 0,
+        amountCents: payment.amount_cents,
+        message: 'Zahlung läuft noch am Terminal (nach Neuladen wiederhergestellt) …',
+        startedAt: Number.isNaN(parsedStartedAt) ? Date.now() : parsedStartedAt,
+      };
+      updateTerminalPayState();
+      renderPaymentDialog();
+      setTerminalStatus('Zahlung läuft noch am Terminal …');
+      stopPolling();
+      terminalPoller = setInterval(() => pollTerminalStatus(activePaymentId), 2000);
+      await pollTerminalStatus(activePaymentId);
+    } catch (error) {
+      console.error('Konnte laufende Zahlung nicht wiederherstellen:', error);
+    }
   }
 
   function applyDefaultTerminalState() {
@@ -789,7 +830,12 @@
       paymentTerminalName.textContent = paymentContext.terminalName || '-';
     }
     if (paymentMessage) {
-      paymentMessage.textContent = paymentContext.message || 'Status wird geladen …';
+      let messageText = paymentContext.message || 'Status wird geladen …';
+      if (state === 'pending' && paymentContext.startedAt) {
+        const elapsedSeconds = Math.max(0, Math.round((Date.now() - paymentContext.startedAt) / 1000));
+        messageText += ` (läuft seit ${elapsedSeconds}s)`;
+      }
+      paymentMessage.textContent = messageText;
     }
 
     if (paymentStatusChip) {
@@ -941,6 +987,7 @@
       }
       activePaymentId = data.payment_id;
       pollFailureCount = 0;
+      paymentContext.startedAt = Date.now();
       setTerminalStatus('Zahlung läuft am Terminal …');
       updatePaymentState('pending', 'Zahlung läuft am Terminal …');
       stopPolling();
@@ -959,9 +1006,30 @@
 
   function updateTerminalPayState() {
     if (!terminalButton) return;
+
+    if (activePaymentId !== null) {
+      // A payment is running (or just finished) on this terminal. Keep the entry
+      // point reachable - never fully lock the cashier out - so closing the dialog
+      // or reloading the page never strands them without a way back to see the
+      // status or cancel it.
+      terminalButton.textContent = 'Zahlung anzeigen';
+      terminalButton.disabled = false;
+      if (terminalEditButton) {
+        terminalEditButton.disabled = true;
+      }
+      if (terminalStatus) {
+        terminalStatus.classList.add('clickable');
+      }
+      return;
+    }
+
+    terminalButton.textContent = 'Zahlung starten';
+    if (terminalStatus) {
+      terminalStatus.classList.remove('clickable');
+    }
     const total = getCartTotal();
     const terminalId = getSelectedTerminal();
-    const disabled = total <= 0 || !terminalId || activePaymentId !== null;
+    const disabled = total <= 0 || !terminalId;
     terminalButton.disabled = disabled;
     if (terminalEditButton) {
       terminalEditButton.disabled = disabled;
@@ -1119,6 +1187,14 @@
     initializeTerminalBinding();
     updateTerminalPayState();
     terminalButton.addEventListener('click', async () => {
+      if (activePaymentId !== null) {
+        // Reopen the dialog on the payment that is already running, instead of
+        // starting a new one on top of it.
+        renderPaymentDialog();
+        openPaymentDialog();
+        return;
+      }
+
       const total = getCartTotal();
       const terminalId = getSelectedTerminal();
       const terminalName = fixedAssignedTerminalName || getTerminalNameById(terminalId) || `#${terminalId}`;
@@ -1131,6 +1207,16 @@
         message: 'Zahlung wird gestartet …',
       };
       await startTerminalPayment();
+    });
+  }
+
+  if (terminalStatus) {
+    terminalStatus.addEventListener('click', () => {
+      if (activePaymentId === null) {
+        return;
+      }
+      renderPaymentDialog();
+      openPaymentDialog();
     });
   }
 
