@@ -242,13 +242,22 @@ App gemeldet (sichtbar auf `/shotcounter/nfc` statt eines nichtssagenden
   derselben SSID wird vorher entfernt (kein Duplikat-Müll bei erneutem
   Hinzufügen), und es wird bis zu 10s auf eine echte Verbindung gewartet,
   statt nur "keine Fehlermeldung" als Erfolg zu werten.
+- Nach Netzwerken suchen (auch über die Admin-Oberfläche nutzbar):
+  ```bash
+  sudo ./scripts/pi_manage.sh wifi-scan
+  ```
+  Läuft bewusst mit root-Rechten: NetworkManager erlaubt einem
+  unprivilegierten Aufruf keinen echten Rescan, sondern liefert nur den
+  zwischengespeicherten Stand - solange `wlan0` bereits mit einem Netz
+  verbunden ist, tauchen ohne root nie neue Netze auf, nur das aktuelle.
 - WLAN-Schnittstelle aktivieren/deaktivieren:
   ```bash
   sudo ./scripts/pi_manage.sh wifi-up
   sudo ./scripts/pi_manage.sh wifi-down
   ```
 
-> Für Sicherheit empfiehlt es sich, WLAN nur während Wartungsfenstern zu aktivieren und Zugriffe zu beschränken (Firewall/SSH). Damit die Admin-Oberfläche (`/admin/network/wifi/connect`) das Script ohne Passwortabfrage ausführen kann, braucht der Service-User eine passende `NOPASSWD`-Sudo-Regel für genau diesen Pfad, z. B. in `/etc/sudoers.d/kassensystem-wifi`:
+> Für Sicherheit empfiehlt es sich, WLAN nur während Wartungsfenstern zu aktivieren und Zugriffe zu beschränken (Firewall/SSH). Damit die Admin-Oberfläche (`/admin/network/wifi/connect`, `/admin/network/wifi/scan`) das Script ohne Passwortabfrage ausführen kann, braucht der Service-User eine passende `NOPASSWD`-Sudo-Regel für genau diesen Pfad, z. B. in `/etc/sudoers.d/kassensystem-wifi`:
 > ```
-> kassensystem ALL=(root) NOPASSWD: /pfad/zu/scripts/pi_manage.sh wifi-add *, /pfad/zu/scripts/pi_manage.sh wifi-up, /pfad/zu/scripts/pi_manage.sh wifi-down
+> kassensystem ALL=(root) NOPASSWD: /pfad/zu/scripts/pi_manage.sh wifi-add *, /pfad/zu/scripts/pi_manage.sh wifi-scan, /pfad/zu/scripts/pi_manage.sh wifi-up, /pfad/zu/scripts/pi_manage.sh wifi-down
 > ```
+> Eine bereits bestehende Regel ohne `wifi-scan` bitte entsprechend ergänzen, sonst scheitert der Scan-Button mit einer Passwortabfrage/Fehler.

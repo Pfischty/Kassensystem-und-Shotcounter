@@ -25,6 +25,7 @@
 #   sudo ./scripts/pi_manage.sh enable-service
 #   sudo ./scripts/pi_manage.sh update --branch main
 #   sudo ./scripts/pi_manage.sh wifi-add SSID [PASS]   (PASS leer = offenes Netz)
+#   sudo ./scripts/pi_manage.sh wifi-scan
 #   sudo ./scripts/pi_manage.sh wifi-up
 #   sudo ./scripts/pi_manage.sh wifi-down
 
@@ -65,6 +66,8 @@ Commands:
                                pcscd can access the ACR122U (Linux only)
   wifi-add SSID [PASS]        Add/connect Wi‑Fi network (NetworkManager or
                                wpa_supplicant, auto-detected); PASS leer = offenes Netz
+  wifi-scan                   Force a fresh scan for nearby Wi‑Fi networks
+                               (needs root even while already connected)
   wifi-up                     Bring wlan0 up and reconnect
   wifi-down                   Bring wlan0 down
   status                      Show service status
@@ -177,11 +180,14 @@ ExecStart=${APP_ROOT}/.venv/bin/gunicorn -w ${gunicorn_workers} -b 0.0.0.0:${por
 Restart=always
 RestartSec=5
 TimeoutStartSec=30
-NoNewPrivileges=true
+# NoNewPrivileges must stay unset (default: no) and /run/sudo must stay
+# writable: the Admin-UI update feature shells out via sudo (see
+# deploy/install-update-service.sh), which needs its setuid bit and a
+# writable /run/sudo/ts lock dir to work at all.
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=${protect_home}
-ReadWritePaths=${APP_ROOT}/instance
+ReadWritePaths=${APP_ROOT}/instance /run/sudo
 UMask=0077
 
 [Install]
@@ -554,6 +560,26 @@ EOF
   fi
 }
 
+wifi_scan() {
+  require_root
+  # Scannen braucht root: NetworkManager erlaubt einem unprivilegierten
+  # Aufrufer keinen echten Rescan (nur Lesen des zwischengespeicherten
+  # Standes), besonders wenn wlan0 bereits mit einem Netz verbunden ist -
+  # dann wurden ohne root nie neue APs gefunden, nur das aktuelle Netz.
+  if wifi_backend_is_networkmanager; then
+    echo "FORMAT=nmcli"
+    nmcli device wifi rescan ifname wlan0 >/dev/null 2>&1 || true
+    sleep 2
+    nmcli -t -f SSID,SIGNAL,SECURITY device wifi list ifname wlan0
+  elif command -v iwlist >/dev/null 2>&1; then
+    echo "FORMAT=iwlist"
+    iwlist wlan0 scan 2>/dev/null
+  else
+    echo "WLAN-Scan nicht möglich: weder NetworkManager noch iwlist verfügbar." >&2
+    exit 1
+  fi
+}
+
 wifi_up() {
   require_root
   if wifi_backend_is_networkmanager; then
@@ -602,6 +628,7 @@ case "${cmd}" in
   disable-nfc) shift; disable_nfc "$@" ;;
   nfc-fix-kernel-driver) shift; nfc_fix_kernel_driver "$@" ;;
     wifi-add) shift; wifi_add "${1:-}" "${2:-}" ;;
+    wifi-scan) shift; wifi_scan ;;
     wifi-up) shift; wifi_up ;;
     wifi-down) shift; wifi_down ;;
     status) shift; show_status ;;

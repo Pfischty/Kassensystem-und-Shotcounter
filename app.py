@@ -3390,21 +3390,10 @@ def admin_network():
     })
 
 
-def _wifi_scan_nmcli() -> Optional[list]:
-    """Scan via NetworkManager (Standard auf aktuellen Raspberry-Pi-OS-Images).
-
-    Returns None if nmcli/NetworkManager is not available, so the caller can
-    fall back to the classic iwlist-based scan.
-    """
-    result = _run_safe_command(
-        ["nmcli", "-t", "-f", "SSID,SIGNAL,SECURITY", "device", "wifi", "list", "ifname", "wlan0", "--rescan", "yes"],
-        timeout=15,
-    )
-    if not result["success"]:
-        return None
-
+def _parse_nmcli_scan(output: str) -> list:
+    """Parse `nmcli -t -f SSID,SIGNAL,SECURITY ...` colon-separated output."""
     networks = []
-    for line in result["output"].split("\n"):
+    for line in output.split("\n"):
         if not line.strip():
             continue
         # Format "SSID:SIGNAL:SECURITY" – von rechts splitten, da die SSID
@@ -3426,30 +3415,14 @@ def _wifi_scan_nmcli() -> Optional[list]:
     return networks
 
 
-@app.route("/admin/network/wifi/scan")
-def admin_wifi_scan():
-    """Scan for available WiFi networks."""
-    networks = _wifi_scan_nmcli()
-    if networks is not None:
-        seen_ssids = set()
-        unique_networks = []
-        for network in sorted(networks, key=lambda x: x["quality"], reverse=True):
-            if network["ssid"] not in seen_ssids:
-                seen_ssids.add(network["ssid"])
-                unique_networks.append(network)
-        return jsonify({"success": True, "networks": unique_networks})
-
-    # Fallback für klassische Setups ohne NetworkManager (iwlist/wireless-tools)
-    result = _run_safe_command(["iwlist", "wlan0", "scan"], timeout=15)
-    if not result["success"]:
-        return jsonify({"success": False, "error": result["error"] or "WLAN-Scan nicht möglich"})
-
-    # Parse scan results
+def _parse_iwlist_scan(output: str) -> list:
+    """Parse legacy `iwlist wlan0 scan` output (wireless-tools fallback)."""
+    networks = []
     current_ssid = None
     current_quality = None
     current_encryption = "Open"
 
-    for line in result["output"].split("\n"):
+    for line in output.split("\n"):
         line = line.strip()
         if "ESSID:" in line:
             match = re.search(r'ESSID:"([^"]+)"', line)
@@ -3466,11 +3439,11 @@ def admin_wifi_scan():
                 current_encryption = "Encrypted"
             else:
                 current_encryption = "Open"
-        
+
         # When we have collected info for a network, add it
         if current_ssid and "IE: IEEE 802.11i/WPA2" in line:
             current_encryption = "WPA2"
-        
+
         # Cell separator or end - save current network
         if current_ssid and ("Cell" in line or line == ""):
             networks.append({
@@ -3481,7 +3454,7 @@ def admin_wifi_scan():
             current_ssid = None
             current_quality = None
             current_encryption = "Open"
-    
+
     # Add last network if exists
     if current_ssid:
         networks.append({
@@ -3489,15 +3462,46 @@ def admin_wifi_scan():
             "quality": current_quality or 0,
             "encryption": current_encryption
         })
-    
-    # Remove duplicates and sort by quality
+
+    return networks
+
+
+@app.route("/admin/network/wifi/scan")
+def admin_wifi_scan():
+    """Scan for available WiFi networks.
+
+    Läuft über `sudo pi_manage.sh wifi-scan` statt direkt per nmcli: ein
+    unprivilegierter Aufruf bekommt von NetworkManager keinen echten Rescan,
+    sondern nur den zwischengespeicherten Stand - solange wlan0 bereits
+    verbunden ist, tauchen dann nie neue Netze auf, nur das aktuelle.
+    """
+    script_path = Path(app.root_path) / "scripts" / "pi_manage.sh"
+    if not script_path.exists():
+        return jsonify({"success": False, "error": "WiFi-Verwaltung nicht verfügbar"})
+
+    result = _run_safe_command(["sudo", str(script_path), "wifi-scan"], timeout=20)
+    if not result["success"]:
+        return jsonify({"success": False, "error": result["error"] or "WLAN-Scan nicht möglich"})
+
+    lines = result["output"].split("\n")
+    scan_format = "nmcli"
+    if lines and lines[0].strip().startswith("FORMAT="):
+        scan_format = lines[0].split("=", 1)[1].strip()
+        lines = lines[1:]
+    raw_output = "\n".join(lines)
+
+    if scan_format == "iwlist":
+        networks = _parse_iwlist_scan(raw_output)
+    else:
+        networks = _parse_nmcli_scan(raw_output)
+
     seen_ssids = set()
     unique_networks = []
     for network in sorted(networks, key=lambda x: x["quality"], reverse=True):
         if network["ssid"] not in seen_ssids:
             seen_ssids.add(network["ssid"])
             unique_networks.append(network)
-    
+
     return jsonify({"success": True, "networks": unique_networks})
 
 
