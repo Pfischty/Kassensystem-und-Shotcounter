@@ -3026,6 +3026,11 @@ def _systemctl_bin() -> str:
     return "/bin/systemctl" if Path("/bin/systemctl").exists() else "/usr/bin/systemctl"
 
 
+def _journalctl_bin() -> str:
+    """Resolve journalctl path for sudoers-compatibility."""
+    return "/bin/journalctl" if Path("/bin/journalctl").exists() else "/usr/bin/journalctl"
+
+
 def _systemctl_show_value(property_name: str, timeout: int = 10) -> dict:
     """Read a systemd unit property value (no sudo)."""
     cmd = [_systemctl_bin(), "show", "kassensystem-update.service", "-p", property_name, "--value"]
@@ -3355,7 +3360,7 @@ def admin_git_status():
 
 @app.route("/admin/system/git-update", methods=["POST"])
 def admin_git_update():
-    """Pull latest changes from git and restart service."""
+    """Trigger the privileged update unit (git pull, deps, Service-Restart)."""
     # Check if there are uncommitted changes
     git_info = _get_git_status()
     if git_info.get("has_changes"):
@@ -3363,12 +3368,12 @@ def admin_git_update():
             "success": False,
             "error": "Es gibt nicht committete Änderungen. Bitte zuerst committen oder verwerfen."
         })
-    
+
     # Use the pi_manage.sh script if available
     script_path = Path(app.root_path) / "scripts" / "pi_manage.sh"
     if not script_path.exists():
         return jsonify({"success": False, "error": "Update-Script nicht gefunden"})
-    
+
     # Validate branch name contains only safe characters
     branch = git_info.get("branch", "main")
     if not re.match(r'^[a-zA-Z0-9/_.-]+$', branch):
@@ -3376,44 +3381,52 @@ def admin_git_update():
             "success": False,
             "error": "Ungültiger Branch-Name"
         })
-    
+
     # Trigger the privileged update service (runs the update script as root).
-    # Use sudo with a narrow NOPASSWD sudoers entry to avoid interactive
-    # polkit prompts in the web context.
+    # WICHTIG: --no-block, nicht blockierend starten. Das Update restartet am
+    # Ende den eigenen Webservice (Self-Restart); würden wir hier auf den
+    # Abschluss warten, würde genau dieser wartende Prozess durch den eigenen
+    # Service-Neustart mitgekillt (systemd killt standardmäßig die komplette
+    # Cgroup) - die Anfrage würde abbrechen, selbst wenn das Update erfolgreich
+    # war. Der tatsächliche Fortschritt wird stattdessen über
+    # /admin/system/git-update-status gepollt.
     systemctl_bin = _systemctl_bin()
-    before_invocation = _systemctl_show_value("InvocationID")
-    before_id = before_invocation["output"].strip() if before_invocation["success"] else ""
+    result = _run_safe_command(
+        ["sudo", systemctl_bin, "start", "--no-block", "kassensystem-update.service"], timeout=15
+    )
 
-    result = _run_safe_command(["sudo", systemctl_bin, "start", "kassensystem-update.service"], timeout=300)
-
-    # If start failed but the unit actually ran successfully, treat as success.
-    if not result["success"] and before_invocation["success"]:
-        after_invocation = _systemctl_show_value("InvocationID")
-        result_state = _systemctl_show_value("Result")
-        after_id = after_invocation["output"].strip() if after_invocation["success"] else ""
-        if after_id and after_id != before_id and result_state["success"]:
-            if result_state["output"].strip().lower() == "success":
-                app.logger.warning(
-                    "systemctl start returned non-zero, but unit invocation succeeded (ID %s).",
-                    after_id,
-                )
-                result = {"success": True, "output": "", "error": ""}
-    
     if result["success"]:
-        app.logger.info("Git Update erfolgreich durchgeführt")
+        app.logger.info("Git Update gestartet (Branch %s)", branch)
         return jsonify({
             "success": True,
-            "message": "Update erfolgreich. Service wird neu gestartet..."
+            "message": "Update gestartet. Der Dienst wird in Kürze neu geladen..."
         })
     else:
-        error_detail = result.get("error") or ""
-        if not error_detail:
-            error_detail = result.get("output") or ""
-        app.logger.error("Git Update fehlgeschlagen: %s", error_detail)
-        return jsonify({
-            "success": False,
-            "error": error_detail or "Update fehlgeschlagen"
-        })
+        error_detail = result.get("error") or result.get("output") or "Update konnte nicht gestartet werden"
+        app.logger.error("Git Update konnte nicht gestartet werden: %s", error_detail)
+        return jsonify({"success": False, "error": error_detail})
+
+
+@app.route("/admin/system/git-update-status")
+def admin_git_update_status():
+    """Report progress of the asynchronously started update unit for UI polling."""
+    active_state = _systemctl_show_value("ActiveState")
+    result_state = _systemctl_show_value("Result")
+
+    state = active_state["output"].strip() if active_state["success"] else "unknown"
+    outcome = result_state["output"].strip() if result_state["success"] else "unknown"
+    running = state in ("activating", "reloading", "deactivating")
+
+    payload = {"success": True, "running": running, "state": state, "result": outcome}
+
+    if not running and outcome and outcome.lower() != "success":
+        log_result = _run_safe_command(
+            ["sudo", _journalctl_bin(), "-u", "kassensystem-update.service", "-n", "25", "--no-pager"],
+            timeout=10,
+        )
+        payload["log_tail"] = log_result["output"] if log_result["success"] else ""
+
+    return jsonify(payload)
 
 
 # ---------------------------------------------------------------------------

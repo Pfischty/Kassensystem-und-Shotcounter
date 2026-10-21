@@ -29,8 +29,13 @@ systemctl enable --now kassensystem-update.service
 
 echo "Writing sudoers snippet to allow 'kassensystem' to start the unit..."
 cat > "${SUDOERS_DST}" <<'EOF'
-# Allow the service user to start and check the update unit without a password
-kassensystem ALL=(root) NOPASSWD: /bin/systemctl start kassensystem-update.service, /bin/systemctl status kassensystem-update.service
+# Allow the service user to start and check the update unit without a password.
+# --no-block is required: the update unit restarts the web service itself
+# (self-restart), so the web process must never block on "systemctl start"
+# waiting for that restart to finish (it would get killed along with its own
+# service's cgroup). journalctl is used to surface the failure reason in the
+# admin UI when the update fails.
+kassensystem ALL=(root) NOPASSWD: /bin/systemctl start --no-block kassensystem-update.service, /bin/systemctl status kassensystem-update.service, /bin/journalctl -u kassensystem-update.service -n 25 --no-pager
 EOF
 chmod 440 "${SUDOERS_DST}"
 

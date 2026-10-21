@@ -2487,6 +2487,58 @@ document.addEventListener('click', (e) => {
     }
   };
 
+  // Pollt den Update-Fortschritt. Der Trigger-Request kehrt sofort zurück
+  // (siehe performGitUpdate), weil das Update den Webservice am Ende selbst
+  // neu startet - ein währenddessen wartender Request würde durch den
+  // eigenen Service-Neustart abgebrochen. Daher: Status separat abfragen,
+  // und einen Netzwerkfehler während des Neustarts als "läuft noch" werten
+  // statt als Fehlschlag.
+  const pollGitUpdateStatus = async (messageDiv, attempt = 0) => {
+    const maxAttempts = 60; // ~5 Minuten bei 5s Intervall
+
+    let data = null;
+    try {
+      const response = await fetch('/admin/system/git-update-status');
+      const ct = (response.headers.get('content-type') || '').toLowerCase();
+      if (ct.includes('application/json')) {
+        data = await response.json();
+      }
+    } catch (error) {
+      // Dienst während Neustart kurzzeitig nicht erreichbar - weiter pollen.
+    }
+
+    if (!data) {
+      if (attempt < maxAttempts) {
+        setTimeout(() => pollGitUpdateStatus(messageDiv, attempt + 1), 3000);
+      } else {
+        messageDiv.innerHTML = '<p style="color: #ef4444;">Dienst antwortet nach dem Update nicht mehr. Bitte manuell prüfen (journalctl -u kassensystem-update.service).</p>';
+      }
+      return;
+    }
+
+    if (data.running) {
+      if (attempt < maxAttempts) {
+        messageDiv.innerHTML = '<p class="muted">Update läuft (Dienst wird neu gestartet) ...</p>';
+        setTimeout(() => pollGitUpdateStatus(messageDiv, attempt + 1), 5000);
+      } else {
+        messageDiv.innerHTML = '<p style="color: #f59e0b;">Update läuft ungewöhnlich lange. Bitte Logs prüfen.</p>';
+      }
+      return;
+    }
+
+    if ((data.result || '').toLowerCase() === 'success') {
+      messageDiv.innerHTML = '<p style="color: #10b981;">Update erfolgreich. Seite wird neu geladen...</p>';
+      setTimeout(() => location.reload(), 3000);
+    } else {
+      let html = `<p style="color: #ef4444;">Update fehlgeschlagen (${data.result || 'unbekannt'}).</p>`;
+      if (data.log_tail) {
+        const escapedLog = data.log_tail.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        html += `<pre style="white-space: pre-wrap; font-size: 0.8rem; max-height: 220px; overflow: auto; background: rgba(0,0,0,0.3); padding: 0.6rem; border-radius: 4px;">${escapedLog}</pre>`;
+      }
+      messageDiv.innerHTML = html;
+    }
+  };
+
   window.performGitUpdate = async () => {
     const messageDiv = document.getElementById('git-update-message');
     if (!messageDiv) return;
@@ -2497,7 +2549,7 @@ document.addEventListener('click', (e) => {
     );
     if (!confirmed) return;
 
-    messageDiv.innerHTML = '<p class="muted">Update wird durchgeführt...</p>';
+    messageDiv.innerHTML = '<p class="muted">Update wird gestartet...</p>';
 
     try {
       const response = await fetch('/admin/system/git-update', {
@@ -2513,18 +2565,17 @@ document.addEventListener('click', (e) => {
         return;
       }
 
-      if (result.success) {
-        messageDiv.innerHTML = `<p style="color: #10b981;">${result.message}</p>`;
-        setTimeout(() => {
-          messageDiv.innerHTML += '<p class="muted">Seite wird in 5 Sekunden neu geladen...</p>';
-          setTimeout(() => location.reload(), 5000);
-        }, 2000);
-      } else {
+      if (!result.success) {
         messageDiv.innerHTML = `<p style="color: #ef4444;">Fehler: ${result.error}</p>`;
+        return;
       }
     } catch (error) {
-      messageDiv.innerHTML = `<p style="color: #ef4444;">Fehler: ${error.message}</p>`;
+      // Der Trigger selbst ist nicht-blockierend und sollte schnell
+      // zurückkehren; schlägt selbst das fehl, trotzdem mit dem Polling
+      // versuchen, den echten Status zu ermitteln.
     }
+
+    pollGitUpdateStatus(messageDiv);
   };
 
   // Load network and git status when sections are opened

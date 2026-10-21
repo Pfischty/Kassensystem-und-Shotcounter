@@ -240,7 +240,18 @@ update_app() {
   install_deps $([[ $offline -eq 1 ]] && echo --offline || true)
   if [[ -d "${APP_ROOT}/migrations" ]]; then
     echo "Führe Datenbank-Migrationen aus ..."
-    FLASK_APP=app "${APP_ROOT}/.venv/bin/flask" db upgrade || true
+    # journal_mode=WAL legt bei jeder Verbindung ggf. neue app.db-wal/-shm-
+    # Dateien im instance/-Verzeichnis an. Liefe dieser Befehl als root (z. B.
+    # über den systemd-Unit kassensystem-update.service), würden diese
+    # Dateien root-owned angelegt - der eigentliche Dienst läuft aber als
+    # SERVICE_USER und könnte danach nicht mehr in die Datenbank schreiben
+    # ("Update instabil", Kasse geht nach dem Update nicht mehr). Deshalb die
+    # Migration explizit als SERVICE_USER ausführen, wenn wir als root laufen.
+    if [[ "$(id -u)" -eq 0 ]]; then
+      sudo -u "${SERVICE_USER}" env FLASK_APP=app "${APP_ROOT}/.venv/bin/flask" db upgrade || true
+    else
+      FLASK_APP=app "${APP_ROOT}/.venv/bin/flask" db upgrade || true
+    fi
   fi
   echo "Starte Dienst neu ..."
   require_root
