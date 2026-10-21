@@ -627,6 +627,18 @@
   const browserTerminalStorageKey = 'cashier_terminal_binding_event_{{ event.id }}';
   let terminalPoller = null;
   let activePaymentId = null;
+  // Guards start/cancel against being triggered twice concurrently (e.g. a double
+  // click/tap on the terminal button before the UI re-renders as disabled). Without
+  // this, two overlapping "start" calls could each create a real SumUp payment, or a
+  // stray failure response from a duplicate request could wipe `activePaymentId`
+  // while the other request's payment is genuinely still pending on the terminal.
+  let terminalActionInFlight = false;
+  // Consecutive failed status polls. A single transient fetch failure (a short wifi
+  // blip on the cashier tablet, a momentary 502 while reconciling) must not make the
+  // UI give up and lose track of a payment that is still genuinely running on the
+  // terminal - only a sustained failure should.
+  let pollFailureCount = 0;
+  const MAX_CONSECUTIVE_POLL_FAILURES = 5;
   let paymentContext = {
     status: 'draft',
     terminalName: '',
@@ -837,6 +849,13 @@
   }
 
   function prepareTerminalPaymentDialog() {
+    // Defense in depth: never reset the dialog back to a fresh "draft" state while a
+    // payment is genuinely still active, even if the Edit button was somehow left
+    // clickable (it should normally be disabled via updateTerminalPayState()).
+    if (terminalActionInFlight || (activePaymentId && paymentContext.status === 'pending')) {
+      return;
+    }
+
     const terminalId = getSelectedTerminal();
     const total = getCartTotal();
     if (!terminalId || total <= 0) {
@@ -868,6 +887,14 @@
   }
 
   async function startTerminalPayment() {
+    // Reject a second, overlapping start (double click/tap, or Start+Retry firing
+    // together) instead of letting two requests race and potentially create two
+    // real SumUp payments, or letting a stale failure response wipe out the
+    // activePaymentId of a payment that is genuinely still pending.
+    if (terminalActionInFlight || (activePaymentId && paymentContext.status === 'pending')) {
+      return;
+    }
+
     const terminalId = getSelectedTerminal();
     const amountCents = paymentContext.amountCents > 0 ? paymentContext.amountCents : Math.round(getCartTotal() * 100);
     const terminalName = fixedAssignedTerminalName || getTerminalNameById(terminalId) || paymentContext.terminalName || `#${terminalId}`;
@@ -878,6 +905,7 @@
       return;
     }
 
+    terminalActionInFlight = true;
     paymentContext = {
       ...paymentContext,
       status: 'pending',
@@ -912,6 +940,7 @@
         return;
       }
       activePaymentId = data.payment_id;
+      pollFailureCount = 0;
       setTerminalStatus('Zahlung läuft am Terminal …');
       updatePaymentState('pending', 'Zahlung läuft am Terminal …');
       stopPolling();
@@ -923,6 +952,8 @@
       activePaymentId = null;
       updateTerminalPayState();
       updatePaymentState('error', 'Zahlung konnte nicht gestartet werden.');
+    } finally {
+      terminalActionInFlight = false;
     }
   }
 
@@ -944,19 +975,29 @@
     }
   }
 
+  function handleTransientPollFailure(message) {
+    pollFailureCount += 1;
+    if (pollFailureCount < MAX_CONSECUTIVE_POLL_FAILURES) {
+      // Keep polling silently; only hint at the hiccup without abandoning the payment.
+      setTerminalStatus(`${message} (erneuter Versuch …)`, 'error');
+      return;
+    }
+    setTerminalStatus(message, 'error');
+    stopPolling();
+    activePaymentId = null;
+    updateTerminalPayState();
+    updatePaymentState('error', `${message} Bitte Status manuell prüfen, bevor erneut kassiert wird.`);
+  }
+
   async function pollTerminalStatus(paymentId) {
     try {
       const response = await fetch(`/api/terminal-payments/${paymentId}`);
       const data = await response.json();
       if (!data.success) {
-        const errorText = data.error || 'Status konnte nicht geladen werden.';
-        setTerminalStatus(errorText, 'error');
-        stopPolling();
-        activePaymentId = null;
-        updateTerminalPayState();
-        updatePaymentState('error', errorText);
+        handleTransientPollFailure(data.error || 'Status konnte nicht geladen werden.');
         return;
       }
+      pollFailureCount = 0;
       if (data.status === 'pending') {
         setTerminalStatus('Zahlung läuft am Terminal …');
         updatePaymentState('pending', 'Bitte Zahlung direkt am Terminal bestätigen.');
@@ -980,11 +1021,7 @@
       updatePaymentState(data.status || 'error', statusText);
     } catch (error) {
       console.error('Status-Fehler:', error);
-      setTerminalStatus('Status konnte nicht geladen werden.', 'error');
-      stopPolling();
-      activePaymentId = null;
-      updateTerminalPayState();
-      updatePaymentState('error', 'Status konnte nicht geladen werden.');
+      handleTransientPollFailure('Status konnte nicht geladen werden.');
     }
   }
 
@@ -1126,13 +1163,17 @@
   }
   if (paymentCancelBtn) {
     paymentCancelBtn.addEventListener('click', async () => {
-      if (!activePaymentId) {
+      // Guard against a double click/tap firing two concurrent cancel requests for
+      // the same payment, and against racing an in-flight start/retry.
+      if (!activePaymentId || terminalActionInFlight) {
         return;
       }
+      terminalActionInFlight = true;
+      const cancelledPaymentId = activePaymentId;
       updatePaymentState('pending', 'Zahlung wird abgebrochen …');
       paymentCancelBtn.disabled = true;
       try {
-        const response = await fetch(`/api/terminal-payments/${activePaymentId}/cancel`, {
+        const response = await fetch(`/api/terminal-payments/${cancelledPaymentId}/cancel`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -1153,12 +1194,22 @@
         stopPolling();
         activePaymentId = null;
         updateTerminalPayState();
-        setTerminalStatus('Zahlung abgebrochen.', 'error');
-        updatePaymentState('aborted', 'Zahlung wurde abgebrochen.');
+        // The backend verifies the final state instead of assuming the cancel
+        // actually stopped the payment: if the card was charged right before the
+        // cancel took effect, `data.status` comes back as "success", not "aborted".
+        if (data.status === 'success') {
+          setTerminalStatus('Zahlung erfolgreich.', 'success');
+          updatePaymentState('success', 'Zahlung war bereits erfolgreich und wurde nicht abgebrochen.');
+        } else {
+          setTerminalStatus('Zahlung abgebrochen.', 'error');
+          updatePaymentState(data.status || 'aborted', 'Zahlung wurde abgebrochen.');
+        }
       } catch (error) {
         console.error('Cancel-Fehler:', error);
         setTerminalStatus('Abbruch fehlgeschlagen.', 'error');
         updatePaymentState('error', 'Abbruch fehlgeschlagen.');
+      } finally {
+        terminalActionInFlight = false;
       }
     });
   }

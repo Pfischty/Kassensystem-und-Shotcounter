@@ -21,6 +21,9 @@ from app import (
     SumUpClientError,
     app,
     db,
+    _reconcile_pending_terminal_payment,
+    _reconcile_orphaned_terminal_payments,
+    _sumup_http_status_for_error,
 )
 
 
@@ -1851,6 +1854,19 @@ def test_create_terminal_payment_reconciles_stale_pending_before_blocking(client
             created_at=app_module.utcnow() - timedelta(seconds=30),
         )
         db.session.add(stale_payment)
+        db.session.flush()
+        # Simulate that an earlier poll already observed "not found" a while ago: the
+        # aborted-inference heuristic requires the not-found condition to be confirmed
+        # across repeated lookups before it is trusted (a single reading is not enough,
+        # since a reader also goes idle right after a *successful* payment).
+        db.session.add(
+            PaymentLog(
+                terminal_payment_id=stale_payment.id,
+                event="status_not_found",
+                payload_json={"status_code": 404},
+                created_at=app_module.utcnow() - timedelta(seconds=20),
+            )
+        )
         db.session.commit()
         terminal_id = terminal.id
         stale_payment_id = stale_payment.id
@@ -1892,6 +1908,290 @@ def test_create_terminal_payment_reconciles_stale_pending_before_blocking(client
         old_payment = db.session.get(TerminalPayment, stale_payment_id)
         assert old_payment is not None
         assert old_payment.status == "aborted"
+
+
+def test_reconcile_terminal_payment_does_not_abort_on_single_not_found_reading(client):
+    """A single 404+idle reading must not flip the payment to "aborted": a reader also
+    goes idle right after a *successful* payment, before the transaction becomes
+    visible via the status lookup API, so trusting one reading risks mislabeling a
+    successful payment as aborted and causing a double charge on cashier retry."""
+
+    event = _create_and_activate_event(client)
+    with app.app_context():
+        terminal = Terminal(name="Reader Debounce", sumup_device_id="rdr_DEBOUNCE", active=True)
+        db.session.add(terminal)
+        db.session.flush()
+
+        payment = TerminalPayment(
+            terminal_id=terminal.id,
+            event_id=event.id,
+            amount_cents=500,
+            currency="CHF",
+            status="pending",
+            sumup_payment_id="txn_debounce",
+            created_at=app_module.utcnow() - timedelta(seconds=20),
+        )
+        db.session.add(payment)
+        db.session.commit()
+        payment_id = payment.id
+
+        class FakeClient:
+            def get_payment_status(self, _payment_id):
+                raise SumUpClientError(
+                    "SumUp API Fehler (404): Resource not found",
+                    status_code=404,
+                    error_type="http",
+                )
+
+            def get_reader_status(self, _reader_id):
+                return {"data": {"state": "IDLE", "status": "ONLINE"}}
+
+        status = _reconcile_pending_terminal_payment(payment, client=FakeClient())
+        db.session.commit()
+        assert status == "pending"
+
+        refreshed = db.session.get(TerminalPayment, payment_id)
+        assert refreshed.status == "pending"
+
+
+def test_reconcile_terminal_payment_prefers_final_sumup_status_over_timeout(client):
+    """The SumUp status must be checked before a local timeout is declared: otherwise a
+    payment that actually succeeded right as the local timeout window closes would be
+    marked "timeout", and a cashier retry on "timeout" would charge the customer twice."""
+
+    event = _create_and_activate_event(client)
+    with app.app_context():
+        terminal = Terminal(name="Reader Timeout", sumup_device_id="rdr_TIMEOUT", active=True)
+        db.session.add(terminal)
+        db.session.flush()
+
+        payment = TerminalPayment(
+            terminal_id=terminal.id,
+            event_id=event.id,
+            amount_cents=500,
+            currency="CHF",
+            status="pending",
+            sumup_payment_id="txn_latesuccess",
+            created_at=app_module.utcnow() - timedelta(seconds=999),
+        )
+        db.session.add(payment)
+        db.session.commit()
+        payment_id = payment.id
+
+        class FakeClient:
+            def get_payment_status(self, _payment_id):
+                return type(
+                    "Resp",
+                    (),
+                    {"status": "successful", "raw": {"data": {"status": "successful"}}},
+                )()
+
+        status = _reconcile_pending_terminal_payment(payment, client=FakeClient())
+        db.session.commit()
+        assert status == "success"
+
+        refreshed = db.session.get(TerminalPayment, payment_id)
+        assert refreshed.status == "success"
+
+
+def _setup_pending_payment_for_cancel(event, *, sumup_payment_id="txn_cancel"):
+    terminal = Terminal(name="Reader Cancel", sumup_device_id="rdr_CANCEL", active=True)
+    db.session.add(terminal)
+    db.session.flush()
+
+    payment = TerminalPayment(
+        terminal_id=terminal.id,
+        event_id=event.id,
+        amount_cents=500,
+        currency="CHF",
+        status="pending",
+        sumup_payment_id=sumup_payment_id,
+    )
+    db.session.add(payment)
+    db.session.commit()
+    return payment.id
+
+
+def test_cancel_terminal_payment_does_not_override_actual_success(client, monkeypatch):
+    """If the card transaction actually completed right as the cashier cancels, the
+    cancel route must not mark the payment as "aborted" - that would hide a real
+    charge from reconciliation and risk a second, duplicate charge on retry."""
+
+    event = _create_and_activate_event(client)
+    with app.app_context():
+        payment_id = _setup_pending_payment_for_cancel(event)
+
+    class FakeClient:
+        def cancel_terminal_payment(self, **_kwargs):
+            return {"data": {"status": "cancelled"}}
+
+        def get_payment_status(self, _payment_id):
+            return type(
+                "Resp",
+                (),
+                {"status": "successful", "raw": {"data": {"status": "successful"}}},
+            )()
+
+    monkeypatch.setattr(app_module, "_sumup_client", lambda: FakeClient())
+
+    response = client.post(f"/api/terminal-payments/{payment_id}/cancel")
+    assert response.status_code == 200
+    data = response.get_json()
+    assert data["success"] is True
+    assert data["status"] == "success"
+
+    with app.app_context():
+        refreshed = db.session.get(TerminalPayment, payment_id)
+        assert refreshed.status == "success"
+
+
+def test_cancel_terminal_payment_marks_aborted_when_status_lookup_not_found(client, monkeypatch):
+    """The common case: right after cancelling a reader checkout, the transaction
+    lookup still 404s. Without any contradicting signal, "aborted" remains correct."""
+
+    event = _create_and_activate_event(client)
+    with app.app_context():
+        payment_id = _setup_pending_payment_for_cancel(event)
+
+    class FakeClient:
+        def cancel_terminal_payment(self, **_kwargs):
+            return {"data": {"status": "cancelled"}}
+
+        def get_payment_status(self, _payment_id):
+            raise SumUpClientError(
+                "SumUp API Fehler (404): Resource not found",
+                status_code=404,
+                error_type="http",
+            )
+
+    monkeypatch.setattr(app_module, "_sumup_client", lambda: FakeClient())
+
+    response = client.post(f"/api/terminal-payments/{payment_id}/cancel")
+    assert response.status_code == 200
+    data = response.get_json()
+    assert data["success"] is True
+    assert data["status"] == "aborted"
+
+    with app.app_context():
+        refreshed = db.session.get(TerminalPayment, payment_id)
+        assert refreshed.status == "aborted"
+
+
+def test_cancel_terminal_payment_without_sumup_id_does_not_guess(client, monkeypatch):
+    """Without a confirmed SumUp payment id (e.g. creation failed with an ambiguous
+    network error), the route must not send the local database id to SumUp as a
+    stand-in - every cancel endpoint variant would 404 anyway, while implying a
+    cancel was attempted. It should instead report a clear error and leave the
+    payment "pending" so the terminal stays locked until the outcome is known."""
+
+    event = _create_and_activate_event(client)
+    with app.app_context():
+        payment_id = _setup_pending_payment_for_cancel(event, sumup_payment_id=None)
+
+    class FakeClient:
+        def cancel_terminal_payment(self, **_kwargs):
+            raise AssertionError("cancel_terminal_payment must not be called without a sumup_payment_id")
+
+    monkeypatch.setattr(app_module, "_sumup_client", lambda: FakeClient())
+
+    response = client.post(f"/api/terminal-payments/{payment_id}/cancel")
+    assert response.status_code == 409
+    data = response.get_json()
+    assert data["success"] is False
+    assert data["status"] == "pending"
+
+    with app.app_context():
+        refreshed = db.session.get(TerminalPayment, payment_id)
+        assert refreshed.status == "pending"
+
+
+def test_watchdog_reconciles_orphaned_pending_payment_without_any_client_poll(client, monkeypatch):
+    """If the cashier closes the browser tab while a payment is pending, nothing ever
+    polls `/api/terminal-payments/<id>` again. The watchdog must still resolve it
+    independently, otherwise the payment - and the terminal it locks - stays
+    "pending" forever."""
+
+    event = _create_and_activate_event(client)
+    with app.app_context():
+        terminal = Terminal(name="Reader Orphan", sumup_device_id="rdr_ORPHAN", active=True)
+        db.session.add(terminal)
+        db.session.flush()
+
+        payment = TerminalPayment(
+            terminal_id=terminal.id,
+            event_id=event.id,
+            amount_cents=500,
+            currency="CHF",
+            status="pending",
+            sumup_payment_id="txn_orphan",
+            created_at=app_module.utcnow() - timedelta(seconds=30),
+        )
+        db.session.add(payment)
+        db.session.commit()
+        payment_id = payment.id
+
+    class FakeClient:
+        def get_payment_status(self, _payment_id):
+            return type(
+                "Resp",
+                (),
+                {"status": "successful", "raw": {"data": {"status": "successful"}}},
+            )()
+
+    monkeypatch.setattr(app_module, "_sumup_client", lambda: FakeClient())
+
+    _reconcile_orphaned_terminal_payments()
+
+    with app.app_context():
+        refreshed = db.session.get(TerminalPayment, payment_id)
+        assert refreshed.status == "success"
+
+
+def test_watchdog_skips_freshly_created_pending_payments(client, monkeypatch):
+    """A payment created moments ago is likely still being polled by a live cashier
+    tab; the watchdog should give it a short head start instead of immediately
+    hammering SumUp with a redundant status check."""
+
+    event = _create_and_activate_event(client)
+    with app.app_context():
+        terminal = Terminal(name="Reader Fresh", sumup_device_id="rdr_FRESH", active=True)
+        db.session.add(terminal)
+        db.session.flush()
+
+        payment = TerminalPayment(
+            terminal_id=terminal.id,
+            event_id=event.id,
+            amount_cents=500,
+            currency="CHF",
+            status="pending",
+            sumup_payment_id="txn_fresh",
+        )
+        db.session.add(payment)
+        db.session.commit()
+        payment_id = payment.id
+
+    class FakeClient:
+        def get_payment_status(self, _payment_id):
+            raise AssertionError("watchdog must not touch a freshly created payment yet")
+
+    monkeypatch.setattr(app_module, "_sumup_client", lambda: FakeClient())
+
+    _reconcile_orphaned_terminal_payments()
+
+    with app.app_context():
+        refreshed = db.session.get(TerminalPayment, payment_id)
+        assert refreshed.status == "pending"
+
+
+def test_sumup_http_status_distinguishes_rate_limit_from_not_found():
+    """429 (rate limit, transient) must not be collapsed into the same 502 as a 404
+    (resource not found, a config/setup problem) - callers need to tell them apart to
+    treat a rate limit as "wait and retry" rather than a hard failure."""
+
+    rate_limited = SumUpClientError("too many requests", status_code=429, error_type="http")
+    not_found = SumUpClientError("not found", status_code=404, error_type="http")
+    assert _sumup_http_status_for_error(rate_limited) == 429
+    assert _sumup_http_status_for_error(not_found) == 502
 
 
 def test_create_terminal_payment_rejects_invalid_terminal_id_type(client):
@@ -1948,6 +2248,80 @@ def test_create_terminal_payment_maps_integrity_error_to_conflict(client, monkey
     assert data["success"] is False
     assert "aktive Zahlung" in data["error"]
 
+
+def test_create_terminal_payment_keeps_pending_on_ambiguous_network_error(client, monkeypatch):
+    """A network-level failure during creation means we don't know whether SumUp
+    actually received/processed the request (e.g. the card was already charged when
+    the connection dropped). The payment must stay "pending" - not "failed" - so the
+    terminal-lock keeps blocking an immediate retry that could double-charge."""
+
+    _create_and_activate_event(client)
+    with app.app_context():
+        terminal = Terminal(name="Reader Ambiguous", sumup_device_id="rdr_AMBIG", active=True)
+        db.session.add(terminal)
+        db.session.commit()
+        terminal_id = terminal.id
+
+    class FakeClient:
+        def create_terminal_payment(self, **_kwargs):
+            raise SumUpClientError(
+                "SumUp API nicht erreichbar: timed out",
+                error_type="network",
+            )
+
+    monkeypatch.setattr(app_module, "_sumup_client", lambda: FakeClient())
+
+    response = client.post(
+        "/api/terminal-payments",
+        json={"terminal_id": terminal_id, "amount_cents": 500, "currency": "CHF"},
+    )
+    assert response.status_code == 502
+    data = response.get_json()
+    assert data["success"] is False
+    assert data["status"] == "pending"
+
+    with app.app_context():
+        payment = TerminalPayment.query.filter_by(terminal_id=terminal_id).first()
+        assert payment is not None
+        assert payment.status == "pending"
+
+    # The terminal must still be considered locked by the ambiguous attempt.
+    second_response = client.post(
+        "/api/terminal-payments",
+        json={"terminal_id": terminal_id, "amount_cents": 500, "currency": "CHF"},
+    )
+    assert second_response.status_code in (409, 502)
+    assert second_response.get_json()["success"] is False
+
+
+def test_create_terminal_payment_marks_failed_on_definite_rejection(client, monkeypatch):
+    """A definite HTTP-level rejection (SumUp affirmatively said no) is not ambiguous,
+    so the payment is still marked "failed" and the terminal unlocked for retry."""
+
+    _create_and_activate_event(client)
+    with app.app_context():
+        terminal = Terminal(name="Reader Rejected", sumup_device_id="rdr_REJECTED", active=True)
+        db.session.add(terminal)
+        db.session.commit()
+        terminal_id = terminal.id
+
+    class FakeClient:
+        def create_terminal_payment(self, **_kwargs):
+            raise SumUpClientError(
+                "SumUp API Fehler (400): invalid request",
+                status_code=400,
+                error_type="http",
+            )
+
+    monkeypatch.setattr(app_module, "_sumup_client", lambda: FakeClient())
+
+    response = client.post(
+        "/api/terminal-payments",
+        json={"terminal_id": terminal_id, "amount_cents": 500, "currency": "CHF"},
+    )
+    data = response.get_json()
+    assert data["success"] is False
+    assert data["status"] == "failed"
 
 
 JSON_HEADERS = {"Accept": "application/json"}

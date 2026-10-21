@@ -2,7 +2,10 @@ import io
 import json
 from urllib import error
 
-from sumup_client import SumUpClient
+import pytest
+
+import sumup_client
+from sumup_client import SumUpClient, SumUpClientError
 
 
 class _FakeResponse:
@@ -171,3 +174,54 @@ def test_get_reader_status_resolves_non_rdr_identifier(monkeypatch):
     assert len(calls) == 3
     assert calls[1][0].endswith("/v0.1/merchants/MH4H92C7/readers")
     assert calls[2][0].endswith("/v0.1/merchants/MH4H92C7/readers/rdr_6PSXAMCT6B91V9JYYH60TY2X79/status")
+
+
+def test_idempotent_request_retries_transient_failure(monkeypatch):
+    """A status lookup (read-only, safe to repeat) should recover from a single
+    transient 503 instead of surfacing it straight to the caller."""
+
+    monkeypatch.setattr(sumup_client.time, "sleep", lambda _seconds: None)
+    calls = []
+
+    def fake_urlopen(req, timeout=10):
+        calls.append(req.full_url)
+        if len(calls) == 1:
+            raise error.HTTPError(req.full_url, 503, "Service Unavailable", hdrs=None, fp=io.BytesIO(b"{}"))
+        return _FakeResponse({"status": "SUCCESSFUL", "id": "txn-1"})
+
+    monkeypatch.setattr("sumup_client.request.urlopen", fake_urlopen)
+
+    client = SumUpClient(access_token="token", merchant_id="MH4H92C7", base_url="https://api.sumup.com")
+    response = client.get_payment_status("txn-1")
+
+    assert response.status == "SUCCESSFUL"
+    assert len(calls) == 2
+
+
+def test_non_idempotent_request_is_never_retried(monkeypatch):
+    """Creating a payment must never be retried automatically: retrying after an
+    ambiguous transient failure could create a second real checkout."""
+
+    monkeypatch.setattr(sumup_client.time, "sleep", lambda _seconds: None)
+    calls = []
+
+    def fake_urlopen(req, timeout=10):
+        calls.append(req.full_url)
+        raise error.HTTPError(req.full_url, 503, "Service Unavailable", hdrs=None, fp=io.BytesIO(b"{}"))
+
+    monkeypatch.setattr("sumup_client.request.urlopen", fake_urlopen)
+
+    client = SumUpClient(
+        access_token="token",
+        merchant_id="MH4H92C7",
+        base_url="https://api.sumup.com",
+    )
+    with pytest.raises(SumUpClientError):
+        client.create_terminal_payment(
+            amount_cents=500,
+            currency="CHF",
+            device_id="rdr_6PSXAMCT6B91V9JYYH60TY2X79",
+            reference="no-retry-ref",
+        )
+
+    assert len(calls) == 1

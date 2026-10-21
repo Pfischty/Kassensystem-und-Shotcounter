@@ -3,10 +3,17 @@
 from __future__ import annotations
 
 import json
+import time
 from urllib.parse import urlencode
 from dataclasses import dataclass
 from typing import Any, Dict, Optional
 from urllib import error, request
+
+# Status codes worth a short automatic retry: transient rate limiting and upstream
+# availability issues, never a definite 4xx rejection.
+_RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 504}
+_MAX_RETRIES = 2
+_RETRY_BACKOFF_SECONDS = 0.4
 
 
 class SumUpClientError(RuntimeError):
@@ -109,10 +116,13 @@ class SumUpClient:
         }
 
         def _create_reader_checkout(reader_id: str) -> Dict[str, Any]:
+            # Never auto-retried: a retry after an ambiguous network failure could
+            # create a second real checkout on top of one that actually went through.
             return self._request(
                 "POST",
                 f"/v0.1/merchants/{merchant_id}/readers/{reader_id}/checkout",
                 reader_payload,
+                idempotent=False,
             )
 
         try:
@@ -144,7 +154,8 @@ class SumUpClient:
             "reference": reference,
             "merchant_id": merchant_id,
         }
-        response = self._request("POST", "/v0.1/terminal/payments", legacy_payload)
+        # Same reasoning: never auto-retried, to avoid creating a duplicate payment.
+        response = self._request("POST", "/v0.1/terminal/payments", legacy_payload, idempotent=False)
         return SumUpResponse(
             payment_id=response.get("id") or response.get("payment_id"),
             status=response.get("status") or "pending",
@@ -245,7 +256,35 @@ class SumUpClient:
         items = response.get("items") if isinstance(response, dict) else None
         return items if isinstance(items, list) else []
 
-    def _request(self, method: str, path: str, payload: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    def _request(
+        self,
+        method: str,
+        path: str,
+        payload: Optional[Dict[str, Any]] = None,
+        *,
+        idempotent: bool = True,
+    ) -> Dict[str, Any]:
+        """Perform the request, retrying transient failures a bounded number of times.
+
+        Retries only ever happen for `idempotent` calls (reads, status lookups,
+        cancels): retrying a payment-creation POST after an ambiguous network error
+        could create a second real charge, so those calls pass idempotent=False and
+        are attempted exactly once, leaving the outcome to be resolved the same way a
+        truly ambiguous failure already is (see `_reconcile_pending_terminal_payment`).
+        """
+
+        attempt = 0
+        while True:
+            try:
+                return self._request_once(method, path, payload)
+            except SumUpClientError as exc:
+                is_retryable = exc.error_type == "network" or exc.status_code in _RETRYABLE_STATUS_CODES
+                if not idempotent or not is_retryable or attempt >= _MAX_RETRIES:
+                    raise
+                time.sleep(_RETRY_BACKOFF_SECONDS * (2**attempt))
+                attempt += 1
+
+    def _request_once(self, method: str, path: str, payload: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         url = f"{self._base_url}{path}"
         headers = {
             "Authorization": f"Bearer {self._access_token}",

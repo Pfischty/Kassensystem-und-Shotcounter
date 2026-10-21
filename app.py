@@ -17,6 +17,8 @@ import re
 import secrets
 import sqlite3
 import subprocess
+import threading
+import time
 from collections import Counter
 from dataclasses import dataclass
 from decimal import Decimal, ROUND_HALF_UP
@@ -649,7 +651,11 @@ def _sumup_http_status_for_error(exc: SumUpClientError) -> int:
         return 400
     if exc.status_code in {401, 403}:
         return 401
-    if exc.status_code in {404, 429}:
+    if exc.status_code == 429:
+        # Distinct from a generic gateway failure so callers can treat it as a
+        # transient rate limit (wait and retry) instead of a hard error.
+        return 429
+    if exc.status_code == 404:
         return 502
     return 502
 
@@ -738,19 +744,57 @@ def _status_not_found_abort_grace_seconds() -> int:
     return int(os.environ.get("SUMUP_STATUS_NOT_FOUND_ABORT_GRACE_SECONDS", "12"))
 
 
+def _status_not_found_abort_confirm_seconds() -> int:
+    """How long the reader must be continuously idle (across repeated lookups) before
+    the "aborted" heuristic is trusted. A single idle reading is not reliable: a reader
+    also goes IDLE right after a *successful* payment, before the transaction becomes
+    visible via the status lookup API, so a short grace period alone risks mislabeling
+    a successful payment as aborted (and a subsequent double charge on retry)."""
+    return int(os.environ.get("SUMUP_STATUS_NOT_FOUND_ABORT_CONFIRM_SECONDS", "15"))
+
+
+def _consecutive_status_not_found_since(payment: TerminalPayment) -> Optional[datetime]:
+    """Start of the current unbroken streak of 'status_not_found' log entries for this
+    payment, or None if the most recent log entry is not a 'status_not_found'."""
+
+    logs = (
+        PaymentLog.query.filter_by(terminal_payment_id=payment.id)
+        .order_by(PaymentLog.created_at.desc())
+        .all()
+    )
+    earliest = None
+    for log in logs:
+        if log.event != "status_not_found":
+            break
+        earliest = log.created_at
+    return earliest
+
+
 def _maybe_infer_aborted_from_reader_state(
     payment: TerminalPayment,
     *,
     client: SumUpClient,
     elapsed_seconds: float,
 ) -> None:
-    """Infer aborted state when SumUp status lookup is not available but reader is idle."""
+    """Infer aborted state when SumUp status lookup is not available but reader is idle.
+
+    This heuristic is only trusted once the not-found condition has been confirmed
+    across repeated lookups for at least `_status_not_found_abort_confirm_seconds()`,
+    to avoid a transient lookup delay being mistaken for an aborted payment.
+    """
 
     if elapsed_seconds < _status_not_found_abort_grace_seconds():
         return
     if not getattr(payment, "terminal", None):
         return
     if not hasattr(client, "get_reader_status"):
+        return
+
+    not_found_since = _consecutive_status_not_found_since(payment)
+    if not_found_since is None:
+        return
+    confirmed_for = (utcnow() - not_found_since).total_seconds()
+    if confirmed_for < _status_not_found_abort_confirm_seconds():
         return
 
     try:
@@ -775,6 +819,7 @@ def _maybe_infer_aborted_from_reader_state(
             {
                 "reason": "status_not_found_reader_idle",
                 "elapsed": elapsed_seconds,
+                "not_found_confirmed_for": confirmed_for,
                 "reader_state": live_state,
                 "reader_status": live_status,
             },
@@ -782,18 +827,24 @@ def _maybe_infer_aborted_from_reader_state(
 
 
 def _reconcile_pending_terminal_payment(payment: TerminalPayment, *, client: Optional[SumUpClient] = None) -> str:
-    """Refresh a pending terminal payment status from SumUp and timeout heuristics."""
+    """Refresh a pending terminal payment status from SumUp and timeout heuristics.
+
+    The SumUp status lookup always runs before a local timeout is applied: declaring
+    "timeout" first (without checking SumUp one last time) risked marking a payment as
+    timed out right as the card payment actually completed, after which a cashier
+    retry would charge the customer a second time.
+    """
 
     if payment.status != "pending":
         return payment.status
 
     elapsed = (utcnow() - payment.created_at).total_seconds()
-    if elapsed >= _terminal_payment_timeout_seconds():
-        payment.status = "timeout"
-        _log_terminal_payment_event(payment, "timeout", {"elapsed": elapsed})
-        return payment.status
+    timed_out = elapsed >= _terminal_payment_timeout_seconds()
 
     if not payment.sumup_payment_id:
+        if timed_out:
+            payment.status = "timeout"
+            _log_terminal_payment_event(payment, "timeout", {"elapsed": elapsed})
         return payment.status
 
     sumup_client = client or _sumup_client()
@@ -803,6 +854,7 @@ def _reconcile_pending_terminal_payment(payment: TerminalPayment, *, client: Opt
         if new_status != payment.status:
             payment.status = new_status
             _log_terminal_payment_event(payment, "status_update", response.raw)
+            return payment.status
     except SumUpClientError as exc:
         if exc.status_code == 404:
             # Reader checkouts may be accepted before a transaction lookup is available.
@@ -816,10 +868,97 @@ def _reconcile_pending_terminal_payment(payment: TerminalPayment, *, client: Opt
                 client=sumup_client,
                 elapsed_seconds=elapsed,
             )
+            if payment.status == "pending" and timed_out:
+                payment.status = "timeout"
+                _log_terminal_payment_event(payment, "timeout", {"elapsed": elapsed})
             return payment.status
         raise
 
+    if timed_out:
+        payment.status = "timeout"
+        _log_terminal_payment_event(payment, "timeout", {"elapsed": elapsed})
+
     return payment.status
+
+
+def _terminal_payment_watchdog_interval_seconds() -> int:
+    return int(os.environ.get("SUMUP_WATCHDOG_INTERVAL_SECONDS", "60"))
+
+
+def _reconcile_orphaned_terminal_payments() -> None:
+    """Resolve terminal payments stuck "pending" past their timeout, independent of
+    any client polling. Without this, a cashier closing the browser tab (or the
+    tablet losing network) while a payment is pending leaves it "pending" forever,
+    permanently blocking the terminal via the unique-pending-per-terminal index -
+    nothing else in the app ever revisits it unless someone happens to poll or start
+    a new payment on that same terminal.
+    """
+
+    with app.app_context():
+        try:
+            # A short head start avoids redundant SumUp status calls for payments a
+            # live cashier tab is already polling every 2 seconds; the watchdog only
+            # needs to pick up payments nobody is actively checking anymore.
+            cutoff = utcnow() - timedelta(seconds=10)
+            stale_payments = TerminalPayment.query.filter(
+                TerminalPayment.status == "pending",
+                TerminalPayment.created_at <= cutoff,
+            ).all()
+            for payment in stale_payments:
+                try:
+                    _reconcile_pending_terminal_payment(payment)
+                    db.session.commit()
+                except SumUpClientError as exc:
+                    db.session.rollback()
+                    app.logger.warning(
+                        "Watchdog: Reconcile für Terminal-Payment %s fehlgeschlagen: %s",
+                        payment.id,
+                        exc,
+                    )
+        except Exception:
+            db.session.rollback()
+            app.logger.exception("Watchdog: unerwarteter Fehler bei der Zahlungs-Reconciliation")
+
+
+def _terminal_payment_watchdog_loop() -> None:
+    while True:
+        time.sleep(_terminal_payment_watchdog_interval_seconds())
+        _reconcile_orphaned_terminal_payments()
+
+
+_watchdog_lock = threading.Lock()
+_watchdog_started = False
+
+
+def _start_terminal_payment_watchdog() -> None:
+    """Start the background reconciliation loop exactly once per process."""
+
+    global _watchdog_started
+    with _watchdog_lock:
+        if _watchdog_started:
+            return
+        _watchdog_started = True
+        threading.Thread(
+            target=_terminal_payment_watchdog_loop,
+            name="terminal-payment-watchdog",
+            daemon=True,
+        ).start()
+        app.logger.info(
+            "Terminal-Payment-Watchdog gestartet (Intervall: %ss).",
+            _terminal_payment_watchdog_interval_seconds(),
+        )
+
+
+# Gunicorn (production, see scripts/pi_manage.sh) imports this module directly as
+# "app:app" - __name__ is "app" there, so the watchdog starts once per worker
+# process. A direct `python app.py` run (dev) goes through Werkzeug's debug
+# reloader, which re-executes this whole module in a child process with
+# WERKZEUG_RUN_MAIN=true; only that child should run the watchdog, not the parent
+# monitor process that spawns it (WERKZEUG_RUN_MAIN is unset there).
+if not app.config.get("TESTING") and not (
+    __name__ == "__main__" and os.environ.get("WERKZEUG_RUN_MAIN") != "true"
+):
+    _start_terminal_payment_watchdog()
 
 
 def _resolve_terminal_assignment(event: Event) -> tuple[Optional[Terminal], Optional[Terminal]]:
@@ -2861,9 +3000,27 @@ def api_create_terminal_payment():
         db.session.commit()
         return jsonify({"success": True, "payment_id": payment.id, "status": payment.status})
     except SumUpClientError as exc:
-        payment.status = "failed"
         error_payload = _sumup_error_payload(exc, context="terminal_payment_create")
-        _log_terminal_payment_event(payment, "error", error_payload)
+        if exc.error_type == "network":
+            # We do not know whether SumUp actually received and processed this
+            # request (e.g. the connection dropped after the card was charged at the
+            # terminal). Marking the payment "failed" would free the terminal lock
+            # immediately and invite an instant retry that could charge the customer
+            # a second time. Instead the payment stays "pending": it keeps blocking
+            # new attempts on this terminal until the normal timeout/reconciliation
+            # path resolves it, or an admin checks it manually.
+            error_payload["error"] = (
+                f"{error_payload['error']} Status unbekannt - Terminal bleibt gesperrt, "
+                "bitte NICHT sofort erneut kassieren, um eine Doppelbuchung zu vermeiden."
+            )
+            error_payload["hint"] = (
+                "Bitte am Kartenterminal bzw. im SumUp-Dashboard prüfen, ob die Zahlung "
+                "tatsächlich durchgeführt wurde, bevor erneut kassiert wird."
+            )
+            _log_terminal_payment_event(payment, "network_error_ambiguous", error_payload)
+        else:
+            payment.status = "failed"
+            _log_terminal_payment_event(payment, "error", error_payload)
         _log_terminal_payment_init_event(
             event=event,
             terminal=terminal,
@@ -2923,13 +3080,50 @@ def api_terminal_payment_cancel(payment_id: int):
     if not terminal:
         return jsonify({"success": False, "error": "Terminal nicht gefunden.", "status": payment.status}), 404
 
+    if not payment.sumup_payment_id:
+        # Nothing was ever confirmed to reach SumUp for this payment (e.g. the create
+        # call itself failed with an ambiguous network error), so there is no valid
+        # remote id to cancel. Sending the local database id instead would guarantee a
+        # 404 from every endpoint variant while implying a cancel was attempted. We
+        # leave the payment "pending" instead of guessing: it keeps blocking the
+        # terminal until the normal timeout/reconciliation resolves it, or an admin
+        # confirms the real outcome manually.
+        return jsonify(
+            {
+                "success": False,
+                "error": "Zahlung kann nicht automatisch storniert werden (unbekannter SumUp-Status).",
+                "hint": "Bitte am Kartenterminal bzw. im SumUp-Dashboard prüfen, bevor erneut kassiert wird.",
+                "payment_id": payment.id,
+                "status": payment.status,
+            }
+        ), 409
+
     try:
-        response_raw = _sumup_client().cancel_terminal_payment(
-            payment_id=payment.sumup_payment_id or str(payment.id),
+        client = _sumup_client()
+        response_raw = client.cancel_terminal_payment(
+            payment_id=payment.sumup_payment_id,
             device_id=terminal.sumup_device_id,
         )
-        payment.status = "aborted"
         _log_terminal_payment_event(payment, "cancel_requested", {"raw": response_raw})
+
+        # A "successful" cancel response does not guarantee the card transaction did
+        # not already complete (e.g. the customer taps the card right as the cashier
+        # cancels), so the final state is verified via a status read instead of being
+        # assumed - otherwise a completed charge could be silently mislabeled as
+        # aborted, with no further reconciliation ever running for it.
+        final_status = "aborted"
+        if payment.sumup_payment_id:
+            try:
+                status_response = client.get_payment_status(payment.sumup_payment_id)
+                mapped_status = _map_sumup_status(status_response.status)
+                if mapped_status in {"success", "failed"}:
+                    final_status = mapped_status
+                    _log_terminal_payment_event(payment, "status_update", status_response.raw)
+            except SumUpClientError as status_exc:
+                if status_exc.status_code != 404:
+                    raise
+
+        payment.status = final_status
         db.session.commit()
         return jsonify({"success": True, "payment_id": payment.id, "status": payment.status})
     except SumUpClientError as exc:
