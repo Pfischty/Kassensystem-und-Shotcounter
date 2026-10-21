@@ -211,6 +211,23 @@ App gemeldet (sichtbar auf `/shotcounter/nfc` statt eines nichtssagenden
 
   Der Befehl installiert Abhängigkeiten, schreibt keine Git-Daten wenn `--offline` gesetzt ist, und startet den Dienst neu.
 
+### Update über die Admin-Oberfläche
+- `/admin` -> `System-Update` stößt denselben Ablauf über den privilegierten
+  systemd-Unit `kassensystem-update.service` an (siehe `deploy/`).
+- Der Trigger (`POST /admin/system/git-update`) startet den Unit nur
+  **nicht-blockierend** (`systemctl start --no-block`) und kehrt sofort
+  zurück. Grund: Das Update startet am Ende den Webservice selbst neu
+  (Self-Restart). Würde die Anfrage auf den Abschluss warten, würde genau
+  dieser wartende Prozess beim Neustart der eigenen Service-Cgroup mitgekillt
+  – das Update lief zwar durch, die Browser-Anfrage brach aber mit einem
+  Netzwerkfehler ab ("Update ist nicht stabil").
+- Die UI pollt stattdessen `GET /admin/system/git-update-status`, bis der
+  Unit nicht mehr läuft, und zeigt bei einem Fehlschlag die letzten
+  Journal-Zeilen (`journalctl -u kassensystem-update.service`) an.
+- Setup: `sudo ./deploy/install-update-service.sh` installiert die Unit, die
+  nötige `NOPASSWD`-Sudo-Regel (inkl. `--no-block` und `journalctl`) sowie
+  optional die Polkit-Regel.
+
 ## WLAN-Helfer (optional für Wartung)
 - Netzwerk hinzufügen und verbinden (auch über die Admin-Oberfläche nutzbar):
   ```bash
