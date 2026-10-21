@@ -24,7 +24,7 @@
 #   sudo ./scripts/pi_manage.sh write-service --port 8000
 #   sudo ./scripts/pi_manage.sh enable-service
 #   sudo ./scripts/pi_manage.sh update --branch main
-#   sudo ./scripts/pi_manage.sh wifi-add SSID PASS
+#   sudo ./scripts/pi_manage.sh wifi-add SSID [PASS]   (PASS leer = offenes Netz)
 #   sudo ./scripts/pi_manage.sh wifi-up
 #   sudo ./scripts/pi_manage.sh wifi-down
 
@@ -63,8 +63,9 @@ Commands:
   disable-nfc                 Disable the NFC bridge service
   nfc-fix-kernel-driver        Blacklist the kernel's pn533/nfc drivers so
                                pcscd can access the ACR122U (Linux only)
-  wifi-add SSID PASS          Append Wi‑Fi network to wpa_supplicant and reconfigure
-  wifi-up                     Bring wlan0 up and reconfigure
+  wifi-add SSID [PASS]        Add/connect Wi‑Fi network (NetworkManager or
+                               wpa_supplicant, auto-detected); PASS leer = offenes Netz
+  wifi-up                     Bring wlan0 up and reconnect
   wifi-down                   Bring wlan0 down
   status                      Show service status
 EOF
@@ -430,40 +431,138 @@ disable_nfc() {
   systemctl disable --now "${NFC_SERVICE_NAME}.service"
 }
 
+WIFI_CONF="/etc/wpa_supplicant/wpa_supplicant.conf"
+
+# Aktuelle Raspberry-Pi-OS-Images (Bookworm+) verwalten wlan0 per Default
+# über NetworkManager statt über eine freistehende wpa_supplicant-Instanz.
+# In dem Fall landen Einträge in wpa_supplicant.conf nirgendwo und
+# `wpa_cli ... reconfigure` läuft gegen kein echtes Interface – die
+# WLAN-Hinzufügung "klappt" scheinbar (kein Fehler), verbindet aber nie.
+wifi_backend_is_networkmanager() {
+  command -v nmcli >/dev/null 2>&1 || return 1
+  systemctl is-active --quiet NetworkManager 2>/dev/null || return 1
+  nmcli -t -f DEVICE,STATE device status 2>/dev/null \
+    | grep -q "^wlan0:" || return 1
+  ! nmcli -t -f DEVICE,STATE device status 2>/dev/null \
+    | grep -q "^wlan0:unmanaged"
+}
+
+wifi_wait_connected() {
+  local ssid="$1"
+  local waited=0
+  while (( waited < 10 )); do
+    if [[ "$(iwgetid -r 2>/dev/null)" == "${ssid}" ]]; then
+      return 0
+    fi
+    # Fallback, falls iwgetid (wireless-tools) auf diesem Image fehlt.
+    if command -v nmcli >/dev/null 2>&1 \
+      && nmcli -t -f ACTIVE,SSID device wifi 2>/dev/null | grep -qFx "yes:${ssid}"; then
+      return 0
+    fi
+    sleep 1
+    waited=$((waited + 1))
+  done
+  return 1
+}
+
 wifi_add() {
   require_root
   local ssid="$1"
   local pass="$2"
 
-  if [[ -z "${ssid}" || -z "${pass}" ]]; then
-    echo "SSID und Passwort erforderlich." >&2
+  if [[ -z "${ssid}" ]]; then
+    echo "SSID erforderlich." >&2
     exit 1
   fi
 
-  if [[ ! -f /etc/wpa_supplicant/wpa_supplicant.conf ]]; then
-    cat > /etc/wpa_supplicant/wpa_supplicant.conf <<'EOF'
+  if wifi_backend_is_networkmanager; then
+    echo "NetworkManager verwaltet wlan0, nutze nmcli ..." >&2
+    # Vorhandenes Profil für dieselbe SSID entfernen, sonst legt nmcli bei
+    # jedem Hinzufügen ein weiteres, ggf. widersprüchliches Profil an.
+    nmcli connection delete "${ssid}" >/dev/null 2>&1 || true
+    nmcli device wifi rescan ifname wlan0 >/dev/null 2>&1 || true
+    sleep 2
+    if [[ -n "${pass}" ]]; then
+      timeout 15 nmcli device wifi connect "${ssid}" password "${pass}" ifname wlan0
+    else
+      timeout 15 nmcli device wifi connect "${ssid}" ifname wlan0
+    fi
+  else
+    if [[ ! -f "${WIFI_CONF}" ]]; then
+      mkdir -p "$(dirname "${WIFI_CONF}")"
+      cat > "${WIFI_CONF}" <<'EOF'
 ctrl_interface=DIR=/var/run/wpa_supplicant GROUP=netdev
 update_config=1
 country=DE
 EOF
+      chmod 600 "${WIFI_CONF}"
+    fi
+
+    rfkill unblock wifi || true
+    ip link set wlan0 up
+
+    if ! wpa_cli -i wlan0 status >/dev/null 2>&1; then
+      systemctl enable --now "wpa_supplicant@wlan0.service" >/dev/null 2>&1 \
+        || wpa_supplicant -B -i wlan0 -c "${WIFI_CONF}" >/dev/null 2>&1 || true
+      sleep 1
+    fi
+
+    # Bestehendes Netzwerk mit gleicher SSID entfernen, damit ein erneutes
+    # Hinzufügen (z. B. mit geändertem Passwort) nicht zu doppelten,
+    # widersprüchlichen Einträgen führt.
+    local existing_id
+    existing_id="$(wpa_cli -i wlan0 list_networks 2>/dev/null \
+      | awk -F'\t' -v s="${ssid}" '$2 == s {print $1; exit}')" || true
+    if [[ -n "${existing_id}" ]]; then
+      wpa_cli -i wlan0 remove_network "${existing_id}" >/dev/null
+    fi
+
+    local net_id
+    net_id="$(wpa_cli -i wlan0 add_network | tail -1)" || true
+    if [[ ! "${net_id}" =~ ^[0-9]+$ ]]; then
+      echo "wpa_supplicant auf wlan0 nicht erreichbar." >&2
+      exit 1
+    fi
+    wpa_cli -i wlan0 set_network "${net_id}" ssid "\"${ssid}\"" >/dev/null
+    if [[ -n "${pass}" ]]; then
+      wpa_cli -i wlan0 set_network "${net_id}" psk "\"${pass}\"" >/dev/null
+    else
+      wpa_cli -i wlan0 set_network "${net_id}" key_mgmt NONE >/dev/null
+    fi
+    wpa_cli -i wlan0 enable_network "${net_id}" >/dev/null
+    wpa_cli -i wlan0 select_network "${net_id}" >/dev/null
+    wpa_cli -i wlan0 save_config >/dev/null
   fi
 
-  echo "Füge WLAN ${ssid} hinzu ..."
-  wpa_passphrase "${ssid}" "${pass}" >> /etc/wpa_supplicant/wpa_supplicant.conf
-  wpa_cli -i wlan0 reconfigure || true
+  echo "Füge WLAN ${ssid} hinzu, warte auf Verbindung ..." >&2
+  if wifi_wait_connected "${ssid}"; then
+    echo "${ssid}"
+  else
+    echo "Verbindung zu '${ssid}' konnte nach 10s nicht bestätigt werden (falsches Passwort oder außer Reichweite?)." >&2
+    echo ""
+  fi
 }
 
 wifi_up() {
   require_root
-  rfkill unblock wifi || true
-  ip link set wlan0 up
-  wpa_cli -i wlan0 reconfigure || true
+  if wifi_backend_is_networkmanager; then
+    nmcli radio wifi on || true
+    nmcli device connect wlan0 || true
+  else
+    rfkill unblock wifi || true
+    ip link set wlan0 up
+    wpa_cli -i wlan0 reconfigure || true
+  fi
   echo "wlan0 aktiviert (sofern vorhanden)."
 }
 
 wifi_down() {
   require_root
-  ip link set wlan0 down
+  if wifi_backend_is_networkmanager; then
+    nmcli device disconnect wlan0 || true
+  else
+    ip link set wlan0 down
+  fi
   echo "wlan0 deaktiviert."
 }
 

@@ -3068,16 +3068,30 @@ def _get_network_interface_info(interface: str) -> dict:
 def _get_wlan_info() -> dict:
     """Get WLAN interface status."""
     wlan_info = _get_network_interface_info("wlan0")
-    
-    # Check if connected to a network
-    result = _run_safe_command(["iwgetid", "-r"])
-    if result["success"] and result["output"]:
-        wlan_info["ssid"] = result["output"]
-    else:
-        wlan_info["ssid"] = None
-    
-    # Get signal strength if connected
-    if wlan_info.get("ssid"):
+    wlan_info["ssid"] = None
+
+    # Aktuelle Raspberry-Pi-OS-Images verwalten WLAN standardmäßig über
+    # NetworkManager; die klassischen wireless-tools (iwgetid/iwconfig)
+    # sind dort oft nicht installiert, weshalb nmcli hier zuerst versucht wird.
+    nm_result = _run_safe_command(["nmcli", "-t", "-f", "ACTIVE,SSID,SIGNAL", "device", "wifi"])
+    if nm_result["success"]:
+        for line in nm_result["output"].split("\n"):
+            # Format "yes:SSID:SIGNAL" – von rechts splitten, da die SSID
+            # selbst (escaped) Doppelpunkte enthalten kann.
+            parts = line.rsplit(":", 2)
+            if len(parts) == 3 and parts[0] == "yes" and parts[1]:
+                wlan_info["ssid"] = parts[1].replace("\\:", ":")
+                if parts[2].strip().isdigit():
+                    wlan_info["signal_level"] = f"{parts[2].strip()}%"
+                break
+
+    if not wlan_info["ssid"]:
+        result = _run_safe_command(["iwgetid", "-r"])
+        if result["success"] and result["output"]:
+            wlan_info["ssid"] = result["output"]
+
+    # Signalstärke per iwconfig nachholen, falls nmcli nicht verfügbar war
+    if wlan_info.get("ssid") and "signal_level" not in wlan_info:
         result = _run_safe_command(["iwconfig", "wlan0"])
         if result["success"]:
             for line in result["output"].split("\n"):
@@ -3086,7 +3100,7 @@ def _get_wlan_info() -> dict:
                     match = re.search(r'Signal level[=:](-?\d+)', line)
                     if match:
                         wlan_info["signal_level"] = match.group(1) + " dBm"
-    
+
     return wlan_info
 
 
@@ -3177,21 +3191,65 @@ def admin_network():
     })
 
 
+def _wifi_scan_nmcli() -> Optional[list]:
+    """Scan via NetworkManager (Standard auf aktuellen Raspberry-Pi-OS-Images).
+
+    Returns None if nmcli/NetworkManager is not available, so the caller can
+    fall back to the classic iwlist-based scan.
+    """
+    result = _run_safe_command(
+        ["nmcli", "-t", "-f", "SSID,SIGNAL,SECURITY", "device", "wifi", "list", "ifname", "wlan0", "--rescan", "yes"],
+        timeout=15,
+    )
+    if not result["success"]:
+        return None
+
+    networks = []
+    for line in result["output"].split("\n"):
+        if not line.strip():
+            continue
+        # Format "SSID:SIGNAL:SECURITY" – von rechts splitten, da die SSID
+        # selbst (escaped) Doppelpunkte enthalten kann.
+        parts = line.rsplit(":", 2)
+        if len(parts) != 3:
+            continue
+        ssid, signal, security = parts
+        ssid = ssid.replace("\\:", ":").strip()
+        if not ssid:
+            continue
+        try:
+            quality = int(signal.strip())
+        except ValueError:
+            quality = 0
+        security = security.strip()
+        encryption = "Open" if not security or security == "--" else security
+        networks.append({"ssid": ssid, "quality": quality, "encryption": encryption})
+    return networks
+
+
 @app.route("/admin/network/wifi/scan")
 def admin_wifi_scan():
     """Scan for available WiFi networks."""
-    networks = []
-    
-    # Scan for networks
+    networks = _wifi_scan_nmcli()
+    if networks is not None:
+        seen_ssids = set()
+        unique_networks = []
+        for network in sorted(networks, key=lambda x: x["quality"], reverse=True):
+            if network["ssid"] not in seen_ssids:
+                seen_ssids.add(network["ssid"])
+                unique_networks.append(network)
+        return jsonify({"success": True, "networks": unique_networks})
+
+    # Fallback für klassische Setups ohne NetworkManager (iwlist/wireless-tools)
     result = _run_safe_command(["iwlist", "wlan0", "scan"], timeout=15)
     if not result["success"]:
-        return jsonify({"success": False, "error": result["error"]})
-    
+        return jsonify({"success": False, "error": result["error"] or "WLAN-Scan nicht möglich"})
+
     # Parse scan results
     current_ssid = None
     current_quality = None
     current_encryption = "Open"
-    
+
     for line in result["output"].split("\n"):
         line = line.strip()
         if "ESSID:" in line:
@@ -3260,22 +3318,32 @@ def admin_wifi_connect():
     if not all(32 <= ord(c) <= 126 for c in ssid):
         return jsonify({"success": False, "error": "SSID enthält ungültige Zeichen"})
     
+    # Passwort ist nur für verschlüsselte Netze erforderlich; offene Netze
+    # (z. B. an einem Veranstaltungsort) werden ohne Passwort verbunden.
     if password and len(password) < 8:
         return jsonify({"success": False, "error": "Passwort muss mindestens 8 Zeichen haben"})
-    
-    # Use the pi_manage.sh script if available
+
     script_path = Path(app.root_path) / "scripts" / "pi_manage.sh"
-    if script_path.exists() and password:
-        result = _run_safe_command(["sudo", str(script_path), "wifi-add", ssid, password], timeout=30)
-        if result["success"]:
-            # Try to bring up the interface
-            _run_safe_command(["sudo", str(script_path), "wifi-up"], timeout=10)
-            app.logger.info(f"WLAN verbunden: {ssid}")
-            return jsonify({"success": True, "message": f"Verbindung zu '{ssid}' wird hergestellt..."})
-        else:
-            return jsonify({"success": False, "error": result["error"] or "Fehler beim Verbinden"})
-    else:
+    if not script_path.exists():
         return jsonify({"success": False, "error": "WiFi-Verwaltung nicht verfügbar"})
+
+    # wifi-add kümmert sich (NetworkManager oder wpa_supplicant, je nach
+    # Pi-Setup) selbst um Verbinden + kurze Statusprüfung und gibt die
+    # tatsächlich verbundene SSID als letzte Ausgabezeile zurück.
+    result = _run_safe_command(["sudo", str(script_path), "wifi-add", ssid, password], timeout=35)
+    if not result["success"]:
+        return jsonify({"success": False, "error": result["error"] or "Fehler beim Verbinden"})
+
+    confirmed_ssid = result["output"].strip().splitlines()[-1] if result["output"].strip() else ""
+    if confirmed_ssid == ssid:
+        app.logger.info(f"WLAN verbunden: {ssid}")
+        return jsonify({"success": True, "message": f"Verbunden mit '{ssid}'."})
+
+    app.logger.warning(f"WLAN-Verbindung zu '{ssid}' konnte nicht bestätigt werden")
+    return jsonify({
+        "success": False,
+        "error": f"Verbindung zu '{ssid}' konnte nicht bestätigt werden (falsches Passwort oder außer Reichweite?).",
+    })
 
 
 @app.route("/admin/system/git-status")
