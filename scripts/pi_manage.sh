@@ -568,8 +568,27 @@ wifi_scan() {
   # dann wurden ohne root nie neue APs gefunden, nur das aktuelle Netz.
   if wifi_backend_is_networkmanager; then
     echo "FORMAT=nmcli"
+    # "nmcli device wifi rescan" only *requests* a rescan; the actual scan
+    # still runs asynchronously in the driver/firmware and can take several
+    # seconds (the Pi's onboard chip is often on the slower end). A fixed,
+    # short sleep frequently returned before that finished, so the
+    # subsequent "wifi list" kept serving the stale cache - in practice just
+    # the already-associated network, since that one is always known
+    # immediately while neighboring APs hadn't been merged in yet. Poll
+    # GENERAL.LAST-SCAN (bumped by NetworkManager once a scan completes)
+    # instead of guessing a fixed delay, bounded so a button click can't
+    # hang indefinitely if the property is unsupported on an older NM.
+    local last_scan_before last_scan_after waited=0
+    last_scan_before="$(nmcli -g GENERAL.LAST-SCAN device show wlan0 2>/dev/null || true)"
     nmcli device wifi rescan ifname wlan0 >/dev/null 2>&1 || true
-    sleep 2
+    while (( waited < 10 )); do
+      sleep 1
+      waited=$((waited + 1))
+      last_scan_after="$(nmcli -g GENERAL.LAST-SCAN device show wlan0 2>/dev/null || true)"
+      if [[ -n "${last_scan_after}" && "${last_scan_after}" != "${last_scan_before}" ]]; then
+        break
+      fi
+    done
     nmcli -t -f SSID,SIGNAL,SECURITY device wifi list ifname wlan0
   elif command -v iwlist >/dev/null 2>&1; then
     echo "FORMAT=iwlist"
