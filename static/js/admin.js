@@ -2428,7 +2428,14 @@ document.addEventListener('click', (e) => {
       const response = await fetch('/admin/network/wifi/scan');
       const data = await response.json();
 
-      if (data.success && data.networks.length > 0) {
+      if (!data.success) {
+        // Surface the real reason (e.g. a missing sudoers rule for wifi-scan on the
+        // Pi) instead of showing the same generic "no networks" text as a genuinely
+        // empty scan - that made this exact kind of permission error impossible to
+        // tell apart from "really no WiFi nearby".
+        const errorText = data.error || 'WLAN-Scan fehlgeschlagen.';
+        resultsDiv.innerHTML = `<p style="color: var(--danger);">Fehler: ${escapeHtml(errorText)}</p>`;
+      } else if (data.networks.length > 0) {
         const currentSsid = document.getElementById('network-status')?.dataset.currentSsid || '';
         let html = '<h4 style="margin: 0.8rem 0;">Verfügbare Netzwerke</h4>';
         html += '<div class="wifi-list">';
