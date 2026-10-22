@@ -494,15 +494,31 @@ wifi_add() {
 
   if wifi_backend_is_networkmanager; then
     echo "NetworkManager verwaltet wlan0, nutze nmcli ..." >&2
-    # Vorhandenes Profil für dieselbe SSID entfernen, sonst legt nmcli bei
-    # jedem Hinzufügen ein weiteres, ggf. widersprüchliches Profil an.
-    nmcli connection delete "${ssid}" >/dev/null 2>&1 || true
-    nmcli device wifi rescan ifname wlan0 >/dev/null 2>&1 || true
-    sleep 2
     if [[ -n "${pass}" ]]; then
+      # A password was actually supplied: treat this as setting/changing the
+      # credentials for this SSID. Drop any existing profile first, so nmcli
+      # doesn't end up with another, possibly conflicting profile for the
+      # same network, and so the new password actually takes effect.
+      nmcli connection delete "${ssid}" >/dev/null 2>&1 || true
+      nmcli device wifi rescan ifname wlan0 >/dev/null 2>&1 || true
+      sleep 2
       timeout 15 nmcli device wifi connect "${ssid}" password "${pass}" ifname wlan0
     else
-      timeout 15 nmcli device wifi connect "${ssid}" ifname wlan0
+      # No password given - this is the common case when (re)connecting to a
+      # network that is already known (e.g. clicking an already-connected
+      # entry in the admin UI's scan list). Try the existing saved profile
+      # first so its stored secrets are reused, instead of deleting it and
+      # then failing for lack of a password. Only fall back to a fresh,
+      # passwordless connect attempt (which only succeeds for open networks)
+      # if there is no saved profile yet or activating it didn't work.
+      if nmcli -t -f NAME connection show 2>/dev/null | grep -qFx "${ssid}" \
+        && timeout 15 nmcli connection up "${ssid}" ifname wlan0; then
+        :
+      else
+        nmcli device wifi rescan ifname wlan0 >/dev/null 2>&1 || true
+        sleep 2
+        timeout 15 nmcli device wifi connect "${ssid}" ifname wlan0
+      fi
     fi
   else
     if [[ ! -f "${WIFI_CONF}" ]]; then
